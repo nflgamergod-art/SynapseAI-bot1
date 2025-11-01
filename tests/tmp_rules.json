@@ -1,0 +1,18 @@
+[
+  {
+    "type": "emoji",
+    "matchType": "equals",
+    "trigger": "12345",
+    "response": "Hi",
+    "id": "mhfavbcpf2k4fk",
+    "createdAt": 1761942159673
+  },
+  {
+    "type": "phrase",
+    "matchType": "contains",
+    "trigger": "hello",
+    "response": "Hello!",
+    "id": "mhfavbcqkqq7dq",
+    "createdAt": 1761942159674
+  }
+]

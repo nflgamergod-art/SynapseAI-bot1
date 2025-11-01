@@ -1,0 +1,35 @@
+# fly.toml template — fill in `app = "your-app-name"` after running `fly launch`
+# Save as fly.toml or run `fly launch` to create one interactively.
+
+app = "your-app-name"
+primary_region = "iad"
+
+[build]
+  image = ""
+
+[env]
+  # Set your secrets instead of placing them here.
+  # DISCORD_TOKEN = "REPLACE_WITH_SECRET"
+  # OWNER_ID = "1234567890"
+
+[[services]]
+  internal_port = 8080
+  processes = ["app"]
+  protocol = "tcp"
+
+  [[services.ports]]
+    handlers = ["http"]
+    port = 80
+
+  [[services.ports]]
+    handlers = ["tls"]
+    port = 443
+
+  [[services.tcp_checks]]
+    interval = 10000
+    timeout = 2000
+    restart_limit = 0
+
+# Notes:
+# - Discord bots use outbound WebSocket. The app doesn't need exposed HTTP ports but Fly requires a service.
+# - You can set `internal_port` to anything; the container doesn't actually need to listen for HTTP.

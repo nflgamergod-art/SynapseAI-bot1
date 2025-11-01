@@ -1,0 +1,29 @@
+[
+  {
+    "setup": "Why don't programmers like nature?",
+    "punchline": "It has too many bugs!",
+    "type": "setup-punchline",
+    "author": "system",
+    "createdAt": "2025-10-31T20:23:04.676Z"
+  },
+  {
+    "setup": "What did the robot say after a successful oil change?",
+    "punchline": "Oil be back!",
+    "type": "setup-punchline",
+    "author": "system",
+    "createdAt": "2025-10-31T20:23:04.676Z"
+  },
+  {
+    "punchline": "I don't always test my code, but when I do, I do it in production.",
+    "type": "one-liner",
+    "author": "system",
+    "createdAt": "2025-10-31T20:23:04.676Z"
+  },
+  {
+    "setup": "Why did the scarecrow win an award?",
+    "punchline": "Because he was outstanding in his field!",
+    "type": "dad-joke",
+    "author": "system",
+    "createdAt": "2025-10-31T20:23:04.676Z"
+  }
+]

@@ -1,0 +1,24 @@
+# systemd service template for SynapseAI bot
+# Copy to /etc/systemd/system/synapseai.service and update paths/env file as needed
+
+[Unit]
+Description=SynapseAI Discord Bot
+After=network.target
+
+[Service]
+Type=simple
+# Run as a non-root service user (recommended). Create 'synapseai' user and point to its home.
+User=synapseai
+WorkingDirectory=/srv/synapseai
+# Option A: use EnvironmentFile to keep secrets outside repo
+EnvironmentFile=/etc/synapseai.env
+# If you prefer a .env file in the project, change the path above
+ExecStart=/usr/bin/node /srv/synapseai/dist/index.js
+Restart=on-failure
+RestartSec=5
+# Limit number of restarts within a time window
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Install]
+WantedBy=multi-user.target
