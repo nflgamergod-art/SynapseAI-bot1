@@ -10,9 +10,15 @@ function getGeminiClient(): GoogleGenerativeAI {
 }
 
 const MODEL_CANDIDATES = [
-  "gemini-1.5-flash-latest",
+  // Prefer latest aliases first
   "gemini-1.5-pro-latest",
-  "gemini-1.5-flash-8b-latest"
+  "gemini-1.5-flash-latest",
+  // Try non-latest aliases
+  "gemini-1.5-pro",
+  "gemini-1.5-flash",
+  // Fall back to older stable names
+  "gemini-1.0-pro",
+  "gemini-pro"
 ];
 
 export async function generateReply(prompt: string) {
