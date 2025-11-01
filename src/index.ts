@@ -64,6 +64,11 @@ client.once("ready", () => {
       { name: "provider", description: "openai or gemini", type: 3, required: true }
     ] },
     { name: "pm2clean", description: "Owner: remove old PM2 process 'synapseai' and save" },
+    { name: "version", description: "Owner: show running commit and config" },
+    { name: "setmodel", description: "Owner: set AI model for a provider and restart", options: [
+      { name: "provider", description: "openai or gemini", type: 3, required: true },
+      { name: "model", description: "Model id (e.g., gpt-4o-mini or gemini-1.5-pro-latest)", type: 3, required: true }
+    ] },
     { name: "diagai", description: "Owner: AI health check (env + test call)" },
     // Owner-only whitelist management
     { name: "addwhitelist", description: "Owner: add a whitelist entry (user or role)", options: [
@@ -428,6 +433,61 @@ client.on("interactionCreate", async (interaction) => {
     } catch (err: any) {
       console.error('pm2clean failed:', err);
       await interaction.followUp({ content: `pm2clean failed: ${err?.message ?? err}`, ephemeral: true });
+    }
+    return;
+  }
+  if (name === "version") {
+    if (!isOwnerId(interaction.user.id)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
+    try {
+      const { execSync } = await import('child_process');
+      let commit = 'unknown';
+      try { commit = execSync('git rev-parse --short HEAD', { stdio: ['ignore','pipe','ignore'] }).toString().trim(); } catch {}
+      const provider = process.env.AI_PROVIDER ?? 'auto';
+      const openaiModel = process.env.OPENAI_MODEL ?? 'gpt-4o-mini';
+      const geminiModel = process.env.GEMINI_MODEL ?? '(auto)';
+      const lines = [
+        `Version`,
+        `Commit: ${commit}`,
+        `AI_PROVIDER: ${provider}`,
+        `OPENAI_MODEL: ${openaiModel}`,
+        `GEMINI_MODEL: ${geminiModel}`,
+        `Node: ${process.version}`
+      ].join('\n');
+      return interaction.reply({ content: lines, ephemeral: true });
+    } catch (err: any) {
+      console.error('version failed:', err);
+      return interaction.reply({ content: `version failed: ${err?.message ?? err}`, ephemeral: true });
+    }
+  }
+  if (name === "setmodel") {
+    if (!isOwnerId(interaction.user.id)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
+    const provider = (interaction.options.getString('provider', true) || '').toLowerCase();
+    const model = interaction.options.getString('model', true).trim();
+    if (!['openai','gemini'].includes(provider)) return interaction.reply({ content: 'Provider must be openai or gemini.', ephemeral: true });
+    if (!model) return interaction.reply({ content: 'Model cannot be empty.', ephemeral: true });
+    await interaction.reply({ content: `Setting ${provider.toUpperCase()} model to ${model} and restarting...`, ephemeral: true });
+    try {
+      const fs = await import('fs/promises');
+      const path = '/opt/synapseai-bot/.env';
+      let content = '';
+      try { content = await fs.readFile(path, 'utf8'); } catch { content = ''; }
+      const key = provider === 'openai' ? 'OPENAI_MODEL' : 'GEMINI_MODEL';
+      const regex = new RegExp(`${key}=.*`);
+      if (content.match(regex)) {
+        content = content.replace(regex, `${key}=${model}`);
+      } else {
+        const nl = content.endsWith('\n') || content.length === 0 ? '' : '\n';
+        content = `${content}${nl}${key}=${model}\n`;
+      }
+      await fs.writeFile(path, content, 'utf8');
+      const { exec } = await import('child_process');
+      await new Promise<void>((resolve, reject) => {
+        exec('pm2 restart synapseai-bot --update-env', (error) => error ? reject(error) : resolve());
+      });
+      await interaction.followUp({ content: `Model updated. Provider=${provider}, model=${model}`, ephemeral: true });
+    } catch (err: any) {
+      console.error('setmodel failed:', err);
+      await interaction.followUp({ content: `setmodel failed: ${err?.message ?? err}`, ephemeral: true });
     }
     return;
   }

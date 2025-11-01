@@ -56,7 +56,12 @@ export async function generateReply(prompt: string) {
 async function generateWithGemini(fullPrompt: string) {
   const client = getGeminiClient();
   let lastErr: any = null;
-  for (const modelName of GEMINI_MODEL_CANDIDATES) {
+  const preferred = (process.env.GEMINI_MODEL || '').trim();
+  const candidates = [
+    ... (preferred ? [preferred] : []),
+    ...GEMINI_MODEL_CANDIDATES
+  ];
+  for (const modelName of candidates) {
     try {
       const model = client.getGenerativeModel({ model: modelName });
       const result = await model.generateContent(fullPrompt);
