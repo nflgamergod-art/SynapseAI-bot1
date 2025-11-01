@@ -1,6 +1,6 @@
 import { Message } from "discord.js";
 import { generateReply } from "../services/openai";
-import { findRelevantMemories, extractAndSaveFromExchange, upsertQAPair, findSimilarQA } from "../services/memory";
+import { findRelevantMemories, extractAndSaveFromExchange, upsertQAPair, findSimilarQA, trackRecentMessage, detectCorrectionContext } from "../services/memory";
 import { localReply } from "../services/localResponder";
 
 const conversations = new Map<string, string[]>();
@@ -20,8 +20,11 @@ export async function handleConversationalReply(message: Message) {
   if (convo.length > 10) convo.splice(0, convo.length - 10);
   conversations.set(key, convo);
 
-  // Fetch relevant long-term memories and prior Q&A
+  // Track message for correction detection
   const guildId = message.guild?.id ?? null;
+  trackRecentMessage(message.author.id, guildId, message.channel.id, message.id, message.content);
+
+  // Fetch relevant long-term memories and prior Q&A
   const relevant = findRelevantMemories(message.content, message.author.id, guildId, 5);
   const similar = findSimilarQA(message.content, message.author.id, guildId);
   let memoryContext = '';
@@ -51,7 +54,8 @@ export async function handleConversationalReply(message: Message) {
       assistantMessage: reply
     });
     upsertQAPair(message.author.id, guildId, message.content, reply);
-    const ack = buildMemoryAck(message.content, events);
+    const corrCtx = detectCorrectionContext(message.channel.id, message.createdTimestamp);
+    const ack = buildMemoryAck(message.content, events, corrCtx.isCorrectionContext);
     const finalReply = ack ? `${reply}\n\n${ack}` : reply;
     await sendChunkedReply(message, finalReply);
     return;
@@ -73,7 +77,8 @@ export async function handleConversationalReply(message: Message) {
       assistantMessage: local
     });
     upsertQAPair(message.author.id, guildId, message.content, local);
-    const ack = buildMemoryAck(message.content, events);
+    const corrCtx = detectCorrectionContext(message.channel.id, message.createdTimestamp);
+    const ack = buildMemoryAck(message.content, events, corrCtx.isCorrectionContext);
     const finalLocal = ack ? `${local}\n\n${ack}` : local;
     await sendChunkedReply(message, finalLocal);
   } catch (err) {
@@ -82,7 +87,7 @@ export async function handleConversationalReply(message: Message) {
   }
 }
 
-function buildMemoryAck(userMessage: string, events: Array<{ key: string; action: string; oldValue?: string; newValue: string }>): string {
+function buildMemoryAck(userMessage: string, events: Array<{ key: string; action: string; oldValue?: string; newValue: string }>, isCorrectionContext: boolean): string {
   if (!events || !events.length) return '';
   const liarRe = /(lying|liar|that's not true|cap|capping|stop capping)/i;
   const lines: string[] = [];
@@ -100,7 +105,7 @@ function buildMemoryAck(userMessage: string, events: Array<{ key: string; action
       if (k === 'name') lines.push(`Got it — I'll use ${e.newValue} and remember ${e.oldValue} as an alternate spelling.`);
       else lines.push(`Saved an alternate for ${k}.`);
     } else if (e.action === 'updated') {
-      if (liarRe.test(userMessage)) lines.push(`Caught in 4K — updating my notes: ${k} → ${e.newValue}.`);
+      if (liarRe.test(userMessage) || isCorrectionContext) lines.push(`Caught in 4K — updating my notes: ${k} → ${e.newValue}.`);
       else if (k === 'name') lines.push(`Thanks for the correction — updating your name to ${e.newValue}.`);
       else lines.push(`Updated ${k} to ${e.newValue}.`);
     }

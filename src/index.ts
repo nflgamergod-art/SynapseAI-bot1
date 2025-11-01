@@ -126,6 +126,26 @@ client.once("ready", () => {
     { name: "blackjack", description: "Play Blackjack vs SynapseAI", options: [
       { name: "difficulty", description: "easy | normal | hard", type: 3, required: false }
     ] },
+    // Memory commands (user-level)
+    { name: "remember", description: "Save a personal fact or preference for better replies", options: [
+      { name: "key", description: "Short label (e.g., name, timezone, favorite_team)", type: 3, required: true },
+      { name: "value", description: "Value to remember", type: 3, required: true },
+      { name: "type", description: "Type: fact | preference | note", type: 3, required: false }
+    ] },
+    { name: "forget", description: "Delete a saved memory by key", options: [
+      { name: "key", description: "The memory key to delete", type: 3, required: true }
+    ] },
+    { name: "memories", description: "List your recent saved memories", options: [
+      { name: "limit", description: "How many to show (default 10)", type: 4, required: false }
+    ] },
+    { name: "aliases", description: "View your name aliases (alternate spellings)" },
+    { name: "history", description: "See change history for a saved fact", options: [
+      { name: "key", description: "Memory key (e.g., name, timezone)", type: 3, required: true },
+      { name: "limit", description: "How many changes to show (default 5)", type: 4, required: false }
+    ] },
+    { name: "revert", description: "Undo the last change to a memory", options: [
+      { name: "key", description: "Memory key to revert (e.g., name)", type: 3, required: true }
+    ] },
   { name: "setquestiontimeout", description: "Set the question repeat timeout (in seconds)", options: [{ name: "seconds", description: "Timeout in seconds (e.g., 300 for 5 minutes)", type: 4, required: true }] },
   { name: "getquestiontimeout", description: "Get the current question repeat timeout" },
   { name: "addbypass", description: "Add a bypass entry (user or role) to allow using admin commands", options: [ { name: 'type', description: 'user or role', type: 3, required: true }, { name: 'id', description: 'User ID or Role ID (or mention)', type: 3, required: true } ] },
@@ -373,6 +393,87 @@ client.on("interactionCreate", async (interaction) => {
     // @ts-ignore
     setBjMessageId(sess.id, (msg as any).id);
     return;
+  }
+  if (name === "remember") {
+    const { saveMemory } = await import('./services/memory');
+    const key = interaction.options.getString('key', true).trim().slice(0, 128);
+    const value = interaction.options.getString('value', true).trim().slice(0, 2000);
+    const typeRaw = (interaction.options.getString('type') || 'fact').toLowerCase();
+    const type = (['fact','preference','note'].includes(typeRaw) ? typeRaw : 'fact') as any;
+    // Basic guard against obvious secrets
+    const dangerous = /(api[-_ ]?key|token|password|pass|secret|ssh|private[-_ ]?key)/i;
+    if (dangerous.test(key) || dangerous.test(value)) {
+      return interaction.reply({ content: "For your security, I won't store secrets like tokens or API keys.", ephemeral: true });
+    }
+    try {
+      saveMemory({ user_id: interaction.user.id, guild_id: interaction.guild?.id ?? null, type, key, value, confidence: 0.9 });
+      return interaction.reply({ content: `Saved (${type}) ${key}: ${value}`, ephemeral: true });
+    } catch (e) {
+      console.error('remember failed', e);
+      return interaction.reply({ content: 'Failed to save memory.', ephemeral: true });
+    }
+  }
+  if (name === "forget") {
+    const { deleteMemoryByKey } = await import('./services/memory');
+    const key = interaction.options.getString('key', true).trim();
+    try {
+      const n = deleteMemoryByKey(interaction.user.id, key, interaction.guild?.id ?? null);
+      if (n > 0) return interaction.reply({ content: `Deleted ${n} entr${n === 1 ? 'y' : 'ies'} for key '${key}'.`, ephemeral: true });
+      return interaction.reply({ content: `No entries found for key '${key}'.`, ephemeral: true });
+    } catch (e) {
+      console.error('forget failed', e);
+      return interaction.reply({ content: 'Failed to delete memory.', ephemeral: true });
+    }
+  }
+  if (name === "memories") {
+    const { listMemories } = await import('./services/memory');
+    const limit = Math.max(1, Math.min(50, interaction.options.getInteger('limit') ?? 10));
+    try {
+      const items = listMemories(interaction.user.id, interaction.guild?.id ?? null, limit);
+      if (!items.length) return interaction.reply({ content: 'You have no saved memories yet. Use /remember to add one.', ephemeral: true });
+      const lines = items.map(m => `- (${m.type}) ${m.key}: ${m.value}`).join('\n').slice(0, 1900);
+      return interaction.reply({ content: `Your recent memories:\n${lines}`, ephemeral: true });
+    } catch (e) {
+      console.error('memories failed', e);
+      return interaction.reply({ content: 'Failed to list memories.', ephemeral: true });
+    }
+  }
+  if (name === "aliases") {
+    const { getAliases } = await import('./services/memory');
+    try {
+      const aliases = getAliases(interaction.user.id, interaction.guild?.id ?? null);
+      if (!aliases.length) return interaction.reply({ content: 'No name aliases found.', ephemeral: true });
+      return interaction.reply({ content: `Your name aliases: ${aliases.join(', ')}`, ephemeral: true });
+    } catch (e) {
+      console.error('aliases failed', e);
+      return interaction.reply({ content: 'Failed to retrieve aliases.', ephemeral: true });
+    }
+  }
+  if (name === "history") {
+    const { getMemoryHistory } = await import('./services/memory');
+    const key = interaction.options.getString('key', true).trim();
+    const limit = Math.max(1, Math.min(20, interaction.options.getInteger('limit') ?? 5));
+    try {
+      const hist = getMemoryHistory(interaction.user.id, key, interaction.guild?.id ?? null, limit);
+      if (!hist.length) return interaction.reply({ content: `No history found for key '${key}'.`, ephemeral: true });
+      const lines = hist.map((h: any) => `[${new Date(h.changed_at).toLocaleString()}] ${h.action}: ${h.old_value ? `${h.old_value} → ` : ''}${h.new_value}`).join('\n').slice(0, 1900);
+      return interaction.reply({ content: `History for '${key}':\n${lines}`, ephemeral: true });
+    } catch (e) {
+      console.error('history failed', e);
+      return interaction.reply({ content: 'Failed to retrieve history.', ephemeral: true });
+    }
+  }
+  if (name === "revert") {
+    const { revertMemory } = await import('./services/memory');
+    const key = interaction.options.getString('key', true).trim();
+    try {
+      const event = revertMemory(interaction.user.id, key, interaction.guild?.id ?? null);
+      if (!event) return interaction.reply({ content: `No previous value found for key '${key}'.`, ephemeral: true });
+      return interaction.reply({ content: `Reverted '${key}' from ${event.oldValue} back to ${event.newValue}.`, ephemeral: true });
+    } catch (e) {
+      console.error('revert failed', e);
+      return interaction.reply({ content: 'Failed to revert memory.', ephemeral: true });
+    }
   }
   if (name === "redeploy") {
     if (!isOwnerId(interaction.user.id)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });

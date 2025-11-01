@@ -67,8 +67,11 @@ export function upsertUniqueMemory(userId: string, guildId: string | null, key: 
   const norm = (s: string) => (s || '').trim().toLowerCase();
   const now = nowISO();
   if (!existing) {
-    db.prepare(`INSERT INTO memories (user_id, guild_id, type, key, value, source_msg_id, confidence, created_at, updated_at) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?)`)
+    const res = db.prepare(`INSERT INTO memories (user_id, guild_id, type, key, value, source_msg_id, confidence, created_at, updated_at) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?)`)
       .run(userId, guildId ?? null, 'fact', key, value, 0.9, now, now);
+    const memId = res.lastInsertRowid;
+    db.prepare(`INSERT INTO memory_history (memory_id, user_id, guild_id, key, old_value, new_value, action, changed_at) VALUES (?, ?, ?, ?, NULL, ?, 'created', ?)`)
+      .run(memId, userId, guildId ?? null, key, value, now);
     return { key, action: 'created', newValue: value };
   }
   if (norm(existing.value) === norm(value)) {
@@ -80,9 +83,13 @@ export function upsertUniqueMemory(userId: string, guildId: string | null, key: 
     db.prepare(`UPDATE memories SET value = ?, updated_at = ? WHERE id = ?`).run(value, now, (existing as any).id);
     db.prepare(`INSERT INTO memories (user_id, guild_id, type, key, value, source_msg_id, confidence, created_at, updated_at) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?)`)
       .run(userId, guildId ?? null, 'note', 'name_alias', existing.value, 0.6, now, now);
+    db.prepare(`INSERT INTO memory_history (memory_id, user_id, guild_id, key, old_value, new_value, action, changed_at) VALUES (?, ?, ?, ?, ?, ?, 'aliased', ?)`)
+      .run((existing as any).id, userId, guildId ?? null, key, existing.value, value, now);
     return { key, action: 'aliased', oldValue: existing.value, newValue: value };
   }
   db.prepare(`UPDATE memories SET value = ?, updated_at = ? WHERE id = ?`).run(value, now, (existing as any).id);
+  db.prepare(`INSERT INTO memory_history (memory_id, user_id, guild_id, key, old_value, new_value, action, changed_at) VALUES (?, ?, ?, ?, ?, ?, 'updated', ?)`)
+    .run((existing as any).id, userId, guildId ?? null, key, existing.value, value, now);
   return { key, action: 'updated', oldValue: existing.value, newValue: value };
 }
 
@@ -184,4 +191,54 @@ export function deleteMemoryByKey(userId: string, key: string, guildId?: string 
   const stmt = db.prepare(`DELETE FROM memories WHERE user_id = ? AND (guild_id IS NULL OR guild_id = ?) AND lower(key) = lower(?)`);
   const res = stmt.run(userId, guildId ?? null, key);
   return res.changes ?? 0;
+}
+
+export function trackRecentMessage(userId: string, guildId: string | null, channelId: string, messageId: string, content: string) {
+  const db = getDB();
+  const now = Date.now();
+  db.prepare(`INSERT INTO recent_messages (user_id, guild_id, channel_id, message_id, content, timestamp) VALUES (?, ?, ?, ?, ?, ?)`)
+    .run(userId, guildId ?? null, channelId, messageId, content, now);
+  db.prepare(`DELETE FROM recent_messages WHERE timestamp < ?`).run(now - 60000);
+}
+
+export function detectCorrectionContext(channelId: string, currentMsgTimestamp: number): { isCorrectionContext: boolean; callOutMsg?: string } {
+  const db = getDB();
+  const window = 15000;
+  const rows = db.prepare(`SELECT * FROM recent_messages WHERE channel_id = ? AND timestamp >= ? ORDER BY timestamp DESC`)
+    .all(channelId, currentMsgTimestamp - window) as any[];
+  const liarRe = /(lying|liar|that's not true|cap|capping|stop capping|caught|called out)/i;
+  for (const r of rows) {
+    if (liarRe.test(r.content)) return { isCorrectionContext: true, callOutMsg: r.content };
+  }
+  return { isCorrectionContext: false };
+}
+
+export function getMemoryHistory(userId: string, key: string, guildId?: string | null, limit = 10) {
+  const db = getDB();
+  const rows = db.prepare(`SELECT * FROM memory_history WHERE user_id = ? AND (guild_id IS NULL OR guild_id = ?) AND lower(key) = lower(?) ORDER BY changed_at DESC LIMIT ?`)
+    .all(userId, guildId ?? null, key, limit) as any[];
+  return rows;
+}
+
+export function revertMemory(userId: string, key: string, guildId?: string | null): MemoryEvent | null {
+  const db = getDB();
+  const hist = db.prepare(`SELECT * FROM memory_history WHERE user_id = ? AND (guild_id IS NULL OR guild_id = ?) AND lower(key) = lower(?) ORDER BY changed_at DESC LIMIT 2`)
+    .all(userId, guildId ?? null, key) as any[];
+  if (hist.length < 2) return null;
+  const prev = hist[1];
+  const now = nowISO();
+  const mem = db.prepare(`SELECT * FROM memories WHERE user_id = ? AND (guild_id IS NULL OR guild_id = ?) AND lower(key) = lower(?) LIMIT 1`)
+    .get(userId, guildId ?? null, key) as any;
+  if (!mem) return null;
+  db.prepare(`UPDATE memories SET value = ?, updated_at = ? WHERE id = ?`).run(prev.new_value, now, mem.id);
+  db.prepare(`INSERT INTO memory_history (memory_id, user_id, guild_id, key, old_value, new_value, action, changed_at) VALUES (?, ?, ?, ?, ?, ?, 'reverted', ?)`)
+    .run(mem.id, userId, guildId ?? null, key, mem.value, prev.new_value, now);
+  return { key, action: 'updated', oldValue: mem.value, newValue: prev.new_value };
+}
+
+export function getAliases(userId: string, guildId?: string | null) {
+  const db = getDB();
+  const rows = db.prepare(`SELECT * FROM memories WHERE user_id = ? AND (guild_id IS NULL OR guild_id = ?) AND key = 'name_alias' ORDER BY created_at DESC`)
+    .all(userId, guildId ?? null) as MemoryRow[];
+  return rows.map(r => r.value);
 }

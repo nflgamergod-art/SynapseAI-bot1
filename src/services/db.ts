@@ -51,6 +51,31 @@ function initSchema() {
     CREATE INDEX IF NOT EXISTS idx_qa_user ON qa_pairs(user_id);
     CREATE INDEX IF NOT EXISTS idx_qa_guild ON qa_pairs(guild_id);
     CREATE INDEX IF NOT EXISTS idx_qa_question ON qa_pairs(question_norm);
+
+    CREATE TABLE IF NOT EXISTS memory_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      memory_id INTEGER,
+      user_id TEXT NOT NULL,
+      guild_id TEXT,
+      key TEXT NOT NULL,
+      old_value TEXT,
+      new_value TEXT NOT NULL,
+      action TEXT CHECK(action IN ('created','updated','aliased','reverted')) NOT NULL,
+      changed_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_memhist_user ON memory_history(user_id);
+    CREATE INDEX IF NOT EXISTS idx_memhist_key ON memory_history(user_id, key);
+
+    CREATE TABLE IF NOT EXISTS recent_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id TEXT NOT NULL,
+      guild_id TEXT,
+      channel_id TEXT NOT NULL,
+      message_id TEXT NOT NULL,
+      content TEXT NOT NULL,
+      timestamp INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_recmsg_channel ON recent_messages(channel_id, timestamp);
   `);
 }
 
