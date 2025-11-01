@@ -81,17 +81,42 @@ async function generateWithGemini(fullPrompt: string) {
 async function generateWithOpenAI(fullPrompt: string) {
   const client = getOpenAIClient();
   const model = process.env.OPENAI_MODEL || 'gpt-4o-mini';
-  const resp = await client.chat.completions.create({
-    model,
-    messages: [
-      { role: 'system', content: 'You are SynapseAI, a helpful Discord assistant.' },
-      { role: 'user', content: fullPrompt }
-    ],
-    temperature: 0.7,
-    max_tokens: 1500
-  });
-  const text = resp.choices?.[0]?.message?.content ?? '';
-  return (text || '').trim() || "Sorry, I couldn't form a reply.";
+
+  const maxRetries = Number(process.env.OPENAI_RETRY_MAX ?? 2);
+  const defaultDelayMs = Number(process.env.OPENAI_RETRY_DELAY_MS ?? 20000); // 20s default for RPM
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const resp = await client.chat.completions.create({
+        model,
+        messages: [
+          { role: 'system', content: 'You are SynapseAI, a helpful Discord assistant.' },
+          { role: 'user', content: fullPrompt }
+        ],
+        temperature: 0.7,
+        max_tokens: 1500
+      });
+      const text = resp.choices?.[0]?.message?.content ?? '';
+      return (text || '').trim() || "Sorry, I couldn't form a reply.";
+    } catch (e: any) {
+      const msg = (e?.message || '').toLowerCase();
+      const status = (e?.status ?? e?.response?.status ?? 0) as number;
+      const is429 = status === 429 || msg.includes('rate limit');
+      if (!is429) throw e;
+      // Differentiate per-day vs per-minute; don't spin on daily cap
+      const isRpd = msg.includes('per day (rpd)') || msg.includes('per day');
+      if (isRpd) {
+        throw new Error('OpenAI daily rate limit reached (RPD).');
+      }
+      // Parse suggested wait (e.g., "try again in 20s" or "7m12s")
+      const waitMs = parseSuggestedWaitMs(msg) ?? defaultDelayMs;
+      if (attempt === maxRetries) throw e;
+      await sleep(waitMs);
+      continue;
+    }
+  }
+  // Should not reach here
+  throw new Error('OpenAI: exhausted retries.');
 }
 
 // ----- Memory extraction helpers -----
@@ -128,19 +153,11 @@ export async function extractMemories(userMessage: string, assistantMessage?: st
   const prompt = buildExtractionPrompt(userMessage, assistantMessage);
   try {
     if (provider === 'openai' || process.env.OPENAI_API_KEY) {
-      const client = getOpenAIClient();
-      const model = process.env.OPENAI_MODEL || 'gpt-4o-mini';
-      const resp = await client.chat.completions.create({
-        model,
-        messages: [
-          { role: 'system', content: 'You are a precise information extractor. Return ONLY valid JSON.' },
-          { role: 'user', content: prompt }
-        ],
-        temperature: 0,
-        max_tokens: 400
-      });
-      const text = resp.choices?.[0]?.message?.content ?? '';
-      const parsed = tryParseJSONArray(text);
+      const text = await openaiChatOnceWithRetry([
+        { role: 'system', content: 'You are a precise information extractor. Return ONLY valid JSON.' },
+        { role: 'user', content: prompt }
+      ], 400, 0);
+      const parsed = tryParseJSONArray(text || '');
       if (parsed.length) return parsed;
     }
   } catch {/* ignore and try gemini */}
@@ -163,5 +180,45 @@ export async function extractMemories(userMessage: string, assistantMessage?: st
   const mTz = userMessage.match(/\b(gmt|utc|pst|pdt|est|edt|cst|cdt|mst|mdt)\b/i);
   if (mTz) out.push({ key: 'timezone', value: mTz[1].toUpperCase(), type: 'fact', confidence: 0.55 });
   return out;
+}
+
+// ----- Retry helpers -----
+function sleep(ms: number) { return new Promise(res => setTimeout(res, ms)); }
+
+function parseSuggestedWaitMs(lowerMsg: string): number | undefined {
+  // Tries to parse phrases like "try again in 20s" or "7m12s"
+  const m1 = lowerMsg.match(/try again in\s+(\d+)s/);
+  if (m1) return Number(m1[1]) * 1000;
+  const m2 = lowerMsg.match(/(\d+)m(\d+)s/);
+  if (m2) return (Number(m2[1]) * 60 + Number(m2[2])) * 1000;
+  const m3 = lowerMsg.match(/in\s+(\d+)\s*minutes?/);
+  if (m3) return Number(m3[1]) * 60 * 1000;
+  const m4 = lowerMsg.match(/in\s+(\d+)\s*seconds?/);
+  if (m4) return Number(m4[1]) * 1000;
+  return undefined;
+}
+
+async function openaiChatOnceWithRetry(messages: Array<{ role: 'system'|'user'|'assistant'; content: string }>, max_tokens = 400, temperature = 0) {
+  const client = getOpenAIClient();
+  const model = process.env.OPENAI_MODEL || 'gpt-4o-mini';
+  const maxRetries = Number(process.env.OPENAI_RETRY_MAX ?? 1);
+  const defaultDelayMs = Number(process.env.OPENAI_RETRY_DELAY_MS ?? 20000);
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const resp = await client.chat.completions.create({ model, messages, temperature, max_tokens });
+      return resp.choices?.[0]?.message?.content ?? '';
+    } catch (e: any) {
+      const msg = (e?.message || '').toLowerCase();
+      const status = (e?.status ?? e?.response?.status ?? 0) as number;
+      const is429 = status === 429 || msg.includes('rate limit');
+      if (!is429) throw e;
+      const isRpd = msg.includes('per day (rpd)') || msg.includes('per day');
+      if (isRpd) throw new Error('OpenAI daily rate limit reached (RPD).');
+      const waitMs = parseSuggestedWaitMs(msg) ?? defaultDelayMs;
+      if (attempt === maxRetries) throw e;
+      await sleep(waitMs);
+    }
+  }
+  throw new Error('OpenAI: exhausted retries.');
 }
 
