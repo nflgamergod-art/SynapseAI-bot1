@@ -8,12 +8,26 @@ const CONFIG_FILE = path.join(DATA_DIR, "config.json");
 interface PersistedConfig {
   defaultMuteSeconds?: number;
   moderationLogChannelId?: string;
+  tauntMode?: 'soft' | 'normal' | 'edgy';
 }
 
 export function getEnvDefaultMuteSeconds(): number {
   const v = process.env.DEFAULT_MUTE_SECONDS;
   const n = v ? Number(v) : NaN;
   return Number.isFinite(n) && n > 0 ? n : 3600; // fallback 1 hour
+}
+
+export function getTauntMode(): 'soft' | 'normal' | 'edgy' {
+  const persisted = readPersistedConfig();
+  const v = persisted?.tauntMode;
+  if (v === 'soft' || v === 'edgy' || v === 'normal') return v;
+  return 'normal';
+}
+
+export function setTauntMode(mode: 'soft' | 'normal' | 'edgy') {
+  const persisted = readPersistedConfig() || {};
+  (persisted as any).tauntMode = mode;
+  writePersistedConfig(persisted);
 }
 
 export function readPersistedConfig(): PersistedConfig | null {

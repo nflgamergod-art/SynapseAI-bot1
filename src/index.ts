@@ -2,7 +2,7 @@ import * as dotenv from "dotenv";
 import * as path from "path";
 // Ensure .env loads reliably in production: dist/ -> project root
 dotenv.config({ path: path.join(__dirname, "../.env") });
-import { Client, GatewayIntentBits, Partials, Message, PermissionsBitField } from "discord.js";
+import { Client, GatewayIntentBits, Partials, Message, PermissionsBitField, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } from "discord.js";
 import { isWakeWord, handleConversationalReply } from "./utils/responder";
 import { isOwnerId } from "./utils/owner";
 import { helpCommand } from "./commands/help";
@@ -73,6 +73,9 @@ client.once("ready", () => {
       { name: "preset", description: "fast | balanced | cheap", type: 3, required: true },
       { name: "provider", description: "openai or gemini (defaults to AI_PROVIDER)", type: 3, required: false }
     ] },
+    { name: "settaunt", description: "Owner: set trash talk tone (soft|normal|edgy)", options: [
+      { name: "tone", description: "soft | normal | edgy", type: 3, required: true }
+    ] },
     { name: "diagai", description: "Owner: AI health check (env + test call)" },
     // Owner-only whitelist management
     { name: "addwhitelist", description: "Owner: add a whitelist entry (user or role)", options: [
@@ -114,6 +117,11 @@ client.once("ready", () => {
         { name: "id", description: "Giveaway ID", type: 3, required: true }
       ] },
       { name: "list", description: "List active giveaways", type: 1 }
+    ] },
+    // Games
+    { name: "rpsai", description: "Play Rock-Paper-Scissors vs SynapseAI", options: [
+      { name: "difficulty", description: "easy | normal | hard", type: 3, required: false },
+      { name: "mode", description: "bo1 | bo3", type: 3, required: false }
     ] },
   { name: "setquestiontimeout", description: "Set the question repeat timeout (in seconds)", options: [{ name: "seconds", description: "Timeout in seconds (e.g., 300 for 5 minutes)", type: 4, required: true }] },
   { name: "getquestiontimeout", description: "Get the current question repeat timeout" },
@@ -313,6 +321,36 @@ client.on("interactionCreate", async (interaction) => {
     };
 
   if (name === "help") return interaction.reply({ content: `Use ${prefix}help or mention me to get conversational replies. Use moderation commands with appropriate permissions.`, ephemeral: true });
+  if (name === "rpsai") {
+    // Whitelist already enforced above
+    const difficultyRaw = (interaction.options.getString('difficulty') || 'normal').toLowerCase();
+    const modeRaw = (interaction.options.getString('mode') || 'bo1').toLowerCase();
+    const difficulty = (['easy','normal','hard'].includes(difficultyRaw) ? difficultyRaw : 'normal') as any;
+    const mode = (['bo1','bo3'].includes(modeRaw) ? modeRaw : 'bo1') as any;
+    const { startRpsSession, setRpsSessionMessage, scoreLine } = await import('./services/games/rpsAi');
+    const sess = startRpsSession(interaction.user.id, interaction.channelId!, difficulty, mode);
+
+    const embed = new EmbedBuilder()
+      .setTitle('Rock-Paper-Scissors vs SynapseAI')
+      .setDescription('Pick your move below. First to the target wins!')
+      .addFields(
+        { name: 'Difficulty', value: String(difficulty).toUpperCase(), inline: true },
+        { name: 'Mode', value: String(mode).toUpperCase(), inline: true },
+        { name: 'Score', value: scoreLine(sess), inline: false }
+      )
+      .setColor(0x00A8FF);
+
+    const makeButtons = () => new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId(`rpsai:${sess.id}:rock`).setLabel('Rock').setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId(`rpsai:${sess.id}:paper`).setLabel('Paper').setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId(`rpsai:${sess.id}:scissors`).setLabel('Scissors').setStyle(ButtonStyle.Primary)
+    );
+
+    const msg = await interaction.reply({ embeds: [embed], components: [makeButtons()], fetchReply: true });
+    // @ts-ignore - union
+    setRpsSessionMessage(sess.id, (msg as any).id);
+    return;
+  }
   if (name === "redeploy") {
     if (!isOwnerId(interaction.user.id)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
     await interaction.reply({ content: 'Starting deploy... I will pull latest code, rebuild, and restart.', ephemeral: true });
@@ -543,6 +581,20 @@ client.on("interactionCreate", async (interaction) => {
       await interaction.followUp({ content: `setmodelpreset failed: ${err?.message ?? err}`, ephemeral: true });
     }
     return;
+  }
+  if (name === "settaunt") {
+    if (!isOwnerId(interaction.user.id)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
+    const toneRaw = (interaction.options.getString('tone', true) || '').toLowerCase();
+    if (!['soft','normal','edgy'].includes(toneRaw)) return interaction.reply({ content: 'Tone must be one of: soft, normal, edgy.', ephemeral: true });
+    try {
+      const { setTauntMode, getTauntMode } = await import('./config');
+      setTauntMode(toneRaw as any);
+      const now = getTauntMode();
+      return interaction.reply({ content: `Trash talk tone set to '${now}'.`, ephemeral: true });
+    } catch (err: any) {
+      console.error('settaunt failed:', err);
+      return interaction.reply({ content: `Failed to set tone: ${err?.message ?? err}`, ephemeral: true });
+    }
   }
   if (name === "diagai") {
     if (!isOwnerId(interaction.user.id)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
@@ -1522,6 +1574,58 @@ client.on("messageCreate", async (message: Message) => {
     }
   } catch (err) {
     console.error('Error evaluating response rules:', err);
+  }
+});
+
+// Button interactions (RPS AI)
+client.on('interactionCreate', async (interaction) => {
+  try {
+    if (!interaction.isButton()) return;
+    const id = interaction.customId || '';
+    if (!id.startsWith('rpsai:')) return;
+    const parts = id.split(':');
+    const sessionId = parts[1];
+    const move = (parts[2] || '').toLowerCase();
+    if (!['rock','paper','scissors'].includes(move)) return interaction.reply({ content: 'Invalid move.', ephemeral: true });
+
+    const { getRpsSession, handlePlayerMove, rpsEmoji, scoreLine, endRpsSession } = await import('./services/games/rpsAi');
+    const { getTrashTalk } = await import('./services/games/trashTalk');
+    const sess = getRpsSession(sessionId);
+    if (!sess) return interaction.reply({ content: 'This match has expired.', ephemeral: true });
+    if (interaction.user.id !== sess.userId) {
+      return interaction.reply({ content: 'Only the challenger can play in this match.', ephemeral: true });
+    }
+
+    const result = handlePlayerMove(sessionId, move as any);
+    if (!result) return interaction.reply({ content: 'Match not found.', ephemeral: true });
+
+    const { session, aiMove, outcome, finished } = result;
+    const talk = getTrashTalk({ outcome, difficulty: session.difficulty as any, playerName: interaction.user.username, playerMove: move, aiMove });
+
+    const lastRound = `You ${rpsEmoji(move as any)} vs ${rpsEmoji(aiMove)} SynapseAI → ${outcome.toUpperCase()}`;
+    const embed = new EmbedBuilder()
+      .setTitle('Rock-Paper-Scissors vs SynapseAI')
+      .setDescription(`${lastRound}\n${talk}`)
+      .addFields(
+        { name: 'Difficulty', value: String(session.difficulty).toUpperCase(), inline: true },
+        { name: 'Mode', value: String(session.mode).toUpperCase(), inline: true },
+        { name: 'Score', value: scoreLine(session), inline: false }
+      )
+      .setColor(finished ? (session.playerWins > session.aiWins ? 0x00D26A : 0xFF4D4F) : 0x00A8FF);
+
+    const buttonsRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId(`rpsai:${session.id}:rock`).setLabel('Rock').setStyle(ButtonStyle.Primary).setDisabled(finished),
+      new ButtonBuilder().setCustomId(`rpsai:${session.id}:paper`).setLabel('Paper').setStyle(ButtonStyle.Primary).setDisabled(finished),
+      new ButtonBuilder().setCustomId(`rpsai:${session.id}:scissors`).setLabel('Scissors').setStyle(ButtonStyle.Primary).setDisabled(finished),
+    );
+
+    if (finished) endRpsSession(session.id);
+    await interaction.update({ embeds: [embed], components: [buttonsRow] });
+  } catch (err) {
+    console.error('Button interaction error:', err);
+    if (interaction.isRepliable()) {
+      try { await interaction.reply({ content: 'Something went wrong updating the match.', ephemeral: true }); } catch {}
+    }
   }
 });
 
