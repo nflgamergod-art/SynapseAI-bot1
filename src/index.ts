@@ -57,6 +57,12 @@ client.once("ready", () => {
     { name: "setgeminikey", description: "Owner: set Gemini API key and restart bot", options: [
       { name: "key", description: "Gemini API key", type: 3, required: true }
     ] },
+    { name: "setopenai", description: "Owner: set OpenAI API key and restart bot", options: [
+      { name: "key", description: "OpenAI API key", type: 3, required: true }
+    ] },
+    { name: "setprovider", description: "Owner: choose AI provider (openai|gemini) and restart", options: [
+      { name: "provider", description: "openai or gemini", type: 3, required: true }
+    ] },
     { name: "diagai", description: "Owner: AI health check (env + test call)" },
     // Owner-only whitelist management
     { name: "addwhitelist", description: "Owner: add a whitelist entry (user or role)", options: [
@@ -342,10 +348,72 @@ client.on("interactionCreate", async (interaction) => {
     }
     return;
   }
+  if (name === "setopenai") {
+    if (!isOwnerId(interaction.user.id)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
+    const newKey = interaction.options.getString('key', true).trim();
+    if (!newKey || !/^sk-/.test(newKey)) {
+      return interaction.reply({ content: 'That does not look like a valid OpenAI API key (expected to start with sk-).', ephemeral: true });
+    }
+    await interaction.reply({ content: 'Updating OPENAI_API_KEY on server and restarting...', ephemeral: true });
+    try {
+      const fs = await import('fs/promises');
+      const path = '/opt/synapseai-bot/.env';
+      let content = '';
+      try { content = await fs.readFile(path, 'utf8'); } catch { content = ''; }
+      if (content.includes('OPENAI_API_KEY=')) {
+        content = content.replace(/OPENAI_API_KEY=.*/g, `OPENAI_API_KEY=${newKey}`);
+      } else {
+        const nl = content.endsWith('\n') || content.length === 0 ? '' : '\n';
+        content = `${content}${nl}OPENAI_API_KEY=${newKey}\n`;
+      }
+      await fs.writeFile(path, content, 'utf8');
+      const { exec } = await import('child_process');
+      await new Promise<void>((resolve, reject) => {
+        exec('pm2 restart synapseai-bot --update-env', (error) => error ? reject(error) : resolve());
+      });
+      await interaction.followUp({ content: 'OpenAI key updated and bot restarted.', ephemeral: true });
+    } catch (err: any) {
+      console.error('setopenai failed:', err);
+      await interaction.followUp({ content: `Failed to update key: ${err?.message ?? err}`, ephemeral: true });
+    }
+    return;
+  }
+  if (name === "setprovider") {
+    if (!isOwnerId(interaction.user.id)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
+    const provider = (interaction.options.getString('provider', true) || '').toLowerCase();
+    if (!['openai','gemini'].includes(provider)) {
+      return interaction.reply({ content: 'Provider must be openai or gemini.', ephemeral: true });
+    }
+    await interaction.reply({ content: `Setting AI_PROVIDER=${provider} and restarting...`, ephemeral: true });
+    try {
+      const fs = await import('fs/promises');
+      const path = '/opt/synapseai-bot/.env';
+      let content = '';
+      try { content = await fs.readFile(path, 'utf8'); } catch { content = ''; }
+      if (content.includes('AI_PROVIDER=')) {
+        content = content.replace(/AI_PROVIDER=.*/g, `AI_PROVIDER=${provider}`);
+      } else {
+        const nl = content.endsWith('\n') || content.length === 0 ? '' : '\n';
+        content = `${content}${nl}AI_PROVIDER=${provider}\n`;
+      }
+      await fs.writeFile(path, content, 'utf8');
+      const { exec } = await import('child_process');
+      await new Promise<void>((resolve, reject) => {
+        exec('pm2 restart synapseai-bot --update-env', (error) => error ? reject(error) : resolve());
+      });
+      await interaction.followUp({ content: `Provider set to ${provider} and bot restarted.`, ephemeral: true });
+    } catch (err: any) {
+      console.error('setprovider failed:', err);
+      await interaction.followUp({ content: `Failed to set provider: ${err?.message ?? err}`, ephemeral: true });
+    }
+    return;
+  }
   if (name === "diagai") {
     if (!isOwnerId(interaction.user.id)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
     try {
       const envSummary = [
+        `AI_PROVIDER: ${process.env.AI_PROVIDER ?? 'auto'}`,
+        `OPENAI_API_KEY: ${process.env.OPENAI_API_KEY ? 'present' : 'missing'}`,
         `GEMINI_API_KEY: ${process.env.GEMINI_API_KEY ? 'present' : 'missing'}`,
         `GUILD_ID: ${process.env.GUILD_ID ? process.env.GUILD_ID : 'not set'}`,
         `WAKE_WORD: ${process.env.WAKE_WORD ?? 'SynapseAI'}`,
