@@ -69,6 +69,10 @@ client.once("ready", () => {
       { name: "provider", description: "openai or gemini", type: 3, required: true },
       { name: "model", description: "Model id (e.g., gpt-4o-mini or gemini-1.5-pro-latest)", type: 3, required: true }
     ] },
+    { name: "setmodelpreset", description: "Owner: set AI model by preset (fast|balanced|cheap)", options: [
+      { name: "preset", description: "fast | balanced | cheap", type: 3, required: true },
+      { name: "provider", description: "openai or gemini (defaults to AI_PROVIDER)", type: 3, required: false }
+    ] },
     { name: "diagai", description: "Owner: AI health check (env + test call)" },
     // Owner-only whitelist management
     { name: "addwhitelist", description: "Owner: add a whitelist entry (user or role)", options: [
@@ -488,6 +492,55 @@ client.on("interactionCreate", async (interaction) => {
     } catch (err: any) {
       console.error('setmodel failed:', err);
       await interaction.followUp({ content: `setmodel failed: ${err?.message ?? err}`, ephemeral: true });
+    }
+    return;
+  }
+  if (name === "setmodelpreset") {
+    if (!isOwnerId(interaction.user.id)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
+    const preset = (interaction.options.getString('preset', true) || '').toLowerCase();
+    const providerArg = (interaction.options.getString('provider') || '').toLowerCase();
+    const provider = providerArg || (process.env.AI_PROVIDER || 'openai').toLowerCase();
+    const validPresets = ['fast','balanced','cheap'];
+    if (!validPresets.includes(preset)) return interaction.reply({ content: 'Preset must be one of: fast, balanced, cheap.', ephemeral: true });
+    if (!['openai','gemini'].includes(provider)) return interaction.reply({ content: 'Provider must be openai or gemini.', ephemeral: true });
+
+    // Map presets to models
+    const pickModel = (prov: string, p: string) => {
+      if (prov === 'openai') {
+        if (p === 'balanced') return 'gpt-4o';
+        // fast/cheap default to mini
+        return 'gpt-4o-mini';
+      }
+      // gemini
+      if (p === 'balanced') return 'gemini-1.5-pro-latest';
+      // fast/cheap
+      return 'gemini-1.5-flash-latest';
+    };
+
+    const model = pickModel(provider, preset);
+    await interaction.reply({ content: `Setting ${provider.toUpperCase()} model preset '${preset}' -> ${model} and restarting...`, ephemeral: true });
+    try {
+      const fs = await import('fs/promises');
+      const path = '/opt/synapseai-bot/.env';
+      let content = '';
+      try { content = await fs.readFile(path, 'utf8'); } catch { content = ''; }
+      const key = provider === 'openai' ? 'OPENAI_MODEL' : 'GEMINI_MODEL';
+      const regex = new RegExp(`${key}=.*`);
+      if (content.match(regex)) {
+        content = content.replace(regex, `${key}=${model}`);
+      } else {
+        const nl = content.endsWith('\n') || content.length === 0 ? '' : '\n';
+        content = `${content}${nl}${key}=${model}\n`;
+      }
+      await fs.writeFile(path, content, 'utf8');
+      const { exec } = await import('child_process');
+      await new Promise<void>((resolve, reject) => {
+        exec('pm2 restart synapseai-bot --update-env', (error) => error ? reject(error) : resolve());
+      });
+      await interaction.followUp({ content: `Model updated: ${key}=${model}.`, ephemeral: true });
+    } catch (err: any) {
+      console.error('setmodelpreset failed:', err);
+      await interaction.followUp({ content: `setmodelpreset failed: ${err?.message ?? err}`, ephemeral: true });
     }
     return;
   }
