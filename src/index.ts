@@ -395,6 +395,9 @@ client.on("interactionCreate", async (interaction) => {
     return;
   }
   if (name === "remember") {
+    if (!adminOrBypass(interaction.member) && !isOwnerId(interaction.user.id)) {
+      return interaction.reply({ content: "You are not authorized to use this feature.", ephemeral: true });
+    }
     const { saveMemory } = await import('./services/memory');
     const key = interaction.options.getString('key', true).trim().slice(0, 128);
     const value = interaction.options.getString('value', true).trim().slice(0, 2000);
@@ -414,6 +417,9 @@ client.on("interactionCreate", async (interaction) => {
     }
   }
   if (name === "forget") {
+    if (!adminOrBypass(interaction.member) && !isOwnerId(interaction.user.id)) {
+      return interaction.reply({ content: "You are not authorized to use this feature.", ephemeral: true });
+    }
     const { deleteMemoryByKey } = await import('./services/memory');
     const key = interaction.options.getString('key', true).trim();
     try {
@@ -426,6 +432,9 @@ client.on("interactionCreate", async (interaction) => {
     }
   }
   if (name === "memories") {
+    if (!adminOrBypass(interaction.member) && !isOwnerId(interaction.user.id)) {
+      return interaction.reply({ content: "You are not authorized to use this feature.", ephemeral: true });
+    }
     const { listMemories } = await import('./services/memory');
     const limit = Math.max(1, Math.min(50, interaction.options.getInteger('limit') ?? 10));
     try {
@@ -439,6 +448,9 @@ client.on("interactionCreate", async (interaction) => {
     }
   }
   if (name === "aliases") {
+    if (!adminOrBypass(interaction.member) && !isOwnerId(interaction.user.id)) {
+      return interaction.reply({ content: "You are not authorized to use this feature.", ephemeral: true });
+    }
     const { getAliases } = await import('./services/memory');
     try {
       const aliases = getAliases(interaction.user.id, interaction.guild?.id ?? null);
@@ -450,6 +462,9 @@ client.on("interactionCreate", async (interaction) => {
     }
   }
   if (name === "history") {
+    if (!adminOrBypass(interaction.member) && !isOwnerId(interaction.user.id)) {
+      return interaction.reply({ content: "You are not authorized to use this feature.", ephemeral: true });
+    }
     const { getMemoryHistory } = await import('./services/memory');
     const key = interaction.options.getString('key', true).trim();
     const limit = Math.max(1, Math.min(20, interaction.options.getInteger('limit') ?? 5));
