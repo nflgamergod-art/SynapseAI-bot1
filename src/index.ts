@@ -12,6 +12,8 @@ import { responseTracker } from "./services/responseTracker";
 import { responseRules } from "./services/responseRules";
 import { bypass } from "./services/bypass";
 import { isWhitelisted, getWhitelist, addWhitelistEntry, removeWhitelistEntry } from "./services/whitelistService";
+import { isBlacklisted, getBlacklist, addBlacklistEntry, removeBlacklistEntry } from "./services/blacklistService";
+import { createGiveaway, getActiveGiveaways, getGiveawayById, endGiveaway, pickWinners, setGiveawayMessageId, addEntry as addGiveawayEntry } from "./services/giveawayService";
 import { warnings } from "./services/warnings";
 import { LanguageHandler } from "./services/languageHandler";
 import { buildModerationEmbed, sendToModLog } from "./utils/moderationEmbed";
@@ -31,9 +33,10 @@ const client = new Client({
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
-    GatewayIntentBits.GuildMembers
+    GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildMessageReactions
   ],
-  partials: [Partials.Channel]
+  partials: [Partials.Channel, Partials.Message, Partials.Reaction]
 });
 
 
@@ -61,6 +64,35 @@ client.once("ready", () => {
       { name: "id", description: "User ID or Role ID (or mention)", type: 3, required: true }
     ] },
     { name: "listwhitelist", description: "Owner: list whitelist entries" },
+    { name: "addblacklist", description: "Owner: add a blacklist entry (user or role)", options: [
+      { name: "type", description: "user or role", type: 3, required: true },
+      { name: "id", description: "User ID or Role ID (or mention)", type: 3, required: true },
+      { name: "reason", description: "Reason for blacklist", type: 3, required: false }
+    ] },
+    { name: "removeblacklist", description: "Owner: remove a blacklist entry", options: [
+      { name: "type", description: "user or role", type: 3, required: true },
+      { name: "id", description: "User ID or Role ID (or mention)", type: 3, required: true }
+    ] },
+    { name: "listblacklist", description: "Owner: list blacklist entries" },
+    // Giveaway commands
+    { name: "giveaway", description: "Manage giveaways", options: [
+      { name: "start", description: "Start a new giveaway", type: 1, options: [
+        { name: "prize", description: "Prize for the giveaway", type: 3, required: true },
+        { name: "duration", description: "Duration (e.g., 7d, 24h, 3600)", type: 3, required: true },
+        { name: "winners", description: "Number of winners", type: 4, required: true },
+        { name: "channel", description: "Channel for giveaway", type: 7, required: false },
+        { name: "minmessages", description: "Minimum messages requirement", type: 4, required: false },
+        { name: "mininvites", description: "Minimum invites requirement", type: 4, required: false },
+        { name: "requiredroles", description: "Required role IDs (comma-separated)", type: 3, required: false }
+      ] },
+      { name: "end", description: "End a giveaway early", type: 1, options: [
+        { name: "id", description: "Giveaway ID", type: 3, required: true }
+      ] },
+      { name: "reroll", description: "Reroll winners for a giveaway", type: 1, options: [
+        { name: "id", description: "Giveaway ID", type: 3, required: true }
+      ] },
+      { name: "list", description: "List active giveaways", type: 1 }
+    ] },
   { name: "setquestiontimeout", description: "Set the question repeat timeout (in seconds)", options: [{ name: "seconds", description: "Timeout in seconds (e.g., 300 for 5 minutes)", type: 4, required: true }] },
   { name: "getquestiontimeout", description: "Get the current question repeat timeout" },
   { name: "addbypass", description: "Add a bypass entry (user or role) to allow using admin commands", options: [ { name: 'type', description: 'user or role', type: 3, required: true }, { name: 'id', description: 'User ID or Role ID (or mention)', type: 3, required: true } ] },
@@ -109,9 +141,27 @@ client.on("interactionCreate", async (interaction) => {
 
     const name = interaction.commandName;
 
-    // Whitelist check: only respond to whitelisted users/roles
+    // Blacklist check first (overrides everything except owner)
     const userId = interaction.user.id;
     const member = interaction.member as any;
+    
+    if (!isOwnerId(userId)) {
+      let blacklisted = isBlacklisted(userId, 'user');
+      if (!blacklisted && member?.roles) {
+        const roles = member.roles.cache ? Array.from(member.roles.cache.keys()) : (member.roles || []);
+        for (const r of roles) {
+          if (isBlacklisted(String(r), 'role')) {
+            blacklisted = true;
+            break;
+          }
+        }
+      }
+      if (blacklisted) {
+        return interaction.reply({ content: "You have been blacklisted from using this bot.", ephemeral: true });
+      }
+    }
+
+    // Whitelist check: only respond to whitelisted users/roles
     let whitelisted = isWhitelisted(userId, 'user');
     if (!whitelisted && member?.roles) {
       const roles = member.roles.cache ? Array.from(member.roles.cache.keys()) : (member.roles || []);
@@ -172,6 +222,46 @@ client.on("interactionCreate", async (interaction) => {
         return interaction.reply({ content: 'Failed to list whitelist entries.', ephemeral: true });
       }
     }
+    
+    // Blacklist admin commands (owner only)
+    if (interaction.commandName === "addblacklist") {
+      const type = (interaction.options.getString('type', true) as string).toLowerCase();
+      let idRaw = interaction.options.getString('id', true)!.trim();
+      idRaw = idRaw.replace(/[<@&!>]/g, '');
+      const reason = interaction.options.getString('reason') ?? 'No reason provided';
+      if (!['user','role'].includes(type)) return interaction.reply({ content: 'Type must be user or role.', ephemeral: true });
+      try {
+        addBlacklistEntry({ id: idRaw, type: type as any, reason, addedAt: Date.now() });
+        return interaction.reply({ content: `Blacklisted ${type} ${idRaw}. Reason: ${reason}`, ephemeral: true });
+      } catch (err) {
+        console.error('Failed to add blacklist', err);
+        return interaction.reply({ content: 'Failed to add blacklist entry.', ephemeral: true });
+      }
+    }
+    if (interaction.commandName === "removeblacklist") {
+      const type = (interaction.options.getString('type', true) as string).toLowerCase();
+      let idRaw = interaction.options.getString('id', true)!.trim();
+      idRaw = idRaw.replace(/[<@&!>]/g, '');
+      if (!['user','role'].includes(type)) return interaction.reply({ content: 'Type must be user or role.', ephemeral: true });
+      try {
+        removeBlacklistEntry(idRaw, type as any);
+        return interaction.reply({ content: `Removed blacklist ${type} ${idRaw}.`, ephemeral: true });
+      } catch (err) {
+        console.error('Failed to remove blacklist', err);
+        return interaction.reply({ content: 'Failed to remove blacklist entry.', ephemeral: true });
+      }
+    }
+    if (interaction.commandName === "listblacklist") {
+      try {
+        const items = getBlacklist();
+        if (!items.length) return interaction.reply({ content: 'No blacklist entries configured.', ephemeral: true });
+        const out = items.map(i => `${i.type}:${i.id} reason=${i.reason ?? 'none'}`).join('\n').slice(0, 1900);
+        return interaction.reply({ content: `Blacklist entries:\n${out}`, ephemeral: true });
+      } catch (err) {
+        console.error('Failed to list blacklist', err);
+        return interaction.reply({ content: 'Failed to list blacklist entries.', ephemeral: true });
+      }
+    }
   }
 
     // helper to check admin or bypass
@@ -210,6 +300,140 @@ client.on("interactionCreate", async (interaction) => {
     }
     return interaction.reply(joke.punchline);
   }
+  
+  // Giveaway commands
+  if (name === "giveaway") {
+    const subcommand = interaction.options.getSubcommand();
+    
+    if (subcommand === "start") {
+      if (!adminOrBypass(interaction.member)) {
+        return interaction.reply({ content: "You must be an administrator to start giveaways.", ephemeral: true });
+      }
+      
+      const prize = interaction.options.getString("prize", true);
+      const durationStr = interaction.options.getString("duration", true);
+      const winners = interaction.options.getInteger("winners", true);
+      const channel = interaction.options.getChannel("channel") ?? interaction.channel;
+      const minMessages = interaction.options.getInteger("minmessages") ?? undefined;
+      const minInvites = interaction.options.getInteger("mininvites") ?? undefined;
+      const requiredRolesStr = interaction.options.getString("requiredroles") ?? undefined;
+      
+      if (winners < 1) return interaction.reply({ content: "Winner count must be at least 1.", ephemeral: true });
+      
+      const { parseDurationToSeconds } = await import("./utils/parseDuration");
+      const secs = parseDurationToSeconds(durationStr);
+      if (!secs || secs < 1) return interaction.reply({ content: "Invalid duration. Examples: 7d, 24h, 3600", ephemeral: true });
+      
+      const requiredRoles = requiredRolesStr ? requiredRolesStr.split(',').map(r => r.trim()) : undefined;
+      
+      const giveaway = createGiveaway({
+        prize,
+        channelId: (channel as any).id,
+        guildId: interaction.guild!.id,
+        hostId: interaction.user.id,
+        durationMs: secs * 1000,
+        winnerCount: winners,
+        requirements: {
+          minMessages,
+          minInvites,
+          requiredRoles
+        }
+      });
+      
+      try {
+        const embed = {
+          title: `🎉 GIVEAWAY 🎉`,
+          description: `**Prize:** ${prize}\n**Winners:** ${winners}\n**Hosted by:** <@${interaction.user.id}>\n**Ends:** <t:${Math.floor(giveaway.endTime / 1000)}:R>`,
+          color: 0x00FF00,
+          footer: { text: `React with 🎉 to enter • ID: ${giveaway.id}` }
+        };
+        
+        if (minMessages || minInvites || requiredRoles) {
+          let reqText = '\n**Requirements:**\n';
+          if (minMessages) reqText += `• ${minMessages}+ messages sent\n`;
+          if (minInvites) reqText += `• ${minInvites}+ invites\n`;
+          if (requiredRoles && requiredRoles.length > 0) reqText += `• Must have role: ${requiredRoles.map(r => `<@&${r}>`).join(', ')}\n`;
+          embed.description += reqText;
+        }
+        
+        const msg = await (channel as any).send({ embeds: [embed] });
+        await msg.react('🎉');
+        setGiveawayMessageId(giveaway.id, msg.id);
+        
+        return interaction.reply({ content: `Giveaway started in <#${(channel as any).id}>! ID: ${giveaway.id}`, ephemeral: true });
+      } catch (err) {
+        console.error('Failed to start giveaway', err);
+        return interaction.reply({ content: 'Failed to start giveaway.', ephemeral: true });
+      }
+    }
+    
+    if (subcommand === "end") {
+      if (!adminOrBypass(interaction.member)) {
+        return interaction.reply({ content: "You must be an administrator to end giveaways.", ephemeral: true });
+      }
+      
+      const id = interaction.options.getString("id", true);
+      const giveaway = getGiveawayById(id);
+      
+      if (!giveaway) return interaction.reply({ content: "Giveaway not found.", ephemeral: true });
+      if (giveaway.status !== "active") return interaction.reply({ content: "Giveaway is not active.", ephemeral: true });
+      
+      const winners = pickWinners(giveaway);
+      endGiveaway(id, winners);
+      
+      try {
+        const channel = await client.channels.fetch(giveaway.channelId);
+        if (channel && 'send' in channel) {
+          const winnerText = winners.length > 0 
+            ? winners.map(w => `<@${w}>`).join(', ')
+            : 'No valid entries';
+          await (channel as any).send({ content: `🎉 Giveaway ended!\n**Prize:** ${giveaway.prize}\n**Winners:** ${winnerText}` });
+        }
+        return interaction.reply({ content: `Giveaway ${id} ended. Winners: ${winners.length > 0 ? winners.map(w => `<@${w}>`).join(', ') : 'None'}`, ephemeral: true });
+      } catch (err) {
+        console.error('Failed to end giveaway', err);
+        return interaction.reply({ content: 'Giveaway ended but failed to announce winners.', ephemeral: true });
+      }
+    }
+    
+    if (subcommand === "reroll") {
+      if (!adminOrBypass(interaction.member)) {
+        return interaction.reply({ content: "You must be an administrator to reroll giveaways.", ephemeral: true });
+      }
+      
+      const id = interaction.options.getString("id", true);
+      const giveaway = getGiveawayById(id);
+      
+      if (!giveaway) return interaction.reply({ content: "Giveaway not found.", ephemeral: true });
+      if (giveaway.status !== "ended") return interaction.reply({ content: "Can only reroll ended giveaways.", ephemeral: true });
+      
+      const newWinners = pickWinners(giveaway);
+      giveaway.winners = newWinners;
+      
+      try {
+        const channel = await client.channels.fetch(giveaway.channelId);
+        if (channel && 'send' in channel) {
+          const winnerText = newWinners.length > 0 
+            ? newWinners.map(w => `<@${w}>`).join(', ')
+            : 'No valid entries';
+          await (channel as any).send({ content: `🎉 Giveaway rerolled!\n**Prize:** ${giveaway.prize}\n**New Winners:** ${winnerText}` });
+        }
+        return interaction.reply({ content: `Rerolled winners: ${newWinners.length > 0 ? newWinners.map(w => `<@${w}>`).join(', ') : 'None'}`, ephemeral: true });
+      } catch (err) {
+        console.error('Failed to reroll giveaway', err);
+        return interaction.reply({ content: 'Failed to reroll giveaway.', ephemeral: true });
+      }
+    }
+    
+    if (subcommand === "list") {
+      const giveaways = getActiveGiveaways(interaction.guild?.id);
+      if (giveaways.length === 0) return interaction.reply({ content: 'No active giveaways.', ephemeral: true });
+      
+      const list = giveaways.map(g => `**${g.id}** - ${g.prize} (${g.entries.length} entries, ends <t:${Math.floor(g.endTime / 1000)}:R>)`).join('\n').slice(0, 1900);
+      return interaction.reply({ content: `Active giveaways:\n${list}`, ephemeral: true });
+    }
+  }
+  
   if (name === "setquestiontimeout") {
     if (!adminOrBypass(interaction.member)) {
       return interaction.reply({ content: "You must be an administrator (or bypass) to change this setting.", ephemeral: true });
@@ -597,11 +821,120 @@ function formatSeconds(total: number) {
   return parts.length ? parts.join("") : "0s";
 }
 
+// Giveaway reaction handler
+client.on("messageReactionAdd", async (reaction, user) => {
+  if (user.bot) return;
+  
+  try {
+    // Fetch partial reactions/messages
+    if (reaction.partial) await reaction.fetch();
+    if (reaction.message.partial) await reaction.message.fetch();
+    
+    // Check if reaction is 🎉 on a giveaway message
+    if (reaction.emoji.name !== '🎉') return;
+    
+    const giveaways = getActiveGiveaways();
+    const giveaway = giveaways.find(g => g.messageId === reaction.message.id);
+    
+    if (!giveaway || giveaway.status !== 'active') return;
+    
+    // Check whitelist/blacklist
+    if (!isOwnerId(user.id)) {
+      if (isBlacklisted(user.id, 'user')) {
+        try {
+          await user.send("You are blacklisted and cannot enter giveaways.");
+        } catch { /* ignore */ }
+        await reaction.users.remove(user.id);
+        return;
+      }
+      
+      const member = await reaction.message.guild?.members.fetch(user.id);
+      if (member) {
+        const roles = member.roles.cache ? Array.from(member.roles.cache.keys()) : [];
+        for (const r of roles) {
+          if (isBlacklisted(String(r), 'role')) {
+            try {
+              await user.send("You are blacklisted and cannot enter giveaways.");
+            } catch { /* ignore */ }
+            await reaction.users.remove(user.id);
+            return;
+          }
+        }
+        
+        // Check whitelist
+        let whitelisted = isWhitelisted(user.id, 'user');
+        if (!whitelisted) {
+          for (const r of roles) {
+            if (isWhitelisted(String(r), 'role')) {
+              whitelisted = true;
+              break;
+            }
+          }
+        }
+        
+        if (!whitelisted) {
+          try {
+            await user.send("My owner hasn't whitelisted you. You can either pay to use my services or buy Synapse script to use my commands and have a conversation for free.");
+          } catch { /* ignore */ }
+          await reaction.users.remove(user.id);
+          return;
+        }
+        
+        // Check requirements
+        if (giveaway.requirements.requiredRoles && giveaway.requirements.requiredRoles.length > 0) {
+          const hasRole = giveaway.requirements.requiredRoles.some(roleId => roles.includes(roleId));
+          if (!hasRole) {
+            try {
+              await user.send(`You don't meet the role requirements for this giveaway.`);
+            } catch { /* ignore */ }
+            await reaction.users.remove(user.id);
+            return;
+          }
+        }
+        
+        // Note: minMessages and minInvites would require tracking those stats separately
+        // For now, we'll just add the entry if requirements are met
+      }
+    }
+    
+    // Add entry
+    const added = addGiveawayEntry(giveaway.id, user.id);
+    if (added) {
+      console.log(`User ${user.id} entered giveaway ${giveaway.id}`);
+    }
+  } catch (err) {
+    console.error('Error handling giveaway reaction:', err);
+  }
+});
+
 client.on("messageCreate", async (message: Message) => {
   if (message.author.bot) return;
 
-  // Whitelist check: only respond to whitelisted users/roles
+  // Blacklist check first (overrides everything except owner)
   const userId = message.author.id;
+  
+  if (!isOwnerId(userId)) {
+    let blacklisted = isBlacklisted(userId, 'user');
+    if (!blacklisted && message.member?.roles) {
+      let roles: string[] = [];
+      if (message.member.roles.cache) {
+        roles = Array.from(message.member.roles.cache.keys());
+      } else if (Array.isArray(message.member.roles)) {
+        roles = message.member.roles.map((r: any) => typeof r === 'string' ? r : r.id);
+      }
+      for (const r of roles) {
+        if (isBlacklisted(String(r), 'role')) {
+          blacklisted = true;
+          break;
+        }
+      }
+    }
+    if (blacklisted) {
+      return; // silently ignore blacklisted users
+    }
+  }
+
+  // Whitelist check: only respond to whitelisted users/roles
   let whitelisted = isWhitelisted(userId, 'user');
   if (!whitelisted && message.member?.roles) {
     let roles: string[] = [];
