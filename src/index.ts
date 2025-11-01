@@ -59,7 +59,7 @@ client.once("ready", () => {
     { name: "purge", description: "Delete recent messages from the channel", options: [{ name: 'count', type: 4, description: 'Number of messages to delete', required: true }] },
     { name: "kick", description: "Kick a member", options: [ { name: "user", description: "Member to kick", type: 6, required: true }, { name: "reason", description: "Reason for kick", type: 3, required: false } ] },
     { name: "ban", description: "Ban a member", options: [ { name: "user", description: "Member to ban", type: 6, required: true }, { name: "reason", description: "Reason for ban", type: 3, required: false } ] },
-    { name: "mute", description: "Timeout a member", options: [ { name: "user", description: "Member to timeout", type: 6, required: true }, { name: "duration", description: "Duration in seconds", type: 4, required: false }, { name: "reason", description: "Reason", type: 3, required: false } ] },
+    { name: "mute", description: "Timeout a member", options: [ { name: "user", description: "Member to timeout", type: 6, required: true }, { name: "duration", description: "Duration (e.g., 20s, 10m, 1h, or seconds)", type: 3, required: false }, { name: "reason", description: "Reason", type: 3, required: false } ] },
     { name: "addrole", description: "Add a role to a member", options: [ { name: "user", description: "Member to modify", type: 6, required: true }, { name: "role", description: "Role to add", type: 8, required: true } ] },
     { name: "removerole", description: "Remove a role from a member", options: [ { name: "user", description: "Member to modify", type: 6, required: true }, { name: "role", description: "Role to remove", type: 8, required: true } ] },
     { name: "setdefaultmute", description: "Set default mute duration (e.g. 10m, 1h)", options: [ { name: "duration", description: "Duration (e.g. 10m or seconds)", type: 3, required: true } ] },
@@ -395,10 +395,14 @@ client.on("interactionCreate", async (interaction) => {
 
       if (name === "mute") {
         try {
-          const duration = interaction.options.getInteger("duration") ?? undefined;
-          const ms = (duration && duration > 0) ? duration * 1000 : 60 * 60 * 1000;
+          const durationStr = interaction.options.getString("duration") ?? undefined;
+          const { parseDurationToSeconds } = await import("./utils/parseDuration");
+          const { getDefaultMuteSeconds } = await import("./config");
+          let secs = durationStr ? parseDurationToSeconds(durationStr) : undefined;
+          if (!secs || secs <= 0) secs = getDefaultMuteSeconds();
+          const ms = secs * 1000;
           await target.timeout(ms, reason ?? 'No reason provided');
-          return interaction.reply({ content: `${target.user.tag} was timed out for ${ms/1000}s. Reason: ${reason ?? 'None'}` });
+          return interaction.reply({ content: `${target.user.tag} was timed out for ${ms/1000}s.` + (reason ? ` Reason: ${reason}` : '') });
         } catch (err) {
           console.error(err);
           return interaction.reply({ content: "Failed to timeout member. Check bot permissions.", ephemeral: true });
@@ -466,6 +470,22 @@ client.on("messageCreate", async (message: Message) => {
     if (command === "help") return helpCommand(message, prefix);
     if (command === "ping") return message.reply(`Pong! ${Date.now() - message.createdTimestamp}ms`);
     if (command === "pong") return message.reply(`Pong! ${Date.now() - message.createdTimestamp}ms`);
+    
+    if (command === "joke") {
+      const joke = getRandomJoke();
+      if (joke.setup) {
+        return message.reply(`${joke.setup}\n\n||${joke.punchline}||`);
+      }
+      return message.reply(joke.punchline);
+    }
+    
+    if (command === "dadjoke") {
+      const joke = getRandomJoke('dad-joke');
+      if (joke.setup) {
+        return message.reply(`${joke.setup}\n\n||${joke.punchline}||`);
+      }
+      return message.reply(joke.punchline);
+    }
 
     if (command === "setdefaultmute") {
       // admin-only prefix command to update default mute duration
@@ -498,18 +518,20 @@ client.on("messageCreate", async (message: Message) => {
       }
       if (command === "ban") return banCommand(message, mentioned, args.join(" "));
       if (command === "mute") {
-        // Parse mute arguments: optional duration (seconds) followed by optional reason.
+        // Parse mute arguments: optional duration (supports 20s, 10m, 1h, or seconds) followed by optional reason.
+        const cleaned = args.filter(a => !a.startsWith('<@'));
         let duration: number | undefined;
         let reason: string | undefined;
-        if (args.length > 0) {
-          const maybe = Number(args[0]);
-          if (!Number.isNaN(maybe) && maybe > 0) {
-            duration = maybe;
-            reason = args.slice(1).join(" ").trim() || undefined;
+        if (cleaned.length > 0) {
+          const { parseDurationToSeconds } = await import("./utils/parseDuration");
+          const secs = parseDurationToSeconds(cleaned[0]);
+          if (secs && secs > 0) {
+            duration = secs;
+            reason = cleaned.slice(1).join(" ").trim() || undefined;
           } else {
-            // first arg is not a number -> treat whole args as reason
+            // no parseable duration provided -> all remaining args are reason
             duration = undefined;
-            reason = args.join(" ").trim() || undefined;
+            reason = cleaned.join(" ").trim() || undefined;
           }
         }
         return muteCommand(message, mentioned, duration, reason);

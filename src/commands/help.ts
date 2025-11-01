@@ -6,7 +6,7 @@ ${prefix}help - Show this help message\n
 ${prefix}ping - Check bot latency\n
 ${prefix}kick @user [reason] - Kick a member (requires KickMembers permission)\n
 ${prefix}ban @user [reason] - Ban a member (requires BanMembers permission)\n
-${prefix}mute @user [durationSeconds] [reason] - Timeout a member (requires ModerateMembers)\n
+${prefix}mute @user [duration] [reason] - Timeout a member (supports 20s, 10m, 1h, or seconds; requires ModerateMembers)\n
 ${prefix}addrole @user @role - Add a role to a member (requires ManageRoles)\n
 ${prefix}removerole @user @role - Remove a role from a member (requires ManageRoles)\n
 ${prefix}joke - Tell a random joke\n
