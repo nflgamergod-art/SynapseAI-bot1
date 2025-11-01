@@ -1,4 +1,7 @@
-import "dotenv/config";
+import * as dotenv from "dotenv";
+import * as path from "path";
+// Ensure .env loads reliably in production: dist/ -> project root
+dotenv.config({ path: path.join(__dirname, "../.env") });
 import { Client, GatewayIntentBits, Partials, Message, PermissionsBitField } from "discord.js";
 import { isWakeWord, handleConversationalReply } from "./utils/responder";
 import { isOwnerId } from "./utils/owner";
@@ -14,7 +17,7 @@ import { LanguageHandler } from "./services/languageHandler";
 import { buildModerationEmbed, sendToModLog } from "./utils/moderationEmbed";
 import { setModLogChannelId, getModLogChannelId, clearModLogChannelId } from "./config";
 
-const token = process.env.DISCORD_TOKEN;
+const token = (process.env.DISCORD_TOKEN || '').trim();
 const prefix = process.env.PREFIX ?? "!";
 const wakeWord = process.env.WAKE_WORD ?? "SynapseAI";
 
