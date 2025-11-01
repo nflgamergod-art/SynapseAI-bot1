@@ -375,7 +375,17 @@ client.on("interactionCreate", async (interaction) => {
 
       if (name === "kick") {
         try {
-          await target.kick(reason ?? "No reason provided");
+          const finalReason = reason ?? 'No reason provided';
+          const guildName = interaction.guild?.name ?? 'a server';
+          
+          // Try to DM the user before kicking
+          try {
+            await target.user.send(`You have been kicked from **${guildName}** by ${interaction.user.tag}.\nReason: ${finalReason}`);
+          } catch (dmErr) {
+            console.log(`Could not DM ${target.user.tag} about kick (DMs disabled or blocked)`);
+          }
+          
+          await target.kick(finalReason);
           return interaction.reply({ content: `${target.user.tag} was kicked. Reason: ${reason ?? 'None'}` });
         } catch (err) {
           console.error(err);
@@ -385,7 +395,17 @@ client.on("interactionCreate", async (interaction) => {
 
       if (name === "ban") {
         try {
-          await target.ban({ reason: reason ?? 'No reason provided' });
+          const finalReason = reason ?? 'No reason provided';
+          const guildName = interaction.guild?.name ?? 'a server';
+          
+          // Try to DM the user before banning
+          try {
+            await target.user.send(`You have been banned from **${guildName}** by ${interaction.user.tag}.\nReason: ${finalReason}`);
+          } catch (dmErr) {
+            console.log(`Could not DM ${target.user.tag} about ban (DMs disabled or blocked)`);
+          }
+          
+          await target.ban({ reason: finalReason });
           return interaction.reply({ content: `${target.user.tag} was banned. Reason: ${reason ?? 'None'}` });
         } catch (err) {
           console.error(err);
@@ -401,6 +421,18 @@ client.on("interactionCreate", async (interaction) => {
           let secs = durationStr ? parseDurationToSeconds(durationStr) : undefined;
           if (!secs || secs <= 0) secs = getDefaultMuteSeconds();
           const ms = secs * 1000;
+          
+          const finalReason = reason ?? 'No reason provided';
+          const guildName = interaction.guild?.name ?? 'a server';
+          const durationText = formatSeconds(secs);
+          
+          // Try to DM the user before timing out
+          try {
+            await target.user.send(`You have been timed out in **${guildName}** for **${durationText}** by ${interaction.user.tag}.\nReason: ${finalReason}`);
+          } catch (dmErr) {
+            console.log(`Could not DM ${target.user.tag} about timeout (DMs disabled or blocked)`);
+          }
+          
           await target.timeout(ms, reason ?? 'No reason provided');
           return interaction.reply({ content: `${target.user.tag} was timed out for ${ms/1000}s.` + (reason ? ` Reason: ${reason}` : '') });
         } catch (err) {

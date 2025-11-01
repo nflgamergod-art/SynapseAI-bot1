@@ -1,0 +1,32 @@
+# 🚀 You're Already On The Droplet!
+
+Since you're already SSH'd in (root@ubuntu-s-1vcpu-1gb-nyc2-01), just copy-paste these commands:
+
+# Navigate to project
+cd /root/SynapseAI/SynapseAI-bot1
+
+# Pull latest code
+git pull origin main
+
+# Install dependencies
+npm install
+
+# Build TypeScript
+npm run build
+
+# Restart bot with new code
+pm2 restart synapseai --update-env
+
+# Save PM2 config
+pm2 save
+
+# View logs to confirm it's working
+pm2 logs synapseai --lines 50 --nostream
+
+# Check status
+pm2 status
+
+# ✅ Done! Now test in Discord:
+# !joke
+# !dadjoke  
+# !mute @user 20s testing
