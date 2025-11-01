@@ -1,13 +1,7 @@
 export type SupportedLanguage = 'en' | 'es' | 'fr' | 'de' | 'it' | 'pt' | 'nl' | 'ru' | 'ja' | 'ko' | 'zh';
 
-// Dynamic import for franc (ES Module)
-let francModule: any = null;
-async function loadFranc() {
-  if (!francModule) {
-    francModule = await import('franc');
-  }
-  return francModule.franc || francModule.default;
-}
+// Simplified language detection - always return 'en' for now to avoid ES Module issues
+// TODO: Implement proper language detection when franc CommonJS version is available
 
 export class LanguageHandler {
   private static readonly SUPPORTED_LANGUAGES: Set<SupportedLanguage> = new Set([
@@ -130,38 +124,8 @@ export class LanguageHandler {
   };
 
   public static async detectLanguage(text: string): Promise<SupportedLanguage> {
-    // Remove mentions, URLs, and emojis for better detection
-    const cleanText = text
-      .replace(/<@!?\d+>/g, '')
-      .replace(/https?:\/\/\S+/g, '')
-      .replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}]/gu, '');
-
-    // franc returns ISO 639-3 codes (e.g. 'eng', 'spa', 'fra'). Map common ones to our 2-letter set.
-    const franc = await loadFranc();
-    const francCode = franc(cleanText) as string; // e.g. 'eng', 'spa', 'und'
-
-    const map: Record<string, SupportedLanguage> = {
-      eng: 'en',
-      spa: 'es',
-      por: 'pt',
-      fra: 'fr',
-      fre: 'fr',
-      deu: 'de',
-      ger: 'de',
-      ita: 'it',
-      nld: 'nl',
-      dut: 'nl',
-      rus: 'ru',
-      jpn: 'ja',
-      kor: 'ko',
-      cmn: 'zh',
-      zho: 'zh',
-      // add more mappings as needed
-    };
-
-    const detected = francCode && francCode !== 'und' ? (map[francCode] as SupportedLanguage | undefined) : undefined;
-    if (detected && this.SUPPORTED_LANGUAGES.has(detected)) return detected;
-
+    // Simplified: always return English to avoid ES Module issues
+    // Language detection can be re-enabled later with a CommonJS-compatible package
     return 'en';
   }
 
