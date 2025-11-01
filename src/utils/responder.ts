@@ -1,5 +1,6 @@
 import { Message } from "discord.js";
 import { generateReply } from "../services/openai";
+import { findRelevantMemories, extractAndSaveFromExchange, upsertQAPair, findSimilarQA } from "../services/memory";
 import { localReply } from "../services/localResponder";
 
 const conversations = new Map<string, string[]>();
@@ -19,7 +20,20 @@ export async function handleConversationalReply(message: Message) {
   if (convo.length > 10) convo.splice(0, convo.length - 10);
   conversations.set(key, convo);
 
-  const prompt = convo.join("\n") + "\nAssistant:";
+  // Fetch relevant long-term memories and prior Q&A
+  const guildId = message.guild?.id ?? null;
+  const relevant = findRelevantMemories(message.content, message.author.id, guildId, 5);
+  const similar = findSimilarQA(message.content, message.author.id, guildId);
+  let memoryContext = '';
+  if (relevant.length) {
+    const lines = relevant.map(m => `- (${m.type}) ${m.key}: ${m.value}`);
+    memoryContext += `Known user facts/preferences (from past interactions):\n${lines.join('\n')}\n\n`;
+  }
+  if (similar) {
+    memoryContext += `Previously, when asked a similar question, your answer was: "${similar.answer}". You may reference or improve upon it if still accurate.\n\n`;
+  }
+
+  const prompt = memoryContext + convo.join("\n") + "\nAssistant:";
 
   // Try AI (Gemini) first. If that fails, fallback to local responder.
   try {
@@ -29,6 +43,15 @@ export async function handleConversationalReply(message: Message) {
     if (convo.length > 10) convo.splice(0, convo.length - 10);
     conversations.set(key, convo);
     await sendChunkedReply(message, reply);
+    // Best-effort: capture durable memories from this exchange and store QA
+    extractAndSaveFromExchange({
+      userId: message.author.id,
+      guildId,
+      sourceMsgId: message.id,
+      userMessage: message.content,
+      assistantMessage: reply
+    });
+    upsertQAPair(message.author.id, guildId, message.content, reply);
     return;
   } catch (err: any) {
     console.warn("AI reply failed, falling back to local responder:", err?.message ?? err);
@@ -40,6 +63,15 @@ export async function handleConversationalReply(message: Message) {
     if (convo.length > 10) convo.splice(0, convo.length - 10);
     conversations.set(key, convo);
     await sendChunkedReply(message, local);
+    // Capture memories/Q&A from local responder too
+    extractAndSaveFromExchange({
+      userId: message.author.id,
+      guildId,
+      sourceMsgId: message.id,
+      userMessage: message.content,
+      assistantMessage: local
+    });
+    upsertQAPair(message.author.id, guildId, message.content, local);
   } catch (err) {
     console.error("Local reply error:", err);
     await message.reply("Sorry, I couldn't think of a reply right now.");
