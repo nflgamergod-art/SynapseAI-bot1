@@ -42,9 +42,8 @@ export async function handleConversationalReply(message: Message) {
     convo.push(`Assistant: ${reply}`);
     if (convo.length > 10) convo.splice(0, convo.length - 10);
     conversations.set(key, convo);
-    await sendChunkedReply(message, reply);
-    // Best-effort: capture durable memories from this exchange and store QA
-    extractAndSaveFromExchange({
+    // Persist memories and Q&A before sending so we can acknowledge in the same message
+    const events = await extractAndSaveFromExchange({
       userId: message.author.id,
       guildId,
       sourceMsgId: message.id,
@@ -52,6 +51,9 @@ export async function handleConversationalReply(message: Message) {
       assistantMessage: reply
     });
     upsertQAPair(message.author.id, guildId, message.content, reply);
+    const ack = buildMemoryAck(message.content, events);
+    const finalReply = ack ? `${reply}\n\n${ack}` : reply;
+    await sendChunkedReply(message, finalReply);
     return;
   } catch (err: any) {
     console.warn("AI reply failed, falling back to local responder:", err?.message ?? err);
@@ -62,9 +64,8 @@ export async function handleConversationalReply(message: Message) {
     convo.push(`Assistant: ${local}`);
     if (convo.length > 10) convo.splice(0, convo.length - 10);
     conversations.set(key, convo);
-    await sendChunkedReply(message, local);
-    // Capture memories/Q&A from local responder too
-    extractAndSaveFromExchange({
+    // Capture memories/Q&A from local responder too (prior to sending to include ack)
+    const events = await extractAndSaveFromExchange({
       userId: message.author.id,
       guildId,
       sourceMsgId: message.id,
@@ -72,10 +73,39 @@ export async function handleConversationalReply(message: Message) {
       assistantMessage: local
     });
     upsertQAPair(message.author.id, guildId, message.content, local);
+    const ack = buildMemoryAck(message.content, events);
+    const finalLocal = ack ? `${local}\n\n${ack}` : local;
+    await sendChunkedReply(message, finalLocal);
   } catch (err) {
     console.error("Local reply error:", err);
     await message.reply("Sorry, I couldn't think of a reply right now.");
   }
+}
+
+function buildMemoryAck(userMessage: string, events: Array<{ key: string; action: string; oldValue?: string; newValue: string }>): string {
+  if (!events || !events.length) return '';
+  const liarRe = /(lying|liar|that's not true|cap|capping|stop capping)/i;
+  const lines: string[] = [];
+  const maxLines = 2;
+  for (const e of events) {
+    if (lines.length >= maxLines) break;
+    const k = e.key.toLowerCase();
+    if (e.action === 'duplicate') continue;
+    if (e.action === 'created') {
+      if (k === 'name') lines.push(`Nice to meet you — I'll remember your name as ${e.newValue}.`);
+      else if (k === 'timezone') lines.push(`Noted your timezone: ${e.newValue}.`);
+      else if (k === 'favorite_team') lines.push(`Logged your favorite team: ${e.newValue}.`);
+      else lines.push(`Got it — saved ${k}: ${e.newValue}.`);
+    } else if (e.action === 'aliased') {
+      if (k === 'name') lines.push(`Got it — I'll use ${e.newValue} and remember ${e.oldValue} as an alternate spelling.`);
+      else lines.push(`Saved an alternate for ${k}.`);
+    } else if (e.action === 'updated') {
+      if (liarRe.test(userMessage)) lines.push(`Caught in 4K — updating my notes: ${k} → ${e.newValue}.`);
+      else if (k === 'name') lines.push(`Thanks for the correction — updating your name to ${e.newValue}.`);
+      else lines.push(`Updated ${k} to ${e.newValue}.`);
+    }
+  }
+  return lines.join(' ');
 }
 
 // Discord hard limit: 2000 characters per message. Split and send gracefully.

@@ -19,6 +19,27 @@ export type ExtractedMemory = {
   confidence?: number;
 };
 
+const UNIQUE_KEYS = new Set(['name', 'timezone', 'favorite_team', 'birthday', 'location']);
+
+function levenshtein(a: string, b: string): number {
+  a = a || '';
+  b = b || '';
+  const m = a.length, n = b.length;
+  const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + cost);
+    }
+  }
+  return dp[m][n];
+}
+
+export type UpsertAction = 'created' | 'updated' | 'aliased' | 'duplicate';
+export type MemoryEvent = { key: string; action: UpsertAction; oldValue?: string; newValue: string };
+
 export function saveMemory(row: MemoryRow) {
   const db = getDB();
   const stmt = db.prepare(`
@@ -38,6 +59,31 @@ export function saveMemory(row: MemoryRow) {
     created_at,
     updated_at
   });
+}
+
+export function upsertUniqueMemory(userId: string, guildId: string | null, key: string, value: string): MemoryEvent {
+  const db = getDB();
+  const existing = db.prepare(`SELECT * FROM memories WHERE user_id = ? AND (guild_id IS NULL OR guild_id = ?) AND lower(key) = lower(?) ORDER BY updated_at DESC LIMIT 1`).get(userId, guildId ?? null, key) as MemoryRow | undefined;
+  const norm = (s: string) => (s || '').trim().toLowerCase();
+  const now = nowISO();
+  if (!existing) {
+    db.prepare(`INSERT INTO memories (user_id, guild_id, type, key, value, source_msg_id, confidence, created_at, updated_at) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?)`)
+      .run(userId, guildId ?? null, 'fact', key, value, 0.9, now, now);
+    return { key, action: 'created', newValue: value };
+  }
+  if (norm(existing.value) === norm(value)) {
+    db.prepare(`UPDATE memories SET updated_at = ? WHERE id = ?`).run(now, (existing as any).id);
+    return { key, action: 'duplicate', oldValue: existing.value, newValue: value };
+  }
+  const dist = levenshtein(existing.value, value);
+  if (key.toLowerCase() === 'name' && dist > 0 && dist <= 2) {
+    db.prepare(`UPDATE memories SET value = ?, updated_at = ? WHERE id = ?`).run(value, now, (existing as any).id);
+    db.prepare(`INSERT INTO memories (user_id, guild_id, type, key, value, source_msg_id, confidence, created_at, updated_at) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?)`)
+      .run(userId, guildId ?? null, 'note', 'name_alias', existing.value, 0.6, now, now);
+    return { key, action: 'aliased', oldValue: existing.value, newValue: value };
+  }
+  db.prepare(`UPDATE memories SET value = ?, updated_at = ? WHERE id = ?`).run(value, now, (existing as any).id);
+  return { key, action: 'updated', oldValue: existing.value, newValue: value };
 }
 
 export function findRelevantMemories(query: string, userId: string, guildId?: string | null, limit = 5) {
@@ -94,24 +140,48 @@ export async function extractAndSaveFromExchange(opts: {
   sourceMsgId?: string | null;
   userMessage: string;
   assistantMessage?: string;
-}) {
+}): Promise<MemoryEvent[]> {
   const { userId, guildId, sourceMsgId, userMessage, assistantMessage } = opts;
+  const events: MemoryEvent[] = [];
   try {
     const items = await extractMemories(userMessage, assistantMessage);
     for (const it of items) {
       if (!it.key || !it.value) continue;
-      saveMemory({
-        user_id: userId,
-        guild_id: guildId ?? null,
-        type: it.type ?? 'fact',
-        key: it.key.slice(0, 128),
-        value: it.value.slice(0, 2000),
-        source_msg_id: sourceMsgId ?? null,
-        confidence: it.confidence ?? 0.7
-      });
+      const k = it.key.slice(0, 128);
+      const v = it.value.slice(0, 2000);
+      if (UNIQUE_KEYS.has(k.toLowerCase())) {
+        const e = upsertUniqueMemory(userId, guildId ?? null, k, v);
+        events.push(e);
+      } else {
+        saveMemory({
+          user_id: userId,
+          guild_id: guildId ?? null,
+          type: it.type ?? 'fact',
+          key: k,
+          value: v,
+          source_msg_id: sourceMsgId ?? null,
+          confidence: it.confidence ?? 0.7
+        });
+        events.push({ key: k, action: 'created', newValue: v });
+      }
     }
   } catch (e) {
-    // Silent fail; memory extraction is best-effort
-    return;
+    return events;
   }
+  return events;
+}
+
+export function listMemories(userId: string, guildId?: string | null, limit = 20) {
+  const db = getDB();
+  const rows = db.prepare(
+    `SELECT * FROM memories WHERE user_id = ? AND (guild_id IS NULL OR guild_id = ?) ORDER BY updated_at DESC LIMIT ?`
+  ).all(userId, guildId ?? null, limit) as MemoryRow[];
+  return rows;
+}
+
+export function deleteMemoryByKey(userId: string, key: string, guildId?: string | null) {
+  const db = getDB();
+  const stmt = db.prepare(`DELETE FROM memories WHERE user_id = ? AND (guild_id IS NULL OR guild_id = ?) AND lower(key) = lower(?)`);
+  const res = stmt.run(userId, guildId ?? null, key);
+  return res.changes ?? 0;
 }
