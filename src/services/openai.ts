@@ -9,17 +9,35 @@ function getGeminiClient(): GoogleGenerativeAI {
   return cachedClient;
 }
 
+const MODEL_CANDIDATES = [
+  "gemini-1.5-flash-latest",
+  "gemini-1.5-pro-latest",
+  "gemini-1.5-flash-8b-latest"
+];
+
 export async function generateReply(prompt: string) {
   const client = getGeminiClient();
-  const model = client.getGenerativeModel({ model: "gemini-1.5-flash" });
-
   const systemPrompt = "You are SynapseAI, a highly intelligent and helpful Discord assistant. Provide detailed, thoughtful, and comprehensive responses. You can engage in complex discussions, explain concepts thoroughly, and provide in-depth answers. Be friendly, knowledgeable, and adapt your response length to match the complexity of the question.";
-  
   const fullPrompt = `${systemPrompt}\n\nUser: ${prompt}\nAssistant:`;
 
-  const result = await model.generateContent(fullPrompt);
-  const response = await result.response;
-  const text = response.text();
-  
-  return text.trim() || "Sorry, I couldn't form a reply.";
+  let lastErr: any = null;
+  for (const modelName of MODEL_CANDIDATES) {
+    try {
+      const model = client.getGenerativeModel({ model: modelName });
+      const result = await model.generateContent(fullPrompt);
+      const response = await result.response;
+      const text = response.text();
+      return (text || "").trim() || "Sorry, I couldn't form a reply.";
+    } catch (e: any) {
+      lastErr = e;
+      const msg = (e?.message || "").toLowerCase();
+      // Try next model on typical not found/unsupported errors
+      if (msg.includes("not found") || msg.includes("is not supported") || msg.includes("404")) {
+        continue;
+      }
+      // Otherwise, break and throw
+      break;
+    }
+  }
+  throw lastErr || new Error("Gemini generateContent failed");
 }
