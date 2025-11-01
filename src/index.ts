@@ -307,7 +307,7 @@ client.on("interactionCreate", async (interaction) => {
     
     if (subcommand === "start") {
       if (!adminOrBypass(interaction.member)) {
-        return interaction.reply({ content: "You must be an administrator to start giveaways.", ephemeral: true });
+        return interaction.reply({ content: "You are not authorized to use this feature.", ephemeral: true });
       }
       
       const prize = interaction.options.getString("prize", true);
@@ -369,7 +369,7 @@ client.on("interactionCreate", async (interaction) => {
     
     if (subcommand === "end") {
       if (!adminOrBypass(interaction.member)) {
-        return interaction.reply({ content: "You must be an administrator to end giveaways.", ephemeral: true });
+        return interaction.reply({ content: "You are not authorized to use this feature.", ephemeral: true });
       }
       
       const id = interaction.options.getString("id", true);
@@ -398,7 +398,7 @@ client.on("interactionCreate", async (interaction) => {
     
     if (subcommand === "reroll") {
       if (!adminOrBypass(interaction.member)) {
-        return interaction.reply({ content: "You must be an administrator to reroll giveaways.", ephemeral: true });
+        return interaction.reply({ content: "You are not authorized to use this feature.", ephemeral: true });
       }
       
       const id = interaction.options.getString("id", true);
@@ -436,7 +436,7 @@ client.on("interactionCreate", async (interaction) => {
   
   if (name === "setquestiontimeout") {
     if (!adminOrBypass(interaction.member)) {
-      return interaction.reply({ content: "You must be an administrator (or bypass) to change this setting.", ephemeral: true });
+      return interaction.reply({ content: "You are not authorized to use this feature.", ephemeral: true });
     }
     const seconds = interaction.options.getInteger("seconds", true);
     if (seconds < 1) {
@@ -462,7 +462,7 @@ client.on("interactionCreate", async (interaction) => {
 
   if (name === 'addbypass') {
     // Only true administrators or the configured owner may manage bypass entries
-    if (!(interaction.memberPermissions?.has(PermissionsBitField.Flags.Administrator) || isOwnerId(interaction.user.id))) return interaction.reply({ content: 'Administrator permission required to manage bypass entries.', ephemeral: true });
+    if (!(interaction.memberPermissions?.has(PermissionsBitField.Flags.Administrator) || isOwnerId(interaction.user.id))) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
     const type = (interaction.options.getString('type', true) as string).toLowerCase();
     let idRaw = interaction.options.getString('id', true)!.trim();
     // allow mentions like <@123> or <@&123>
@@ -480,7 +480,7 @@ client.on("interactionCreate", async (interaction) => {
 
   if (name === 'removebypass') {
     // Only true administrators or the configured owner may manage bypass entries
-    if (!(interaction.memberPermissions?.has(PermissionsBitField.Flags.Administrator) || isOwnerId(interaction.user.id))) return interaction.reply({ content: 'Administrator permission required to manage bypass entries.', ephemeral: true });
+    if (!(interaction.memberPermissions?.has(PermissionsBitField.Flags.Administrator) || isOwnerId(interaction.user.id))) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
     const type = (interaction.options.getString('type', true) as string).toLowerCase();
     let idRaw = interaction.options.getString('id', true)!.trim();
     idRaw = idRaw.replace(/[<@&!>]/g, '');
@@ -496,7 +496,7 @@ client.on("interactionCreate", async (interaction) => {
 
   if (name === 'listbypass') {
     // Only true administrators or the configured owner may view bypass entries
-    if (!(interaction.memberPermissions?.has(PermissionsBitField.Flags.Administrator) || isOwnerId(interaction.user.id))) return interaction.reply({ content: 'Administrator permission required to view bypass entries.', ephemeral: true });
+    if (!(interaction.memberPermissions?.has(PermissionsBitField.Flags.Administrator) || isOwnerId(interaction.user.id))) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
     try {
       const items = bypass.list();
       if (!items.length) return interaction.reply({ content: 'No bypass entries configured.', ephemeral: true });
@@ -510,7 +510,7 @@ client.on("interactionCreate", async (interaction) => {
 
   if (name === 'setresponserule') {
     if (!adminOrBypass(interaction.member)) {
-      return interaction.reply({ content: 'Administrator permission required to manage response rules.', ephemeral: true });
+      return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
     }
     const type = (interaction.options.getString('type', true) as string).toLowerCase();
     const trigger = interaction.options.getString('trigger', true)!;
@@ -545,7 +545,7 @@ client.on("interactionCreate", async (interaction) => {
 
   if (name === 'listresponserules') {
     if (!adminOrBypass(interaction.member)) {
-      return interaction.reply({ content: 'Administrator permission required to view response rules.', ephemeral: true });
+      return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
     }
     const rules = responseRules.listRules();
     if (!rules.length) return interaction.reply({ content: 'No response rules configured.', ephemeral: true });
@@ -557,7 +557,7 @@ client.on("interactionCreate", async (interaction) => {
 
   if (name === 'delresponserule') {
     if (!adminOrBypass(interaction.member)) {
-      return interaction.reply({ content: 'Administrator permission required to delete response rules.', ephemeral: true });
+      return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
     }
     const id = interaction.options.getString('id', true)!;
     const ok = responseRules.removeRule(id);
@@ -565,7 +565,7 @@ client.on("interactionCreate", async (interaction) => {
   }
 
   if (name === 'setmodlog') {
-    if (!adminOrBypass(interaction.member)) return interaction.reply({ content: 'Administrator permission required.', ephemeral: true });
+    if (!adminOrBypass(interaction.member)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
     const ch = interaction.options.getChannel('channel');
     if (!ch || !('id' in ch)) return interaction.reply({ content: 'Invalid channel.', ephemeral: true });
     try {
@@ -578,19 +578,19 @@ client.on("interactionCreate", async (interaction) => {
   }
 
   if (name === 'getmodlog') {
-    if (!adminOrBypass(interaction.member)) return interaction.reply({ content: 'Administrator permission required.', ephemeral: true });
+    if (!adminOrBypass(interaction.member)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
     const id = getModLogChannelId();
     return interaction.reply({ content: id ? `Moderation log channel: <#${id}>` : 'Moderation log channel not set.', ephemeral: true });
   }
 
   if (name === 'clearmodlog') {
-    if (!adminOrBypass(interaction.member)) return interaction.reply({ content: 'Administrator permission required.', ephemeral: true });
+    if (!adminOrBypass(interaction.member)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
     try { clearModLogChannelId(); return interaction.reply({ content: 'Moderation log channel cleared.', ephemeral: true }); } catch (e) { return interaction.reply({ content: 'Failed to clear moderation log channel.', ephemeral: true }); }
   }
 
   // New admin commands: warn / clearwarn / unmute / announce / membercount / purge
   if (name === 'warn') {
-  if (!adminOrBypass(interaction.member)) return interaction.reply({ content: 'Administrator permission required.', ephemeral: true });
+  if (!adminOrBypass(interaction.member)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
   const user = interaction.options.getUser('user');
   const reason = interaction.options.getString('reason') ?? 'No reason provided';
   if (!user) return interaction.reply({ content: 'User not found.', ephemeral: true });
@@ -611,14 +611,14 @@ client.on("interactionCreate", async (interaction) => {
   }
 
   if (name === 'clearwarn') {
-    if (!adminOrBypass(interaction.member)) return interaction.reply({ content: 'Administrator permission required.', ephemeral: true });
+    if (!adminOrBypass(interaction.member)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
     const user = interaction.options.getUser('user');
   const removed = user ? warnings.clearWarningsFor(user.id) : 0;
   return interaction.reply({ content: `Cleared ${removed} warnings for ${user?.tag ?? 'unknown user'}`, ephemeral: true });
   }
 
   if (name === 'unmute') {
-    if (!adminOrBypass(interaction.member)) return interaction.reply({ content: 'Administrator permission required.', ephemeral: true });
+    if (!adminOrBypass(interaction.member)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
     const target = interaction.options.getMember('user') as any;
     if (!target) return interaction.reply({ content: 'Member not found.', ephemeral: true });
     try {
@@ -631,7 +631,7 @@ client.on("interactionCreate", async (interaction) => {
   }
 
   if (name === 'announce') {
-    if (!adminOrBypass(interaction.member)) return interaction.reply({ content: 'Administrator permission required.', ephemeral: true });
+    if (!adminOrBypass(interaction.member)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
     const ch = interaction.options.getChannel('channel') ?? interaction.channel;
     const msg = interaction.options.getString('message', true)!;
     try {
@@ -645,7 +645,7 @@ client.on("interactionCreate", async (interaction) => {
   }
 
   if (name === 'membercount') {
-    if (!adminOrBypass(interaction.member)) return interaction.reply({ content: 'Administrator permission required.', ephemeral: true });
+    if (!adminOrBypass(interaction.member)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
     const role = interaction.options.getRole('role');
     try {
       if (!interaction.guild) return interaction.reply({ content: 'Guild-only command.', ephemeral: true });
@@ -662,7 +662,7 @@ client.on("interactionCreate", async (interaction) => {
   }
 
   if (name === 'purge') {
-    if (!adminOrBypass(interaction.member)) return interaction.reply({ content: 'Administrator permission required.', ephemeral: true });
+    if (!adminOrBypass(interaction.member)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
     const count = interaction.options.getInteger('count', true) ?? 0;
     if (count < 1 || count > 100) return interaction.reply({ content: 'Count must be between 1 and 100.', ephemeral: true });
     try {
@@ -680,7 +680,7 @@ client.on("interactionCreate", async (interaction) => {
     if (name === "setdefaultmute") {
       // admin-only
       if (!adminOrBypass(interaction.member)) {
-        return interaction.reply({ content: "You must be an administrator to change this setting.", ephemeral: true });
+        return interaction.reply({ content: "You are not authorized to use this feature.", ephemeral: true });
       }
       const durationStr = interaction.options.getString("duration", true);
       // parse duration string using util
@@ -702,11 +702,10 @@ client.on("interactionCreate", async (interaction) => {
 
     // Moderation interactions
     if (name === "kick" || name === "ban" || name === "mute" || name === "addrole" || name === "removerole") {
-      // permission checks
-      if (name === "kick" && !interaction.memberPermissions?.has(PermissionsBitField.Flags.KickMembers)) return interaction.reply({ content: "You don't have permission to kick members.", ephemeral: true });
-      if (name === "ban" && !interaction.memberPermissions?.has(PermissionsBitField.Flags.BanMembers)) return interaction.reply({ content: "You don't have permission to ban members.", ephemeral: true });
-      if (name === "mute" && !interaction.memberPermissions?.has(PermissionsBitField.Flags.ModerateMembers)) return interaction.reply({ content: "You don't have permission to timeout members.", ephemeral: true });
-      if ((name === "addrole" || name === "removerole") && !interaction.memberPermissions?.has(PermissionsBitField.Flags.ManageRoles)) return interaction.reply({ content: "You don't have permission to manage roles.", ephemeral: true });
+      // Admin or bypass permission check
+      if (!adminOrBypass(interaction.member)) {
+        return interaction.reply({ content: "You are not authorized to use this feature.", ephemeral: true });
+      }
 
       const target = interaction.options.getMember("user") as any;
       const reason = interaction.options.getString("reason") ?? undefined;
@@ -1006,7 +1005,7 @@ client.on("messageCreate", async (message: Message) => {
 
     if (command === "setdefaultmute") {
       // admin-only prefix command to update default mute duration
-      if (!isAdminOrBypassForMessage(message.member)) return message.reply("You must be an administrator to change this setting.");
+      if (!isAdminOrBypassForMessage(message.member)) return message.reply("You are not authorized to use this feature.");
       const arg = args[0];
       if (!arg) return message.reply("Please provide a duration (e.g. 10m, 1h30m, or seconds).");
       const { parseDurationToSeconds } = await import("./utils/parseDuration");
@@ -1025,6 +1024,11 @@ client.on("messageCreate", async (message: Message) => {
 
     // Moderation commands: expect mentions for user and role
     if (["kick", "ban", "mute", "addrole", "removerole"].includes(command)) {
+      // Admin or bypass permission check
+      if (!isAdminOrBypassForMessage(message.member)) {
+        return message.reply("You are not authorized to use this feature.");
+      }
+      
       const mentioned = message.mentions.members?.first() ?? null;
       const mentionedRole = message.mentions.roles?.first() ?? null;
 
@@ -1060,7 +1064,7 @@ client.on("messageCreate", async (message: Message) => {
     // Prefix alias: addbypass / removebypass / listbypass
     if (command === 'addbypass' || command === 'removebypass' || command === 'listbypass') {
       // Only true administrators or the configured owner may manage bypass entries
-      if (!(message.member?.permissions.has(PermissionsBitField.Flags.Administrator) || isOwnerId(message.author.id))) return message.reply('Administrator permission required to manage bypass entries.');
+      if (!(message.member?.permissions.has(PermissionsBitField.Flags.Administrator) || isOwnerId(message.author.id))) return message.reply('You are not authorized to use this feature.');
       if (command === 'listbypass') {
         const items = bypass.list();
         if (!items.length) return message.reply('No bypass entries configured.');
@@ -1086,7 +1090,7 @@ client.on("messageCreate", async (message: Message) => {
 
     // Prefix alias: announce
     if (command === 'announce') {
-      if (!isAdminOrBypassForMessage(message.member) && !isOwnerId(message.author.id)) return message.reply('Administrator permission required.');
+      if (!isAdminOrBypassForMessage(message.member) && !isOwnerId(message.author.id)) return message.reply('You are not authorized to use this feature.');
       const maybeChannel = message.mentions.channels?.first();
       const msg = args.join(' ').trim();
       if (!msg) return message.reply('Usage: ' + prefix + 'announce <message> [#channel]');
@@ -1103,7 +1107,7 @@ client.on("messageCreate", async (message: Message) => {
 
     // Prefix alias: membercount
     if (command === 'membercount') {
-      if (!isAdminOrBypassForMessage(message.member) && !isOwnerId(message.author.id)) return message.reply('Administrator permission required.');
+      if (!isAdminOrBypassForMessage(message.member) && !isOwnerId(message.author.id)) return message.reply('You are not authorized to use this feature.');
       const role = message.mentions.roles?.first();
       try {
         if (!message.guild) return message.reply('Guild-only command.');
@@ -1121,7 +1125,7 @@ client.on("messageCreate", async (message: Message) => {
 
     // Prefix alias: purge
     if (command === 'purge') {
-      if (!isAdminOrBypassForMessage(message.member) && !isOwnerId(message.author.id)) return message.reply('Administrator permission required.');
+      if (!isAdminOrBypassForMessage(message.member) && !isOwnerId(message.author.id)) return message.reply('You are not authorized to use this feature.');
       const count = Number(args[0]) || 0;
       if (count < 1 || count > 100) return message.reply('Count must be between 1 and 100.');
       try {
@@ -1136,7 +1140,7 @@ client.on("messageCreate", async (message: Message) => {
 
     // Prefix alias: unmute
     if (command === 'unmute') {
-      if (!isAdminOrBypassForMessage(message.member) && !isOwnerId(message.author.id)) return message.reply('Administrator permission required.');
+      if (!isAdminOrBypassForMessage(message.member) && !isOwnerId(message.author.id)) return message.reply('You are not authorized to use this feature.');
       const target = message.mentions.members?.first();
       if (!target) return message.reply('Please mention a member to unmute.');
       try {
@@ -1150,7 +1154,7 @@ client.on("messageCreate", async (message: Message) => {
 
     // Prefix alias: warn / clearwarn
     if (command === 'warn') {
-      if (!isAdminOrBypassForMessage(message.member)) return message.reply('Administrator permission required.');
+      if (!isAdminOrBypassForMessage(message.member)) return message.reply('You are not authorized to use this feature.');
       const target = message.mentions.users?.first();
       const reason = args.filter(a => !a.startsWith('<@')).slice(1).join(' ') || 'No reason provided';
       if (!target) return message.reply('Please mention a user to warn.');
@@ -1170,7 +1174,7 @@ client.on("messageCreate", async (message: Message) => {
     }
 
     if (command === 'clearwarn') {
-      if (!isAdminOrBypassForMessage(message.member)) return message.reply('Administrator permission required.');
+      if (!isAdminOrBypassForMessage(message.member)) return message.reply('You are not authorized to use this feature.');
       const target = message.mentions.users?.first();
       if (!target) return message.reply('Please mention a user to clear warnings for.');
       const removed = warnings.clearWarningsFor(target.id);

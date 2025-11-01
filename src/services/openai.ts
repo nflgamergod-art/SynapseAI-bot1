@@ -15,10 +15,11 @@ export async function generateReply(prompt: string) {
   const response = await client.chat.completions.create({
     model: "gpt-4o-mini",
     messages: [
-      { role: "system", content: "You are SynapseAI, a helpful and friendly Discord assistant. Keep replies concise and appropriate for a public Discord server." },
+      { role: "system", content: "You are SynapseAI, a highly intelligent and helpful Discord assistant. Provide detailed, thoughtful, and comprehensive responses. You can engage in complex discussions, explain concepts thoroughly, and provide in-depth answers. Be friendly, knowledgeable, and adapt your response length to match the complexity of the question." },
       { role: "user", content: prompt }
     ],
-    max_tokens: 400
+    max_tokens: 1500,
+    temperature: 0.8
   });
 
   const text = response.choices?.[0]?.message?.content ?? "Sorry, I couldn't form a reply.";
