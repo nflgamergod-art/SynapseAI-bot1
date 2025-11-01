@@ -11,18 +11,20 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-echo -e "${YELLOW}📥 Pulling latest code from GitHub...${NC}"
+echo -e "${YELLOW}📥 Pulling latest code from GitHub (hard reset to origin/main)...${NC}"
 cd /root/SynapseAI/SynapseAI-bot1
-git pull origin main
+git config --global --add safe.directory /root/SynapseAI/SynapseAI-bot1 || true
+git fetch --all
+git reset --hard origin/main
 
-echo -e "${YELLOW}📦 Installing dependencies...${NC}"
-npm install --production
+echo -e "${YELLOW}📦 Installing dependencies with npm ci...${NC}"
+npm ci
 
 echo -e "${YELLOW}🔨 Building TypeScript...${NC}"
 npm run build
 
 echo -e "${YELLOW}🔄 Restarting PM2 process...${NC}"
-pm2 restart synapseai --update-env
+pm2 restart synapseai --update-env || pm2 start dist/index.js --name synapseai
 
 echo -e "${YELLOW}💾 Saving PM2 configuration...${NC}"
 pm2 save

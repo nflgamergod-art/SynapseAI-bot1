@@ -3,20 +3,25 @@
 set -euo pipefail
 
 # Deployment script for DigitalOcean server
-# Run this on your DigitalOcean server after pulling the latest code
+# This script is invoked by the /redeploy slash command (executes /opt/synapseai-bot/deploy.sh)
+# It is written to be idempotent and resilient to local changes.
 
 echo "🚀 Deploying SynapseAI Bot to DigitalOcean..."
 
 # Navigate to bot directory
 cd /opt/synapseai-bot || exit 1
 
-# Pull latest changes from git
-echo "📥 Pulling latest code from GitHub..."
-git pull origin main
+# Ensure the repo is considered safe by git (some environments require this)
+git config --global --add safe.directory /opt/synapseai-bot || true
 
-# Install dependencies
-echo "📦 Installing dependencies..."
-npm install
+# Pull latest changes from git (discard any local modifications to tracked files)
+echo "📥 Pulling latest code from GitHub (hard reset to origin/main)..."
+git fetch --all
+git reset --hard origin/main
+
+# Install dependencies exactly as locked (prevents package-lock.json drift on servers)
+echo "📦 Installing dependencies with npm ci..."
+npm ci
 
 # Build TypeScript
 echo "🔨 Building TypeScript..."

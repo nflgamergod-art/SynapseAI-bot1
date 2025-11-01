@@ -11,8 +11,8 @@ bash deploy.sh
 ```
 
 The deployment script will automatically:
-- Pull latest code from GitHub
-- Install dependencies
+- Pull latest code from GitHub (hard reset to origin/main to avoid local-diff issues)
+- Install dependencies with npm ci (prevents package-lock.json drift)
 - Build TypeScript
 - Restart the bot with PM2
 - Show you the bot status and logs
@@ -31,14 +31,15 @@ ssh root@64.23.133.2
 cd /opt/synapseai-bot
 ```
 
-### 3. Pull latest changes
+### 3. Pull latest changes (safe/clean)
 ```bash
-git pull origin main
+git fetch --all
+git reset --hard origin/main
 ```
 
 ### 4. Install dependencies
 ```bash
-npm install
+npm ci
 ```
 
 ### 5. Build the TypeScript code
@@ -80,6 +81,16 @@ Latest deployment includes:
 - ✅ Prefix commands updated with authorization checks
 
 ## Troubleshooting
+
+### Deploy failed: Your local changes would be overwritten by merge (package-lock.json)
+This happens when the server has uncommitted changes (often from running `npm install`, which can rewrite `package-lock.json`). Fix it with a one-time hard reset, then redeploy:
+```bash
+cd /opt/synapseai-bot
+git fetch --all
+git reset --hard origin/main
+# keep your .env and other untracked files intact (no git clean)
+bash deploy.sh
+```
 
 ### Bot not starting
 ```bash
