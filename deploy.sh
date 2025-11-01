@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -euo pipefail
+
 # Deployment script for DigitalOcean server
 # Run this on your DigitalOcean server after pulling the latest code
 
@@ -20,9 +22,10 @@ npm install
 echo "🔨 Building TypeScript..."
 npm run build
 
-# Restart PM2 process
+# Restart PM2 process (reload env vars too)
 echo "🔄 Restarting bot with PM2..."
-pm2 restart synapseai-bot || pm2 start dist/index.js --name synapseai-bot
+# --update-env ensures any changes in .env are picked up by the running process
+pm2 restart synapseai-bot --update-env || pm2 start dist/index.js --name synapseai-bot
 
 # Save PM2 configuration
 pm2 save
