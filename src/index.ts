@@ -123,6 +123,9 @@ client.once("ready", () => {
       { name: "difficulty", description: "easy | normal | hard", type: 3, required: false },
       { name: "mode", description: "bo1 | bo3", type: 3, required: false }
     ] },
+    { name: "blackjack", description: "Play Blackjack vs SynapseAI", options: [
+      { name: "difficulty", description: "easy | normal | hard", type: 3, required: false }
+    ] },
   { name: "setquestiontimeout", description: "Set the question repeat timeout (in seconds)", options: [{ name: "seconds", description: "Timeout in seconds (e.g., 300 for 5 minutes)", type: 4, required: true }] },
   { name: "getquestiontimeout", description: "Get the current question repeat timeout" },
   { name: "addbypass", description: "Add a bypass entry (user or role) to allow using admin commands", options: [ { name: 'type', description: 'user or role', type: 3, required: true }, { name: 'id', description: 'User ID or Role ID (or mention)', type: 3, required: true } ] },
@@ -349,6 +352,26 @@ client.on("interactionCreate", async (interaction) => {
     const msg = await interaction.reply({ embeds: [embed], components: [makeButtons()], fetchReply: true });
     // @ts-ignore - union
     setRpsSessionMessage(sess.id, (msg as any).id);
+    return;
+  }
+  if (name === "blackjack") {
+    // Whitelist already enforced above
+    const diff = (interaction.options.getString('difficulty') || 'normal').toLowerCase();
+    const difficulty = (['easy','normal','hard'].includes(diff) ? diff : 'normal') as any;
+    const { startBjSession, setBjMessageId, bjEmbedFields, bjTalkLine } = await import('./services/games/blackjack');
+    const sess = startBjSession(interaction.user.id, interaction.channelId!, difficulty);
+    const embed = new EmbedBuilder()
+      .setTitle('Blackjack vs SynapseAI')
+      .setDescription(bjTalkLine(sess, 'deal'))
+      .addFields(bjEmbedFields(sess, false))
+      .setColor(0x2ecc71);
+    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId(`blackjack:${sess.id}:hit`).setLabel('Hit').setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId(`blackjack:${sess.id}:stand`).setLabel('Stand').setStyle(ButtonStyle.Secondary)
+    );
+    const msg = await interaction.reply({ embeds: [embed], components: [row], fetchReply: true });
+    // @ts-ignore
+    setBjMessageId(sess.id, (msg as any).id);
     return;
   }
   if (name === "redeploy") {
@@ -1577,50 +1600,102 @@ client.on("messageCreate", async (message: Message) => {
   }
 });
 
-// Button interactions (RPS AI)
+// Button interactions (Games)
 client.on('interactionCreate', async (interaction) => {
   try {
     if (!interaction.isButton()) return;
     const id = interaction.customId || '';
-    if (!id.startsWith('rpsai:')) return;
-    const parts = id.split(':');
-    const sessionId = parts[1];
-    const move = (parts[2] || '').toLowerCase();
-    if (!['rock','paper','scissors'].includes(move)) return interaction.reply({ content: 'Invalid move.', ephemeral: true });
+    if (id.startsWith('rpsai:')) {
+      const parts = id.split(':');
+      const sessionId = parts[1];
+      const move = (parts[2] || '').toLowerCase();
+      if (!['rock','paper','scissors'].includes(move)) return interaction.reply({ content: 'Invalid move.', ephemeral: true });
 
-    const { getRpsSession, handlePlayerMove, rpsEmoji, scoreLine, endRpsSession } = await import('./services/games/rpsAi');
-    const { getTrashTalk } = await import('./services/games/trashTalk');
-    const sess = getRpsSession(sessionId);
-    if (!sess) return interaction.reply({ content: 'This match has expired.', ephemeral: true });
-    if (interaction.user.id !== sess.userId) {
-      return interaction.reply({ content: 'Only the challenger can play in this match.', ephemeral: true });
+      const { getRpsSession, handlePlayerMove, rpsEmoji, scoreLine, endRpsSession } = await import('./services/games/rpsAi');
+      const { getTrashTalk } = await import('./services/games/trashTalk');
+      const sess = getRpsSession(sessionId);
+      if (!sess) return interaction.reply({ content: 'This match has expired.', ephemeral: true });
+      if (interaction.user.id !== sess.userId) {
+        return interaction.reply({ content: 'Only the challenger can play in this match.', ephemeral: true });
+      }
+
+      const result = handlePlayerMove(sessionId, move as any);
+      if (!result) return interaction.reply({ content: 'Match not found.', ephemeral: true });
+
+      const { session, aiMove, outcome, finished } = result;
+      const talk = getTrashTalk({ outcome, difficulty: session.difficulty as any, playerName: interaction.user.username, playerMove: move, aiMove });
+
+      const lastRound = `You ${rpsEmoji(move as any)} vs ${rpsEmoji(aiMove)} SynapseAI → ${outcome.toUpperCase()}`;
+      const embed = new EmbedBuilder()
+        .setTitle('Rock-Paper-Scissors vs SynapseAI')
+        .setDescription(`${lastRound}\n${talk}`)
+        .addFields(
+          { name: 'Difficulty', value: String(session.difficulty).toUpperCase(), inline: true },
+          { name: 'Mode', value: String(session.mode).toUpperCase(), inline: true },
+          { name: 'Score', value: scoreLine(session), inline: false }
+        )
+        .setColor(finished ? (session.playerWins > session.aiWins ? 0x00D26A : 0xFF4D4F) : 0x00A8FF);
+
+      const buttonsRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId(`rpsai:${session.id}:rock`).setLabel('Rock').setStyle(ButtonStyle.Primary).setDisabled(finished),
+        new ButtonBuilder().setCustomId(`rpsai:${session.id}:paper`).setLabel('Paper').setStyle(ButtonStyle.Primary).setDisabled(finished),
+        new ButtonBuilder().setCustomId(`rpsai:${session.id}:scissors`).setLabel('Scissors').setStyle(ButtonStyle.Primary).setDisabled(finished),
+      );
+
+      if (finished) endRpsSession(session.id);
+      await interaction.update({ embeds: [embed], components: [buttonsRow] });
+      return;
     }
 
-    const result = handlePlayerMove(sessionId, move as any);
-    if (!result) return interaction.reply({ content: 'Match not found.', ephemeral: true });
+    if (id.startsWith('blackjack:')) {
+      const parts = id.split(':');
+      const sessionId = parts[1];
+      const action = (parts[2] || '').toLowerCase();
+      const { getBjSession, hitPlayer, standAndResolve, bjEmbedFields, bjTalkLine, endBjSession } = await import('./services/games/blackjack');
+      const sess = getBjSession(sessionId);
+      if (!sess) return interaction.reply({ content: 'This table has closed.', ephemeral: true });
+      if (interaction.user.id !== sess.userId) return interaction.reply({ content: 'Only the player can act on this table.', ephemeral: true });
 
-    const { session, aiMove, outcome, finished } = result;
-    const talk = getTrashTalk({ outcome, difficulty: session.difficulty as any, playerName: interaction.user.username, playerMove: move, aiMove });
+      if (action === 'hit') {
+        const s = hitPlayer(sessionId);
+        if (!s) return interaction.reply({ content: 'Cannot hit now.', ephemeral: true });
+        const finished = s.finished;
+        const embed = new EmbedBuilder()
+          .setTitle('Blackjack vs SynapseAI')
+          .setDescription(bjTalkLine(s, finished ? 'finish' : 'hit'))
+          .addFields(bjEmbedFields(s, finished))
+          .setColor(finished ? (s.outcome === 'win' ? 0x00D26A : s.outcome === 'lose' ? 0xFF4D4F : 0x00A8FF) : 0x2ecc71);
+        const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder().setCustomId(`blackjack:${s.id}:hit`).setLabel('Hit').setStyle(ButtonStyle.Primary).setDisabled(finished),
+          new ButtonBuilder().setCustomId(`blackjack:${s.id}:stand`).setLabel('Stand').setStyle(ButtonStyle.Secondary).setDisabled(finished)
+        );
+        if (finished) endBjSession(s.id);
+        await interaction.update({ embeds: [embed], components: [row] });
+        return;
+      }
 
-    const lastRound = `You ${rpsEmoji(move as any)} vs ${rpsEmoji(aiMove)} SynapseAI → ${outcome.toUpperCase()}`;
-    const embed = new EmbedBuilder()
-      .setTitle('Rock-Paper-Scissors vs SynapseAI')
-      .setDescription(`${lastRound}\n${talk}`)
-      .addFields(
-        { name: 'Difficulty', value: String(session.difficulty).toUpperCase(), inline: true },
-        { name: 'Mode', value: String(session.mode).toUpperCase(), inline: true },
-        { name: 'Score', value: scoreLine(session), inline: false }
-      )
-      .setColor(finished ? (session.playerWins > session.aiWins ? 0x00D26A : 0xFF4D4F) : 0x00A8FF);
+      if (action === 'stand') {
+        const s = standAndResolve(sessionId);
+        if (!s) return interaction.reply({ content: 'Cannot stand now.', ephemeral: true });
+        const embed = new EmbedBuilder()
+          .setTitle('Blackjack vs SynapseAI')
+          .setDescription(bjTalkLine(s, 'finish'))
+          .addFields(bjEmbedFields(s, true))
+          .setColor(s.outcome === 'win' ? 0x00D26A : s.outcome === 'lose' ? 0xFF4D4F : 0x00A8FF);
+        const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder().setCustomId(`blackjack:${s.id}:hit`).setLabel('Hit').setStyle(ButtonStyle.Primary).setDisabled(true),
+          new ButtonBuilder().setCustomId(`blackjack:${s.id}:stand`).setLabel('Stand').setStyle(ButtonStyle.Secondary).setDisabled(true)
+        );
+        endBjSession(s.id);
+        await interaction.update({ embeds: [embed], components: [row] });
+        return;
+      }
 
-    const buttonsRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId(`rpsai:${session.id}:rock`).setLabel('Rock').setStyle(ButtonStyle.Primary).setDisabled(finished),
-      new ButtonBuilder().setCustomId(`rpsai:${session.id}:paper`).setLabel('Paper').setStyle(ButtonStyle.Primary).setDisabled(finished),
-      new ButtonBuilder().setCustomId(`rpsai:${session.id}:scissors`).setLabel('Scissors').setStyle(ButtonStyle.Primary).setDisabled(finished),
-    );
+      return interaction.reply({ content: 'Unknown action.', ephemeral: true });
+    }
 
-    if (finished) endRpsSession(session.id);
-    await interaction.update({ embeds: [embed], components: [buttonsRow] });
+    // Unrecognized button type
+    return;
   } catch (err) {
     console.error('Button interaction error:', err);
     if (interaction.isRepliable()) {
