@@ -57,6 +57,7 @@ client.once("ready", () => {
     { name: "setgeminikey", description: "Owner: set Gemini API key and restart bot", options: [
       { name: "key", description: "Gemini API key", type: 3, required: true }
     ] },
+    { name: "diagai", description: "Owner: AI health check (env + test call)" },
     // Owner-only whitelist management
     { name: "addwhitelist", description: "Owner: add a whitelist entry (user or role)", options: [
       { name: "type", description: "user or role", type: 3, required: true },
@@ -340,6 +341,44 @@ client.on("interactionCreate", async (interaction) => {
       await interaction.followUp({ content: `Failed to update key: ${err?.message ?? err}`, ephemeral: true });
     }
     return;
+  }
+  if (name === "diagai") {
+    if (!isOwnerId(interaction.user.id)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
+    try {
+      const envSummary = [
+        `GEMINI_API_KEY: ${process.env.GEMINI_API_KEY ? 'present' : 'missing'}`,
+        `GUILD_ID: ${process.env.GUILD_ID ? process.env.GUILD_ID : 'not set'}`,
+        `WAKE_WORD: ${process.env.WAKE_WORD ?? 'SynapseAI'}`,
+      ].join('\n');
+      // Try a tiny model call
+      const { generateReply } = await import('./services/openai');
+      let ok = false, sample = '';
+      try {
+        const res = await generateReply('Health check: reply with OK.');
+        ok = true;
+        sample = (res || '').slice(0, 160);
+      } catch (e: any) {
+        sample = `AI error: ${e?.message ?? String(e)}`;
+      }
+      // Try to get commit hash (best-effort)
+      let commit = 'unknown';
+      try {
+        const { execSync } = await import('child_process');
+        commit = execSync('git rev-parse --short HEAD', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+      } catch {}
+      const lines = [
+        `DiagAI`,
+        `Commit: ${commit}`,
+        envSummary,
+        `Node: ${process.version}`,
+        `AI test: ${ok ? 'OK' : 'FAILED'}`,
+        `Sample/Err: ${sample}`
+      ].join('\n');
+      return interaction.reply({ content: lines.slice(0, 1900), ephemeral: true });
+    } catch (err: any) {
+      console.error('diagai failed:', err);
+      return interaction.reply({ content: `diagai failed: ${err?.message ?? err}`, ephemeral: true });
+    }
   }
   if (name === "ping") return interaction.reply(`Pong!`);
   if (name === "pong") return interaction.reply(`Pong!`);
