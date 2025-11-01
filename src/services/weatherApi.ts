@@ -1,5 +1,3 @@
-import fetch, { Response } from 'node-fetch';
-
 interface WeatherResponse {
   location: {
     name: string;
@@ -28,7 +26,7 @@ export async function getWeather(searchLocation: string): Promise<string> {
   }
 
   try {
-    const response: Response = await fetch(`${BASE_URL}/current.json?key=${API_KEY}&q=${encodeURIComponent(searchLocation)}`);
+    const response = await fetch(`${BASE_URL}/current.json?key=${API_KEY}&q=${encodeURIComponent(searchLocation)}`);
     const data = await response.json() as WeatherResponse;
 
     if (data.error) {
