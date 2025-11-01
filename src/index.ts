@@ -8,6 +8,7 @@ import { getRandomJoke } from "./services/learningService";
 import { responseTracker } from "./services/responseTracker";
 import { responseRules } from "./services/responseRules";
 import { bypass } from "./services/bypass";
+import { isWhitelisted, getWhitelist, addWhitelistEntry, removeWhitelistEntry } from "./services/whitelistService";
 import { warnings } from "./services/warnings";
 import { LanguageHandler } from "./services/languageHandler";
 import { buildModerationEmbed, sendToModLog } from "./utils/moderationEmbed";
@@ -45,6 +46,18 @@ client.once("ready", () => {
     { name: "pong", description: "Alias for ping" },
     { name: "joke", description: "Tell a random joke" },
     { name: "dadjoke", description: "Tell a dad joke" },
+    // Owner-only whitelist management
+    { name: "addwhitelist", description: "Owner: add a whitelist entry (user or role)", options: [
+      { name: "type", description: "user or role", type: 3, required: true },
+      { name: "id", description: "User ID or Role ID (or mention)", type: 3, required: true },
+      { name: "duration", description: "Optional duration (e.g., 7d, 24h, 3600)", type: 3, required: false },
+      { name: "autorole", description: "Optional auto-assign role id", type: 3, required: false }
+    ] },
+    { name: "removewhitelist", description: "Owner: remove a whitelist entry", options: [
+      { name: "type", description: "user or role", type: 3, required: true },
+      { name: "id", description: "User ID or Role ID (or mention)", type: 3, required: true }
+    ] },
+    { name: "listwhitelist", description: "Owner: list whitelist entries" },
   { name: "setquestiontimeout", description: "Set the question repeat timeout (in seconds)", options: [{ name: "seconds", description: "Timeout in seconds (e.g., 300 for 5 minutes)", type: 4, required: true }] },
   { name: "getquestiontimeout", description: "Get the current question repeat timeout" },
   { name: "addbypass", description: "Add a bypass entry (user or role) to allow using admin commands", options: [ { name: 'type', description: 'user or role', type: 3, required: true }, { name: 'id', description: 'User ID or Role ID (or mention)', type: 3, required: true } ] },
@@ -92,6 +105,71 @@ client.on("interactionCreate", async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
 
     const name = interaction.commandName;
+
+    // Whitelist check: only respond to whitelisted users/roles
+    const userId = interaction.user.id;
+    const member = interaction.member as any;
+    let whitelisted = isWhitelisted(userId, 'user');
+    if (!whitelisted && member?.roles) {
+      const roles = member.roles.cache ? Array.from(member.roles.cache.keys()) : (member.roles || []);
+      for (const r of roles) {
+        if (isWhitelisted(String(r), 'role')) {
+          whitelisted = true;
+          break;
+        }
+      }
+    }
+    if (!whitelisted && !isOwnerId(userId)) {
+      return interaction.reply({ content: "My owner hasn't whitelisted you. You can either pay to use my services or buy Synapse script to use my commands and have a conversation for free.", ephemeral: true });
+    }
+  // Whitelist admin commands (owner only)
+  if (isOwnerId(interaction.user.id)) {
+    if (interaction.commandName === "addwhitelist") {
+      const type = (interaction.options.getString('type', true) as string).toLowerCase();
+      let idRaw = interaction.options.getString('id', true)!.trim();
+      idRaw = idRaw.replace(/[<@&!>]/g, '');
+      let expiresAt: number | undefined = undefined;
+      const duration = interaction.options.getString('duration');
+      if (duration) {
+        const { parseDurationToSeconds } = await import("./utils/parseDuration");
+        const secs = parseDurationToSeconds(duration);
+        if (secs && secs > 0) expiresAt = Date.now() + secs * 1000;
+      }
+      const autoRoleId = interaction.options.getString('autorole') ?? undefined;
+      if (!['user','role'].includes(type)) return interaction.reply({ content: 'Type must be user or role.', ephemeral: true });
+      try {
+        addWhitelistEntry({ id: idRaw, type: type as any, expiresAt, autoRoleId });
+        return interaction.reply({ content: `Whitelisted ${type} ${idRaw}${expiresAt ? ` until ${new Date(expiresAt).toLocaleString()}` : ' (lifetime)'}.`, ephemeral: true });
+      } catch (err) {
+        console.error('Failed to add whitelist', err);
+        return interaction.reply({ content: 'Failed to add whitelist entry.', ephemeral: true });
+      }
+    }
+    if (interaction.commandName === "removewhitelist") {
+      const type = (interaction.options.getString('type', true) as string).toLowerCase();
+      let idRaw = interaction.options.getString('id', true)!.trim();
+      idRaw = idRaw.replace(/[<@&!>]/g, '');
+      if (!['user','role'].includes(type)) return interaction.reply({ content: 'Type must be user or role.', ephemeral: true });
+      try {
+        removeWhitelistEntry(idRaw, type as any);
+        return interaction.reply({ content: `Removed whitelist ${type} ${idRaw}.`, ephemeral: true });
+      } catch (err) {
+        console.error('Failed to remove whitelist', err);
+        return interaction.reply({ content: 'Failed to remove whitelist entry.', ephemeral: true });
+      }
+    }
+    if (interaction.commandName === "listwhitelist") {
+      try {
+        const items = getWhitelist();
+        if (!items.length) return interaction.reply({ content: 'No whitelist entries configured.', ephemeral: true });
+        const out = items.map(i => `${i.type}:${i.id}${i.expiresAt ? ` expires ${new Date(i.expiresAt).toLocaleString()}` : ' lifetime'}${i.autoRoleId ? ` autoRole=${i.autoRoleId}` : ''}`).join('\n').slice(0, 1900);
+        return interaction.reply({ content: `Whitelist entries:\n${out}`, ephemeral: true });
+      } catch (err) {
+        console.error('Failed to list whitelist', err);
+        return interaction.reply({ content: 'Failed to list whitelist entries.', ephemeral: true });
+      }
+    }
+  }
 
     // helper to check admin or bypass
     const adminOrBypass = (memberMaybe: any) => {
@@ -518,6 +596,36 @@ function formatSeconds(total: number) {
 
 client.on("messageCreate", async (message: Message) => {
   if (message.author.bot) return;
+
+  // Whitelist check: only respond to whitelisted users/roles
+  const userId = message.author.id;
+  let whitelisted = isWhitelisted(userId, 'user');
+  if (!whitelisted && message.member?.roles) {
+    let roles: string[] = [];
+    if (message.member.roles.cache) {
+      roles = Array.from(message.member.roles.cache.keys());
+    } else if (Array.isArray(message.member.roles)) {
+      roles = message.member.roles.map((r: any) => typeof r === 'string' ? r : r.id);
+    }
+    for (const r of roles) {
+      if (isWhitelisted(String(r), 'role')) {
+        whitelisted = true;
+        break;
+      }
+    }
+  }
+  // Decide if the message is trying to interact with the bot (prefix, wake word, or direct mention)
+  const tryingToUse = message.content.startsWith(prefix)
+    || isWakeWord(message, wakeWord)
+    || (!!message.mentions && !!message.mentions.users?.has(client.user?.id || ''));
+  if (!whitelisted && !isOwnerId(userId)) {
+    if (tryingToUse) {
+      try {
+        await message.reply("My owner hasn't whitelisted you. You can either pay to use my services or buy Synapse script to use my commands and have a conversation for free.");
+      } catch (e) { /* ignore */ }
+    }
+    return;
+  }
 
   // helper for prefix-based admin or bypass checks
   const isAdminOrBypassForMessage = (member: any) => {
