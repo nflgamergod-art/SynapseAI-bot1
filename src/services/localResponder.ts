@@ -150,7 +150,7 @@ export async function localReplyText({ text, username = "there", userId }: Reply
   const response = await generateResponse(t, username);
   
   // Track the question and get tracking response
-  const trackingResult = responseTracker.trackQuestion(t, userId, username, response);
+  const trackingResult = await responseTracker.trackQuestion(t, userId, username, response);
   
   if (!trackingResult.shouldRespond) {
     // User asked the same question too soon

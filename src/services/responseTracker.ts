@@ -94,14 +94,14 @@ class ResponseTracker {
     return LanguageHandler.getDifferentUserRepeatResponse(language, lastAskedBy);
   }
 
-  public trackQuestion(question: string, userId: string, username: string, response: string): { 
+  public async trackQuestion(question: string, userId: string, username: string, response: string): Promise<{ 
     shouldRespond: boolean;
     customResponse?: string;
     originalResponse?: string;
-  } {
+  }> {
     const now = Date.now();
     const normalizedQuestion = question.toLowerCase().trim();
-    const detectedLanguage = LanguageHandler.detectLanguage(question);
+    const detectedLanguage = await LanguageHandler.detectLanguage(question);
 
     // Initialize user's question history if it doesn't exist
     if (!this.userQuestions[userId]) {

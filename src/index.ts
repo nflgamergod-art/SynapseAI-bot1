@@ -657,7 +657,7 @@ client.on("messageCreate", async (message: Message) => {
     const rule = responseRules.findMatchingRule(content, unicodeEmojis, customEmojiIds, stickerIds);
     if (rule) {
       // pick response based on detected language when available
-      const detected = LanguageHandler.detectLanguage(content || message.content || '');
+      const detected = await LanguageHandler.detectLanguage(content || message.content || '');
       let replyRaw: string | undefined = undefined;
       if (rule.responsesPerLang && rule.responsesPerLang[detected]) replyRaw = rule.responsesPerLang[detected];
       if (!replyRaw && rule.response) replyRaw = rule.response;
