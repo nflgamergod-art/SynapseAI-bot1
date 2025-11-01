@@ -79,7 +79,23 @@ Press `Ctrl+C` to stop the bot.
 
 ## Step 5: Keep the Bot Running 24/7
 
-You have two options to keep your bot running:
+### Quick Setup with start.sh (Easiest)
+
+We provide an interactive script that simplifies the setup:
+
+```bash
+chmod +x start.sh
+./start.sh
+```
+
+The script will guide you through:
+- Installing dependencies
+- Choosing how to run the bot (foreground, PM2, or systemd)
+- Setting up auto-start on boot
+
+### Manual Setup Options
+
+You have two manual options to keep your bot running:
 
 ### Option A: Using PM2 (Recommended)
 
@@ -91,6 +107,13 @@ PM2 is a production process manager that will keep your bot running and restart 
    ```
 
 2. **Start the bot with PM2:**
+   
+   You can use the provided ecosystem config file:
+   ```bash
+   pm2 start ecosystem.config.js
+   ```
+   
+   Or start it manually:
    ```bash
    pm2 start index.js --name synapseai-bot
    ```

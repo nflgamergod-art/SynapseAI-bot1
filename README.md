@@ -66,7 +66,7 @@ Quick summary:
 2. Install Node.js and Git
 3. Clone this repository
 4. Configure your bot token
-5. Use PM2 or systemd to keep it running
+5. Run `./start.sh` for an interactive setup, or manually use PM2/systemd
 
 ## Project Structure
 
@@ -74,6 +74,8 @@ Quick summary:
 SynapseAI-bot1/
 ├── index.js                 # Main bot file
 ├── package.json             # Node.js dependencies
+├── ecosystem.config.js      # PM2 configuration
+├── start.sh                 # Interactive startup script
 ├── .env.example             # Environment variables template
 ├── .gitignore              # Git ignore rules
 ├── synapseai-bot.service   # Systemd service file
