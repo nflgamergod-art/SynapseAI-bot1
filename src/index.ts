@@ -63,6 +63,7 @@ client.once("ready", () => {
     { name: "setprovider", description: "Owner: choose AI provider (openai|gemini) and restart", options: [
       { name: "provider", description: "openai or gemini", type: 3, required: true }
     ] },
+    { name: "pm2clean", description: "Owner: remove old PM2 process 'synapseai' and save" },
     { name: "diagai", description: "Owner: AI health check (env + test call)" },
     // Owner-only whitelist management
     { name: "addwhitelist", description: "Owner: add a whitelist entry (user or role)", options: [
@@ -137,6 +138,13 @@ client.once("ready", () => {
       if (guildId) {
         await client.application.commands.set(commands, guildId);
         console.log(`Registered ${commands.length} slash commands for guild ${guildId}`);
+        // Also clear global commands to avoid duplicates when switching from global to guild registration
+        try {
+          await client.application.commands.set([] as any);
+          console.log('Cleared global slash commands to prevent duplicates.');
+        } catch (e) {
+          console.warn('Failed to clear global commands:', e);
+        }
       } else {
         await client.application.commands.set(commands as any);
         console.log(`Registered ${commands.length} global slash commands`);
@@ -405,6 +413,21 @@ client.on("interactionCreate", async (interaction) => {
     } catch (err: any) {
       console.error('setprovider failed:', err);
       await interaction.followUp({ content: `Failed to set provider: ${err?.message ?? err}`, ephemeral: true });
+    }
+    return;
+  }
+  if (name === "pm2clean") {
+    if (!isOwnerId(interaction.user.id)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
+    await interaction.reply({ content: `Deleting old PM2 process 'synapseai' and saving...`, ephemeral: true });
+    try {
+      const { exec } = await import('child_process');
+      await new Promise<void>((resolve, reject) => {
+        exec("pm2 delete synapseai || true && pm2 save", (error, stdout, stderr) => error ? reject(error) : resolve());
+      });
+      await interaction.followUp({ content: `PM2 cleanup done. If duplicates remain, run /redeploy once more.`, ephemeral: true });
+    } catch (err: any) {
+      console.error('pm2clean failed:', err);
+      await interaction.followUp({ content: `pm2clean failed: ${err?.message ?? err}`, ephemeral: true });
     }
     return;
   }
