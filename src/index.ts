@@ -10,6 +10,8 @@ import { responseRules } from "./services/responseRules";
 import { bypass } from "./services/bypass";
 import { warnings } from "./services/warnings";
 import { LanguageHandler } from "./services/languageHandler";
+import { buildModerationEmbed, sendToModLog } from "./utils/moderationEmbed";
+import { setModLogChannelId, getModLogChannelId, clearModLogChannelId } from "./config";
 
 const token = process.env.DISCORD_TOKEN;
 const prefix = process.env.PREFIX ?? "!";
@@ -51,6 +53,9 @@ client.once("ready", () => {
   { name: "setresponserule", description: "Add a rule to customize responses (admin)", options: [ { name: 'type', description: 'Type: phrase|emoji|sticker', type: 3, required: true }, { name: 'trigger', description: 'Trigger text/emoji/sticker id', type: 3, required: true }, { name: 'response', description: 'Response text (use __IGNORE__ to make bot ignore). Can be JSON object for translations.', type: 3, required: true }, { name: 'match', description: 'Match type: contains|equals|regex (phrase only)', type: 3, required: false } ] },
   { name: "listresponserules", description: "List configured response rules (admin)" },
   { name: "delresponserule", description: "Delete a response rule by id (admin)", options: [{ name: 'id', description: 'Rule id', type: 3, required: true }] },
+  { name: "setmodlog", description: "Set the moderation log channel (admin)", options: [{ name: 'channel', type: 7, description: 'Channel to receive moderation logs', required: true }] },
+  { name: "getmodlog", description: "Show the current moderation log channel (admin)" },
+  { name: "clearmodlog", description: "Clear the moderation log channel (admin)" },
     { name: "warn", description: "Warn a user (DM and record)", options: [{ name: 'user', type: 6, description: 'User to warn', required: true }, { name: 'reason', type: 3, description: 'Reason', required: false }] },
     { name: "clearwarn", description: "Clear warnings for a user", options: [{ name: 'user', type: 6, description: 'User', required: true }] },
     { name: "unmute", description: "Remove timeout from a member", options: [{ name: 'user', type: 6, description: 'Member to unmute', required: true }] },
@@ -254,18 +259,48 @@ client.on("interactionCreate", async (interaction) => {
     return interaction.reply({ content: ok ? `Removed rule ${id}` : `Rule ${id} not found`, ephemeral: true });
   }
 
+  if (name === 'setmodlog') {
+    if (!adminOrBypass(interaction.member)) return interaction.reply({ content: 'Administrator permission required.', ephemeral: true });
+    const ch = interaction.options.getChannel('channel');
+    if (!ch || !('id' in ch)) return interaction.reply({ content: 'Invalid channel.', ephemeral: true });
+    try {
+      setModLogChannelId((ch as any).id);
+      return interaction.reply({ content: `Moderation log channel set to <#${(ch as any).id}>`, ephemeral: true });
+    } catch (err) {
+      console.error('Failed to set mod log channel', err);
+      return interaction.reply({ content: 'Failed to set moderation log channel.', ephemeral: true });
+    }
+  }
+
+  if (name === 'getmodlog') {
+    if (!adminOrBypass(interaction.member)) return interaction.reply({ content: 'Administrator permission required.', ephemeral: true });
+    const id = getModLogChannelId();
+    return interaction.reply({ content: id ? `Moderation log channel: <#${id}>` : 'Moderation log channel not set.', ephemeral: true });
+  }
+
+  if (name === 'clearmodlog') {
+    if (!adminOrBypass(interaction.member)) return interaction.reply({ content: 'Administrator permission required.', ephemeral: true });
+    try { clearModLogChannelId(); return interaction.reply({ content: 'Moderation log channel cleared.', ephemeral: true }); } catch (e) { return interaction.reply({ content: 'Failed to clear moderation log channel.', ephemeral: true }); }
+  }
+
   // New admin commands: warn / clearwarn / unmute / announce / membercount / purge
   if (name === 'warn') {
   if (!adminOrBypass(interaction.member)) return interaction.reply({ content: 'Administrator permission required.', ephemeral: true });
   const user = interaction.options.getUser('user');
   const reason = interaction.options.getString('reason') ?? 'No reason provided';
   if (!user) return interaction.reply({ content: 'User not found.', ephemeral: true });
-    // try send DM
-    try {
-      await user.send(`You have been warned in ${interaction.guild?.name ?? 'a server'} by ${interaction.user.tag}. Reason: ${reason}`);
-    } catch (err) {
-      // ignore failures to DM
-    }
+    // DM with embed
+    const embed = buildModerationEmbed({
+      action: 'Warned',
+      guildName: interaction.guild?.name ?? 'a server',
+      targetId: user.id,
+      targetTag: user.tag,
+      moderatorId: interaction.user.id,
+      moderatorTag: interaction.user.tag,
+      reason
+    });
+    try { await user.send({ content: `<@${user.id}>`, embeds: [embed] }); } catch { /* ignore */ }
+    await sendToModLog(interaction.guild!, embed, `<@${user.id}>`);
     warnings.addWarning(user.id, interaction.user.id, reason);
     return interaction.reply({ content: `Warned ${user.tag}`, ephemeral: true });
   }
@@ -376,16 +411,18 @@ client.on("interactionCreate", async (interaction) => {
       if (name === "kick") {
         try {
           const finalReason = reason ?? 'No reason provided';
-          const guildName = interaction.guild?.name ?? 'a server';
-          
-          // Try to DM the user before kicking
-          try {
-            await target.user.send(`You have been kicked from **${guildName}** by ${interaction.user.tag}.\nReason: ${finalReason}`);
-          } catch (dmErr) {
-            console.log(`Could not DM ${target.user.tag} about kick (DMs disabled or blocked)`);
-          }
-          
+          const embed = buildModerationEmbed({
+            action: 'Kicked',
+            guildName: interaction.guild?.name ?? 'a server',
+            targetId: target.id,
+            targetTag: target.user.tag,
+            moderatorId: interaction.user.id,
+            moderatorTag: interaction.user.tag,
+            reason: finalReason
+          });
+          try { await target.user.send({ content: `<@${target.id}>`, embeds: [embed] }); } catch { /* ignore */ }
           await target.kick(finalReason);
+          await sendToModLog(interaction.guild!, embed, `<@${target.id}>`);
           return interaction.reply({ content: `${target.user.tag} was kicked. Reason: ${reason ?? 'None'}` });
         } catch (err) {
           console.error(err);
@@ -396,16 +433,18 @@ client.on("interactionCreate", async (interaction) => {
       if (name === "ban") {
         try {
           const finalReason = reason ?? 'No reason provided';
-          const guildName = interaction.guild?.name ?? 'a server';
-          
-          // Try to DM the user before banning
-          try {
-            await target.user.send(`You have been banned from **${guildName}** by ${interaction.user.tag}.\nReason: ${finalReason}`);
-          } catch (dmErr) {
-            console.log(`Could not DM ${target.user.tag} about ban (DMs disabled or blocked)`);
-          }
-          
+          const embed = buildModerationEmbed({
+            action: 'Banned',
+            guildName: interaction.guild?.name ?? 'a server',
+            targetId: target.id,
+            targetTag: target.user.tag,
+            moderatorId: interaction.user.id,
+            moderatorTag: interaction.user.tag,
+            reason: finalReason
+          });
+          try { await target.user.send({ content: `<@${target.id}>`, embeds: [embed] }); } catch { /* ignore */ }
           await target.ban({ reason: finalReason });
+          await sendToModLog(interaction.guild!, embed, `<@${target.id}>`);
           return interaction.reply({ content: `${target.user.tag} was banned. Reason: ${reason ?? 'None'}` });
         } catch (err) {
           console.error(err);
@@ -421,19 +460,21 @@ client.on("interactionCreate", async (interaction) => {
           let secs = durationStr ? parseDurationToSeconds(durationStr) : undefined;
           if (!secs || secs <= 0) secs = getDefaultMuteSeconds();
           const ms = secs * 1000;
-          
+
           const finalReason = reason ?? 'No reason provided';
-          const guildName = interaction.guild?.name ?? 'a server';
-          const durationText = formatSeconds(secs);
-          
-          // Try to DM the user before timing out
-          try {
-            await target.user.send(`You have been timed out in **${guildName}** for **${durationText}** by ${interaction.user.tag}.\nReason: ${finalReason}`);
-          } catch (dmErr) {
-            console.log(`Could not DM ${target.user.tag} about timeout (DMs disabled or blocked)`);
-          }
-          
+          const embed = buildModerationEmbed({
+            action: 'Muted',
+            guildName: interaction.guild?.name ?? 'a server',
+            targetId: target.id,
+            targetTag: target.user.tag,
+            moderatorId: interaction.user.id,
+            moderatorTag: interaction.user.tag,
+            reason: finalReason,
+            durationSeconds: secs
+          });
+          try { await target.user.send({ content: `<@${target.id}>`, embeds: [embed] }); } catch { /* ignore */ }
           await target.timeout(ms, reason ?? 'No reason provided');
+          await sendToModLog(interaction.guild!, embed, `<@${target.id}>`);
           return interaction.reply({ content: `${target.user.tag} was timed out for ${ms/1000}s.` + (reason ? ` Reason: ${reason}` : '') });
         } catch (err) {
           console.error(err);
@@ -669,7 +710,17 @@ client.on("messageCreate", async (message: Message) => {
       const target = message.mentions.users?.first();
       const reason = args.filter(a => !a.startsWith('<@')).slice(1).join(' ') || 'No reason provided';
       if (!target) return message.reply('Please mention a user to warn.');
-      try { await target.send(`You have been warned in ${message.guild?.name ?? 'a server'} by ${message.author.tag}. Reason: ${reason}`); } catch (e) { /* ignore */ }
+      const embed = buildModerationEmbed({
+        action: 'Warned',
+        guildName: message.guild?.name ?? 'a server',
+        targetId: target.id,
+        targetTag: target.tag,
+        moderatorId: message.author.id,
+        moderatorTag: message.author.tag,
+        reason
+      });
+      try { await target.send({ content: `<@${target.id}>`, embeds: [embed] }); } catch (e) { /* ignore */ }
+      await sendToModLog(message.guild!, embed, `<@${target.id}>`);
       warnings.addWarning(target.id, message.author.id, reason);
       return message.reply(`Warned ${target.tag}`);
     }

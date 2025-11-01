@@ -1,6 +1,7 @@
 import { Message, GuildMember, Role, PermissionsBitField } from "discord.js";
 import { getDefaultMuteSeconds } from "../config";
 import { bypass } from "../services/bypass";
+import { buildModerationEmbed, sendToModLog } from "../utils/moderationEmbed";
 
 export function hasPermissionOrBypass(message: Message, flag: bigint) {
   try {
@@ -20,16 +21,20 @@ export async function kickCommand(message: Message, member: GuildMember | null, 
   try {
     const finalReason = reason ?? 'No reason provided';
     const guildName = message.guild?.name ?? 'a server';
-    
+    const embed = buildModerationEmbed({
+      action: 'Kicked',
+      guildName,
+      targetId: member.id,
+      targetTag: member.user.tag,
+      moderatorId: message.author.id,
+      moderatorTag: message.author.tag,
+      reason: finalReason,
+    });
     // Try to DM the user before kicking
-    try {
-      await member.user.send(`You have been kicked from **${guildName}** by ${message.author.tag}.\nReason: ${finalReason}`);
-    } catch (dmErr) {
-      // User has DMs disabled or blocked the bot - continue with kick anyway
-      console.log(`Could not DM ${member.user.tag} about kick (DMs disabled or blocked)`);
-    }
-    
+    try { await member.user.send({ content: `<@${member.id}>`, embeds: [embed] }); } catch { /* ignore */ }
     await member.kick(finalReason);
+    // log to mod channel if configured
+    await sendToModLog(message.guild!, embed, `<@${member.id}>`);
     await message.reply(`${member.user.tag} was kicked. Reason: ${reason ?? 'None'}`);
   } catch (err) {
     console.error(err);
@@ -43,16 +48,19 @@ export async function banCommand(message: Message, member: GuildMember | null, r
   try {
     const finalReason = reason ?? 'No reason provided';
     const guildName = message.guild?.name ?? 'a server';
-    
+    const embed = buildModerationEmbed({
+      action: 'Banned',
+      guildName,
+      targetId: member.id,
+      targetTag: member.user.tag,
+      moderatorId: message.author.id,
+      moderatorTag: message.author.tag,
+      reason: finalReason,
+    });
     // Try to DM the user before banning
-    try {
-      await member.user.send(`You have been banned from **${guildName}** by ${message.author.tag}.\nReason: ${finalReason}`);
-    } catch (dmErr) {
-      // User has DMs disabled or blocked the bot - continue with ban anyway
-      console.log(`Could not DM ${member.user.tag} about ban (DMs disabled or blocked)`);
-    }
-    
+    try { await member.user.send({ content: `<@${member.id}>`, embeds: [embed] }); } catch { /* ignore */ }
     await member.ban({ reason: finalReason });
+    await sendToModLog(message.guild!, embed, `<@${member.id}>`);
     await message.reply(`${member.user.tag} was banned. Reason: ${reason ?? 'None'}`);
   } catch (err) {
     console.error(err);
@@ -74,18 +82,22 @@ export async function muteCommand(message: Message, member: GuildMember | null, 
 
       const finalReason = reason ?? 'No reason provided';
       const guildName = message.guild?.name ?? 'a server';
-      const durationText = formatDuration(ms / 1000);
-      
+      const embed = buildModerationEmbed({
+        action: 'Muted',
+        guildName,
+        targetId: member.id,
+        targetTag: member.user.tag,
+        moderatorId: message.author.id,
+        moderatorTag: message.author.tag,
+        reason: finalReason,
+        durationSeconds: Math.floor(ms / 1000)
+      });
       // Try to DM the user before timing out
-      try {
-        await member.user.send(`You have been timed out in **${guildName}** for **${durationText}** by ${message.author.tag}.\nReason: ${finalReason}`);
-      } catch (dmErr) {
-        // User has DMs disabled or blocked the bot - continue with timeout anyway
-        console.log(`Could not DM ${member.user.tag} about timeout (DMs disabled or blocked)`);
-      }
+      try { await member.user.send({ content: `<@${member.id}>`, embeds: [embed] }); } catch { /* ignore */ }
 
       // Pass reason only if provided so it's truly optional
       await member.timeout(ms, reason ?? undefined);
+      await sendToModLog(message.guild!, embed, `<@${member.id}>`);
       await message.reply(`${member.user.tag} was timed out for ${ms / 1000}s.` + (reason ? ` Reason: ${reason}` : ""));
   } catch (err) {
     console.error(err);

@@ -7,6 +7,7 @@ const CONFIG_FILE = path.join(DATA_DIR, "config.json");
 
 interface PersistedConfig {
   defaultMuteSeconds?: number;
+  moderationLogChannelId?: string;
 }
 
 export function getEnvDefaultMuteSeconds(): number {
@@ -48,5 +49,23 @@ export function getDefaultMuteSeconds(): number {
 export function setDefaultMuteSeconds(seconds: number) {
   const persisted = readPersistedConfig() || {};
   persisted.defaultMuteSeconds = seconds;
+  writePersistedConfig(persisted);
+}
+
+// Moderation log channel config
+export function getModLogChannelId(): string | undefined {
+  const persisted = readPersistedConfig();
+  return persisted?.moderationLogChannelId || undefined;
+}
+
+export function setModLogChannelId(channelId: string) {
+  const persisted = readPersistedConfig() || {};
+  persisted.moderationLogChannelId = channelId;
+  writePersistedConfig(persisted);
+}
+
+export function clearModLogChannelId() {
+  const persisted = readPersistedConfig() || {};
+  delete (persisted as any).moderationLogChannelId;
   writePersistedConfig(persisted);
 }

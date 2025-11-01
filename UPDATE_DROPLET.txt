@@ -1,0 +1,16 @@
+# Quick Update Commands for DigitalOcean Droplet
+
+Copy and paste these commands on your droplet:
+
+cd /root/SynapseAI/SynapseAI-bot1
+git pull origin main
+npm run build
+pm2 restart synapseai --update-env
+pm2 save
+pm2 logs synapseai --lines 30 --nostream
+
+# What's New:
+# ✅ Users now receive DM notifications when kicked, banned, or muted
+# ✅ DMs include the server name, moderator name, and reason
+# ✅ For mutes: includes the timeout duration in a readable format
+# ✅ Gracefully handles users with DMs disabled (continues with action)
