@@ -52,6 +52,11 @@ client.once("ready", () => {
     { name: "pong", description: "Alias for ping" },
     { name: "joke", description: "Tell a random joke" },
     { name: "dadjoke", description: "Tell a dad joke" },
+    // Owner-only maintenance commands (no SSH required)
+    { name: "redeploy", description: "Owner: pull latest code and restart bot (runs deploy.sh)" },
+    { name: "setgeminikey", description: "Owner: set Gemini API key and restart bot", options: [
+      { name: "key", description: "Gemini API key", type: 3, required: true }
+    ] },
     // Owner-only whitelist management
     { name: "addwhitelist", description: "Owner: add a whitelist entry (user or role)", options: [
       { name: "type", description: "user or role", type: 3, required: true },
@@ -139,7 +144,7 @@ client.on("interactionCreate", async (interaction) => {
   try {
     if (!interaction.isChatInputCommand()) return;
 
-    const name = interaction.commandName;
+  const name = interaction.commandName;
 
     // Blacklist check first (overrides everything except owner)
     const userId = interaction.user.id;
@@ -284,6 +289,58 @@ client.on("interactionCreate", async (interaction) => {
     };
 
   if (name === "help") return interaction.reply({ content: `Use ${prefix}help or mention me to get conversational replies. Use moderation commands with appropriate permissions.`, ephemeral: true });
+  if (name === "redeploy") {
+    if (!isOwnerId(interaction.user.id)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
+    await interaction.reply({ content: 'Starting deploy... I will pull latest code, rebuild, and restart.', ephemeral: true });
+    try {
+      const { exec } = await import('child_process');
+      await new Promise<void>((resolve, reject) => {
+        exec('bash /opt/synapseai-bot/deploy.sh', { timeout: 5 * 60 * 1000 }, (error, stdout, stderr) => {
+          if (error) return reject(error);
+          resolve();
+        });
+      });
+      await interaction.followUp({ content: 'Deploy finished. If I briefly went offline, that was the restart.', ephemeral: true });
+    } catch (err: any) {
+      console.error('Redeploy failed:', err);
+      await interaction.followUp({ content: `Deploy failed: ${err?.message ?? err}. Try again or use the DigitalOcean console.`, ephemeral: true });
+    }
+    return;
+  }
+  if (name === "setgeminikey") {
+    if (!isOwnerId(interaction.user.id)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
+    const newKey = interaction.options.getString('key', true).trim();
+    if (!newKey || !/^AIza[0-9A-Za-z-_]{30,}$/.test(newKey)) {
+      return interaction.reply({ content: 'That does not look like a valid Gemini API key.', ephemeral: true });
+    }
+    await interaction.reply({ content: 'Updating GEMINI_API_KEY on server and restarting...', ephemeral: true });
+    try {
+      const fs = await import('fs/promises');
+      const path = '/opt/synapseai-bot/.env';
+      let content = '';
+      try { content = await fs.readFile(path, 'utf8'); } catch { content = ''; }
+      if (content.includes('GEMINI_API_KEY=')) {
+        content = content.replace(/GEMINI_API_KEY=.*/g, `GEMINI_API_KEY=${newKey}`);
+      } else {
+        const nl = content.endsWith('\n') || content.length === 0 ? '' : '\n';
+        content = `${content}${nl}GEMINI_API_KEY=${newKey}\n`;
+      }
+      await fs.writeFile(path, content, 'utf8');
+      // Restart bot to load new env
+      const { exec } = await import('child_process');
+      await new Promise<void>((resolve, reject) => {
+        exec('pm2 restart synapseai-bot --update-env', (error) => {
+          if (error) return reject(error);
+          resolve();
+        });
+      });
+      await interaction.followUp({ content: 'Gemini key updated and bot restarted. Try a message with the wake word to test.', ephemeral: true });
+    } catch (err: any) {
+      console.error('setgeminikey failed:', err);
+      await interaction.followUp({ content: `Failed to update key: ${err?.message ?? err}`, ephemeral: true });
+    }
+    return;
+  }
   if (name === "ping") return interaction.reply(`Pong!`);
   if (name === "pong") return interaction.reply(`Pong!`);
   if (name === "joke") {
