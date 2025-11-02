@@ -36,6 +36,59 @@ export async function handleConversationalReply(message: Message) {
     memoryContext += `Previously, when asked a similar question, your answer was: "${similar.answer}". You may reference or improve upon it if still accurate.\n\n`;
   }
 
+  // Add enhanced context from new features
+  try {
+    const { getFullUserContext } = await import('../services/enhancedIntegration');
+    const { searchKnowledge } = await import('../services/preventiveSupport');
+    const { getUserAchievements } = await import('../services/rewards');
+    
+    const enhancedData = getFullUserContext(message.author.id, guildId);
+    
+    // Add sentiment/emotional context
+    if (enhancedData.sentimentTrend && enhancedData.sentimentTrend.overallMood) {
+      const mood = enhancedData.sentimentTrend.overallMood;
+      if (mood === 'very_negative' || mood === 'negative') {
+        memoryContext += `User seems frustrated/negative - be empathetic and helpful\n`;
+      } else if (mood === 'very_positive' || mood === 'positive') {
+        memoryContext += `User is in a good mood - feel free to be cheerful\n`;
+      }
+    }
+    
+    // Add temporal activity patterns
+    if (enhancedData.activityPrediction && enhancedData.activityPrediction.likelyActive) {
+      memoryContext += `User is typically active at this time\n`;
+    }
+    
+    // Search knowledge base for relevant FAQs
+    const kbResults = searchKnowledge(guildId, message.content, 2);
+    if (kbResults.length > 0) {
+      const kbAnswers = kbResults.map(k => 
+        `Q: ${k.question}\nA: ${k.answer}`
+      ).join('\n\n');
+      memoryContext += `Relevant knowledge base entries:\n${kbAnswers}\n\n`;
+    }
+    
+    // Check for recent achievements
+    const achievements = getUserAchievements(message.author.id, guildId);
+    const recentAchievements = achievements.filter((a: any) => {
+      const awardedTime = new Date(a.awarded_at).getTime();
+      const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
+      return awardedTime > dayAgo;
+    });
+    if (recentAchievements.length > 0) {
+      const achievementNames = recentAchievements.map((a: any) => a.achievement_name).join(', ');
+      memoryContext += `User recently earned achievements: ${achievementNames} (you can congratulate them!)\n`;
+    }
+    
+    // Add point total if significant
+    if (enhancedData.totalPoints > 0) {
+      memoryContext += `User has ${enhancedData.totalPoints} points\n`;
+    }
+  } catch (err) {
+    // Enhanced context is optional, continue without it
+    console.warn('Could not fetch enhanced context:', err);
+  }
+
   const prompt = memoryContext + convo.join("\n") + "\nAssistant:";
 
   // Try AI (Gemini) first. If that fails, fallback to local responder.

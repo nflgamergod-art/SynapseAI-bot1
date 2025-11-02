@@ -1,6 +1,33 @@
 /**
  * Enhanced Features Command Handlers
  * Handles all slash commands for the 10 new advanced features
+ * 
+ * COMMAND CATEGORIES:
+ * 
+ * 📊 Support & Analytics:
+ * - /supportstats - View support member performance metrics
+ * - /leaderboard - Rankings for achievements or support
+ * - /commonissues - Detect recurring support patterns
+ * 
+ * 📚 Knowledge Base (FAQ System):
+ * - /kb search - Find answers in knowledge base
+ * - /kb add - Add new FAQ entries (Admin)
+ * - /kb trending - See popular FAQs
+ * - /kb suggest - AI-suggested FAQs to create (Admin)
+ * - /kb stats - Knowledge base analytics (Admin)
+ * - /faq - Quick FAQ lookup
+ * 
+ * 🏆 Gamification & Rewards:
+ * - /achievements - View earned achievements
+ * - /perks - See unlocked special abilities
+ * 
+ * 🔮 AI Intelligence:
+ * - /patterns - Detected user behavior patterns (Admin)
+ * - /insights - AI predictions for server activity (Admin)
+ * - /sentiment - Real-time emotional analysis (Admin)
+ * 
+ * 📋 Proactive Support:
+ * - /checkins - Scheduled user follow-ups (Admin)
  */
 
 import { ChatInputCommandInteraction, EmbedBuilder } from 'discord.js';
@@ -116,7 +143,34 @@ export async function handleEnhancedCommands(interaction: ChatInputCommandIntera
     }
   }
 
-  // /kb <subcommand>
+  // /kb <subcommand> - Knowledge Base System
+  // This is an AI-powered FAQ system that learns from support interactions
+  // 
+  // Subcommands:
+  // • /kb search <query> - Search for answers in the knowledge base
+  //   Example: /kb search how to reset password
+  //   Use this when users have questions - it searches all FAQ entries
+  //
+  // • /kb add <category> <question> <answer> [tags] - Add a new FAQ entry (Admin)
+  //   Example: /kb add setup "How do I join?" "Click the invite link in #welcome"
+  //   Use this to manually add common questions and answers
+  //   Categories: setup, billing, features, technical, etc.
+  //   Tags help with search accuracy (comma-separated)
+  //
+  // • /kb trending [days] - See most-viewed knowledge entries
+  //   Example: /kb trending 30
+  //   Shows which FAQs are being accessed most often
+  //   Helps identify what users care about
+  //
+  // • /kb suggest [days] - AI suggests missing FAQ entries (Admin)
+  //   Example: /kb suggest 7
+  //   Analyzes recent support questions to find gaps
+  //   Shows what FAQs you should add based on user questions
+  //
+  // • /kb stats - View knowledge base analytics (Admin)
+  //   Shows total entries, categories, helpfulness ratings
+  //   Helps track how well your knowledge base is serving users
+  //
   if (name === "kb") {
     const subcommand = interaction.options.getSubcommand();
 
