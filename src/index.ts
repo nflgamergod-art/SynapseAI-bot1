@@ -80,6 +80,11 @@ client.once("ready", () => {
       { name: "tone", description: "soft | normal | edgy", type: 3, required: true }
     ] },
     { name: "diagai", description: "Owner: AI health check (env + test call)" },
+    { name: "setmention", description: "Owner: toggle @mentions for PobKC or Joycemember", options: [
+      { name: "owner", description: "pobkc or joycemember", type: 3, required: true },
+      { name: "enabled", description: "true or false", type: 5, required: true }
+    ] },
+    { name: "getmention", description: "Owner: show mention preference status for owners" },
     // Owner-only whitelist management
     { name: "addwhitelist", description: "Owner: add a whitelist entry (user or role)", options: [
       { name: "type", description: "user or role", type: 3, required: true },
@@ -860,6 +865,36 @@ client.on("interactionCreate", async (interaction) => {
     } catch (err: any) {
       console.error('diagai failed:', err);
       return interaction.reply({ content: `diagai failed: ${err?.message ?? err}`, ephemeral: true });
+    }
+  }
+  if (name === "setmention") {
+    if (!isOwnerId(interaction.user.id)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
+    const ownerArg = (interaction.options.getString('owner', true) || '').toLowerCase();
+    const enabled = interaction.options.getBoolean('enabled', true);
+    if (!['pobkc','joycemember'].includes(ownerArg)) return interaction.reply({ content: 'Owner must be pobkc or joycemember.', ephemeral: true });
+    try {
+      const { setMentionEnabled } = await import('./services/ownerMentions');
+      setMentionEnabled(ownerArg as any, enabled);
+      return interaction.reply({ content: `Mention preference for ${ownerArg}: ${enabled ? 'enabled (@mention)' : 'disabled (name only)'}.`, ephemeral: true });
+    } catch (err: any) {
+      console.error('setmention failed:', err);
+      return interaction.reply({ content: `Failed to set mention: ${err?.message ?? err}`, ephemeral: true });
+    }
+  }
+  if (name === "getmention") {
+    if (!isOwnerId(interaction.user.id)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
+    try {
+      const { getMentionConfig } = await import('./services/ownerMentions');
+      const cfg = getMentionConfig();
+      const lines = [
+        `Owner Mention Preferences:`,
+        `PobKC: ${cfg.pobkc ? 'enabled (@mention)' : 'disabled (name only)'}`,
+        `Joycemember: ${cfg.joycemember ? 'enabled (@mention)' : 'disabled (name only)'}`
+      ].join('\n');
+      return interaction.reply({ content: lines, ephemeral: true });
+    } catch (err: any) {
+      console.error('getmention failed:', err);
+      return interaction.reply({ content: `Failed to get mention config: ${err?.message ?? err}`, ephemeral: true });
     }
   }
   if (name === "ping") return interaction.reply(`Pong!`);
