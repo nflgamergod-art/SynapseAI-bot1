@@ -997,8 +997,11 @@ client.on("interactionCreate", async (interaction) => {
         `Support: ${formatList(lists.support)}`,
         `Trial Support: ${formatList(lists.trial)}`
       ].join('\n');
-      const mentionIds = lists.head.concat(lists.support, lists.trial).map(m => m.id).filter(id => id !== interaction.user.id);
-      await interaction.editReply({ content: lines, allowedMentions: { users: mentionIds } });
+  const headIds = lists.head.slice(0, 25).map(m => m.id);
+  const supportIds = lists.support.slice(0, 25).map(m => m.id);
+  const trialIds = lists.trial.slice(0, 25).map(m => m.id);
+  const uniq = Array.from(new Set([...headIds, ...supportIds, ...trialIds].filter(id => id !== interaction.user.id)));
+  await interaction.editReply({ content: lines, allowedMentions: { users: uniq } });
       return;
     } catch (err: any) {
       console.error('support list failed:', err);
@@ -1771,8 +1774,11 @@ client.on("messageCreate", async (message: Message) => {
               `Support: ${formatList(lists.support)}`,
               `Trial Support: ${formatList(lists.trial)}`
             ].join('\n');
-            const mentionIds = lists.head.concat(lists.support, lists.trial).map((m:any) => m.id).filter((id:string) => id !== message.author.id);
-            await message.reply({ content: lines, allowedMentions: { users: mentionIds } as any });
+            const headIds = lists.head.slice(0, 25).map((m:any) => m.id);
+            const supportIds = lists.support.slice(0, 25).map((m:any) => m.id);
+            const trialIds = lists.trial.slice(0, 25).map((m:any) => m.id);
+            const uniq = Array.from(new Set<string>([...headIds, ...supportIds, ...trialIds].filter((id:string) => id !== message.author.id)));
+            await message.reply({ content: lines, allowedMentions: { users: uniq } as any });
             return;
           } catch (e) {
             console.warn('Global support intercept failed to assemble list:', (e as any)?.message ?? e);
@@ -2034,8 +2040,11 @@ client.on("messageCreate", async (message: Message) => {
             `Support: ${formatList(lists.support)}`,
             `Trial Support: ${formatList(lists.trial)}`
           ].join('\n');
-          const mentionIds = lists.head.concat(lists.support, lists.trial).map((m:any) => m.id).filter((id:string) => id !== message.author.id);
-          await message.reply({ content: lines, allowedMentions: { users: mentionIds } as any });
+          const headIds = lists.head.slice(0, 25).map((m:any) => m.id);
+          const supportIds = lists.support.slice(0, 25).map((m:any) => m.id);
+          const trialIds = lists.trial.slice(0, 25).map((m:any) => m.id);
+          const uniq = Array.from(new Set<string>([...headIds, ...supportIds, ...trialIds].filter((id:string) => id !== message.author.id)));
+          await message.reply({ content: lines, allowedMentions: { users: uniq } as any });
           return;
         } catch (e) {
           console.warn('Failed to assemble support list:', (e as any)?.message ?? e);
