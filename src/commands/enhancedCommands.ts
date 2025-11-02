@@ -30,7 +30,9 @@
  * - /checkins - Scheduled user follow-ups (Admin)
  */
 
-import { ChatInputCommandInteraction, EmbedBuilder } from 'discord.js';
+import { ChatInputCommandInteraction, EmbedBuilder, PermissionsBitField, Guild } from 'discord.js';
+import { getPerkRolePreference, isPerkEnabled, getEmojiApprovalConfig, getColorRoleConfig } from '../config/perksConfig';
+import { getDB } from '../services/db';
 import { getSupportMemberStats, getSupportLeaderboard } from '../services/smartSupport';
 import { searchKnowledge, addKnowledgeEntry, getTrendingKnowledge, suggestMissingKnowledge, getKnowledgeStats, buildFAQ } from '../services/preventiveSupport';
 import { getUserAchievements, getUnlockedPerks, getAchievementLeaderboard, getUserPoints } from '../services/rewards';
@@ -42,6 +44,22 @@ import { isOwnerId } from '../utils/owner';
 export async function handleEnhancedCommands(interaction: ChatInputCommandInteraction): Promise<boolean> {
   const name = interaction.commandName;
   const guildId = interaction.guild?.id || null;
+
+  // Helper: ensure a role exists (creates if missing)
+  const ensureRole = async (guild: Guild, roleName: string, opts?: { color?: number; permissions?: bigint }): Promise<string> => {
+    // Try to find existing role by name
+    const existing = guild.roles.cache.find(r => r.name === roleName);
+    if (existing) return existing.id;
+    // Create role
+    const created = await guild.roles.create({
+      name: roleName,
+      color: opts?.color,
+      permissions: opts?.permissions ? new PermissionsBitField(opts.permissions) : undefined,
+      mentionable: false,
+      reason: `Auto-created by perks claim`
+    });
+    return created.id;
+  };
 
   // /supportstats [member]
   if (name === "supportstats") {
@@ -335,6 +353,7 @@ export async function handleEnhancedCommands(interaction: ChatInputCommandIntera
         .setTitle('🎁 Your Unlockable Perks')
         .setColor(0x9b59b6)
         .setDescription(`**Your Points:** ${totalPoints}`)
+        .setFooter({ text: 'Claim with /claimperk <id>. For color: /setcolor. For emoji: /requestemoji.' })
         .addFields(
           perks.map(p => ({
             name: `${p.unlocked ? '✅' : '🔒'} ${p.name}`,
@@ -348,6 +367,224 @@ export async function handleEnhancedCommands(interaction: ChatInputCommandIntera
     } catch (err: any) {
       console.error('perks failed:', err);
       await interaction.reply({ content: `Failed: ${err?.message ?? err}`, ephemeral: true });
+      return true;
+    }
+  }
+
+  // /claimperk perk:<id>
+  if (name === "claimperk") {
+    try {
+      if (!interaction.guild) {
+        await interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+        return true;
+      }
+      const perkIdRaw = (interaction.options.getString('perk', true) || '').toLowerCase().trim();
+      const validPerks = ['custom_color','priority_support','custom_emoji','channel_suggest','voice_priority','exclusive_role'];
+      if (!validPerks.includes(perkIdRaw)) {
+        await interaction.reply({ content: `Unknown perk. Choose one of: ${validPerks.join(', ')}`, ephemeral: true });
+        return true;
+      }
+
+      // Check config enabled
+      if (!isPerkEnabled(perkIdRaw as any)) {
+        await interaction.reply({ content: 'This perk is disabled by server configuration.', ephemeral: true });
+        return true;
+      }
+
+      const perks = getUnlockedPerks(interaction.user.id, guildId);
+      const target = perks.find((p: any) => p.id === perkIdRaw);
+      if (!target) {
+        await interaction.reply({ content: `That perk is not recognized.`, ephemeral: true });
+        return true;
+      }
+      if (!target.unlocked) {
+        const req = (target as any).requiredPoints;
+        await interaction.reply({ content: `You haven't unlocked this perk yet. Requires ${req} points. Use /achievements to see your total.`, ephemeral: true });
+        return true;
+      }
+
+      const member = await interaction.guild.members.fetch(interaction.user.id);
+      const guild = interaction.guild;
+
+      if (perkIdRaw === 'custom_color') {
+        // Guide user to set a color using /setcolor
+        await interaction.reply({ content: `✅ Perk available! Use /setcolor hex:#RRGGBB to choose your role color.`, ephemeral: true });
+        return true;
+      }
+
+      if (perkIdRaw === 'priority_support') {
+        const pref = getPerkRolePreference('priority_support');
+        const roleId = pref.roleId || await ensureRole(guild, pref.roleName || 'Priority Support');
+        await member.roles.add(roleId).catch(() => {});
+        await interaction.reply({ content: `✅ Priority Support role granted. Your questions may be handled first.`, ephemeral: true });
+        return true;
+      }
+
+      if (perkIdRaw === 'custom_emoji') {
+        await interaction.reply({ content: `✅ Perk available! Use /requestemoji name:<short_name> image:<attachment> to create your emoji.`, ephemeral: true });
+        return true;
+      }
+
+      if (perkIdRaw === 'channel_suggest') {
+        const pref = getPerkRolePreference('channel_suggest');
+        const roleId = pref.roleId || await ensureRole(guild, pref.roleName || 'Channel Suggest');
+        await member.roles.add(roleId).catch(() => {});
+        await interaction.reply({ content: `✅ You can propose new channels. Share your idea with the admins!`, ephemeral: true });
+        return true;
+      }
+
+      if (perkIdRaw === 'voice_priority') {
+        const perms = PermissionsBitField.Flags.PrioritySpeaker;
+        const pref = getPerkRolePreference('voice_priority');
+        const roleId = pref.roleId || await ensureRole(guild, pref.roleName || 'Voice Priority', { permissions: BigInt(perms) });
+        await member.roles.add(roleId).catch(() => {});
+        await interaction.reply({ content: `✅ Voice Priority granted. You have priority speaker in supported voice channels.`, ephemeral: true });
+        return true;
+      }
+
+      if (perkIdRaw === 'exclusive_role') {
+        const pref = getPerkRolePreference('exclusive_role');
+        const roleId = pref.roleId || await ensureRole(guild, pref.roleName || 'Exclusive VIP');
+        await member.roles.add(roleId).catch(() => {});
+        await interaction.reply({ content: `✅ Exclusive VIP role granted. Welcome to the club.`, ephemeral: true });
+        return true;
+      }
+
+      return true;
+    } catch (err: any) {
+      console.error('claimperk failed:', err);
+      await interaction.reply({ content: `Failed: ${err?.message ?? err}`, ephemeral: true });
+      return true;
+    }
+  }
+
+  // /setcolor hex:#RRGGBB - requires custom_color perk
+  if (name === "setcolor") {
+    try {
+      if (!interaction.guild) {
+        await interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+        return true;
+      }
+      const colorCfg = getColorRoleConfig();
+      if (!colorCfg.allowUserSet) {
+        await interaction.reply({ content: 'Setting custom color is disabled by server configuration.', ephemeral: true });
+        return true;
+      }
+      const hex = (interaction.options.getString('hex', true) || '').trim();
+      const m = /^#?([0-9a-fA-F]{6})$/.exec(hex);
+      if (!m) {
+        await interaction.reply({ content: 'Please provide a valid hex color like #FF8800.', ephemeral: true });
+        return true;
+      }
+      const color = parseInt(m[1], 16);
+      const perks = getUnlockedPerks(interaction.user.id, guildId);
+      const cc = perks.find((p: any) => p.id === 'custom_color');
+      if (!cc || !cc.unlocked) {
+        await interaction.reply({ content: 'You have not unlocked Custom Role Color yet. Use /perks to see requirements.', ephemeral: true });
+        return true;
+      }
+      const guild = interaction.guild;
+      const member = await guild.members.fetch(interaction.user.id);
+      const roleName = (colorCfg.namePattern || 'cc-{userId}').replace('{userId}', interaction.user.id);
+      const existing = guild.roles.cache.find(r => r.name === roleName);
+      if (existing) {
+        await existing.setColor(color).catch(() => {});
+        await member.roles.add(existing).catch(() => {});
+      } else {
+        const created = await guild.roles.create({ name: roleName, color, reason: 'Custom color perk role', mentionable: false });
+        await member.roles.add(created).catch(() => {});
+      }
+      await interaction.reply({ content: `✅ Color updated to #${m[1].toUpperCase()}. If you don’t see it, drag your custom color role above your other roles.`, ephemeral: true });
+      return true;
+    } catch (err: any) {
+      console.error('setcolor failed:', err);
+      await interaction.reply({ content: `Failed: ${err?.message ?? err}`, ephemeral: true });
+      return true;
+    }
+  }
+
+  // /requestemoji name:<string> image:<attachment> - requires custom_emoji perk
+  if (name === "requestemoji") {
+    try {
+      if (!interaction.guild) {
+        await interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+        return true;
+      }
+      const perks = getUnlockedPerks(interaction.user.id, guildId);
+      const ce = perks.find((p: any) => p.id === 'custom_emoji');
+      if (!ce || !ce.unlocked) {
+        await interaction.reply({ content: 'You have not unlocked Custom Emoji yet. Use /perks to see requirements.', ephemeral: true });
+        return true;
+      }
+      const name = (interaction.options.getString('name', true) || '').trim().toLowerCase().replace(/[^a-z0-9_]/g, '_').slice(0, 32);
+      const attach = interaction.options.getAttachment('image', true)!;
+
+      const approval = getEmojiApprovalConfig();
+      if (approval.requireApproval) {
+        // Queue request in DB
+        const db = getDB();
+        const now = new Date().toISOString();
+        const res = db.prepare(`
+          INSERT INTO emoji_requests (guild_id, user_id, name, attachment_url, status, created_at)
+          VALUES (?, ?, ?, ?, 'pending', ?)
+        `).run(interaction.guild.id, interaction.user.id, name, attach.url, now);
+        const reqId = res.lastInsertRowid as number;
+
+        // Post approval message if channel configured
+        if (approval.approvalChannelId) {
+          try {
+            const ch = await interaction.client.channels.fetch(approval.approvalChannelId);
+            if (ch && 'send' in ch) {
+              const row = new (await import('discord.js')).ActionRowBuilder((await import('discord.js')).ButtonBuilder as any)
+                .addComponents(
+                  new (await import('discord.js')).ButtonBuilder().setCustomId(`perk-emoji-approve:${reqId}`).setLabel('Approve').setStyle((await import('discord.js')).ButtonStyle.Success),
+                  new (await import('discord.js')).ButtonBuilder().setCustomId(`perk-emoji-reject:${reqId}`).setLabel('Reject').setStyle((await import('discord.js')).ButtonStyle.Danger)
+                );
+              // @ts-ignore types
+              await (ch as any).send({ content: `Emoji request #${reqId} by <@${interaction.user.id}>: ${name}\n${attach.url}`, components: [row] });
+            }
+          } catch (e) {
+            console.warn('Failed to post approval message:', (e as any)?.message ?? e);
+          }
+        }
+
+        await interaction.reply({ content: `✅ Your emoji request has been queued for approval (ID: ${reqId}).`, ephemeral: true });
+        return true;
+      }
+
+      // Direct-create path (no approval)
+      // Permission check
+      const me = await interaction.guild.members.fetchMe();
+      if (!me.permissions.has(PermissionsBitField.Flags.ManageEmojisAndStickers)) {
+        await interaction.reply({ content: 'I need the Manage Emojis and Stickers permission to create emojis.', ephemeral: true });
+        return true;
+      }
+
+      await interaction.deferReply({ ephemeral: true });
+      let buffer: Buffer | null = null;
+      try {
+        const res = await fetch(attach.url);
+        const arrayBuf = await res.arrayBuffer();
+        buffer = Buffer.from(arrayBuf);
+      } catch {
+        buffer = null;
+      }
+      if (!buffer) {
+        await interaction.editReply('Could not download the attachment. Please try again.');
+        return true;
+      }
+      try {
+        const emoji = await interaction.guild.emojis.create({ attachment: buffer, name });
+        await interaction.editReply(`✅ Emoji created: <:${emoji.name}:${emoji.id}>`);
+      } catch (e: any) {
+        console.error('emoji create failed', e);
+        await interaction.editReply(`Failed to create emoji: ${e?.message ?? e}`);
+      }
+      return true;
+    } catch (err: any) {
+      console.error('requestemoji failed:', err);
+      if (interaction.deferred) await interaction.editReply(`Failed: ${err?.message ?? err}`);
+      else await interaction.reply({ content: `Failed: ${err?.message ?? err}`, ephemeral: true });
       return true;
     }
   }

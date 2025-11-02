@@ -90,6 +90,23 @@ Examples of perks:
 
 Points unlock new perks automatically.
 
+Claiming perks:
+- `/claimperk perk:<id>` — claim an unlocked perk. Supported ids: `custom_color`, `priority_support`, `custom_emoji`, `channel_suggest`, `voice_priority`, `exclusive_role`.
+- `/setcolor hex:#RRGGBB` — set your custom role color (requires `custom_color`).
+- `/requestemoji name:<short_name> image:<attachment>` — create a custom emoji (requires `custom_emoji`). The bot needs Manage Emojis permission.
+
+Perks panel (one-click claims):
+- Owners can post a claim panel with `/perkspanel`. Users press buttons to claim if unlocked. For color/emoji, users are guided to the corresponding slash command.
+
+Emoji approval queue (optional):
+- If enabled in config, `/requestemoji` will queue a request instead of creating immediately.
+- The bot posts an approval card with Approve/Reject buttons to the configured channel.
+- Approvers click a button to create or reject. Status is stored in the database.
+
+Admin-configurable role names and bindings:
+- Bind a specific server role to a perk so claims assign your pre-made role: `/setperkrole perk:<id> role:<@Role>` (owner-only).
+- You can also configure friendly names and enable/disable perks in `data/perks-config.json` (auto-created) or via future commands.
+
 ### `/leaderboard [type]`
 **Who can use:** Everyone  
 **What it does:** Shows rankings for achievements or support performance  

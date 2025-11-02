@@ -218,6 +218,11 @@ client.once("ready", async () => {
     ] },
     { name: "achievements", description: "🏆 View earned achievements and rewards", options: [ { name: "user", description: "User to view (defaults to you)", type: 6, required: false } ] },
     { name: "perks", description: "✨ View your unlocked perks and special abilities" },
+  { name: "perkspanel", description: "Owner: post a perks claim panel in this channel" },
+  { name: "claimperk", description: "Claim an unlocked perk", options: [ { name: "perk", description: "custom_color | priority_support | custom_emoji | channel_suggest | voice_priority | exclusive_role", type: 3, required: true } ] },
+  { name: "setcolor", description: "Set your custom role color (requires custom_color perk)", options: [ { name: "hex", description: "Hex color like #FF8800", type: 3, required: true } ] },
+  { name: "requestemoji", description: "Create a custom emoji (requires custom_emoji perk)", options: [ { name: "name", description: "Emoji name (letters, numbers, _)", type: 3, required: true }, { name: "image", description: "Emoji image (PNG/GIF)", type: 11, required: true } ] },
+  { name: "setperkrole", description: "Owner: bind a server role to a perk so claims use it", options: [ { name: "perk", description: "custom_color|priority_support|custom_emoji|channel_suggest|voice_priority|exclusive_role", type: 3, required: true }, { name: "role", description: "Role to bind", type: 8, required: true } ] },
     { name: "patterns", description: "📈 Admin: View detected user behavior patterns" },
     { name: "insights", description: "🔮 Admin: Get AI predictions for best posting times" },
     { name: "checkins", description: "📋 Admin: View scheduled proactive user follow-ups" },
@@ -251,6 +256,88 @@ client.once("ready", async () => {
 
 client.on("interactionCreate", async (interaction) => {
   try {
+    // Button interactions for perks panel and approvals
+    if (interaction.isButton()) {
+      const btn = interaction.customId || '';
+      // Claim from panel: perk-claim:<id>
+      if (btn.startsWith('perk-claim:')) {
+        const perkId = btn.split(':')[1];
+        // Reuse the slash by pseudo-invoking: tell user to run it if not supported here
+        try {
+          const { getUnlockedPerks } = await import('./services/rewards');
+          const { getPerkRolePreference, isPerkEnabled } = await import('./config/perksConfig');
+          if (!isPerkEnabled(perkId as any)) {
+            return interaction.reply({ content: 'This perk is disabled by server configuration.', ephemeral: true });
+          }
+          const perks = getUnlockedPerks(interaction.user.id, interaction.guild?.id || null);
+          const target = (perks as any[]).find(p => p.id === perkId);
+          if (!target || !target.unlocked) {
+            return interaction.reply({ content: 'You have not unlocked this perk yet. Use /perks to see requirements.', ephemeral: true });
+          }
+          // Minimal inline claim for role-based perks; otherwise route to slash
+          const guild = interaction.guild!;
+          const member = await guild.members.fetch(interaction.user.id);
+          if (perkId === 'priority_support' || perkId === 'channel_suggest' || perkId === 'voice_priority' || perkId === 'exclusive_role') {
+            const pref = getPerkRolePreference(perkId as any);
+            // Ensure role exists (fallback to name)
+            let roleId = pref.roleId;
+            if (!roleId) {
+              const name = pref.roleName || (perkId === 'priority_support' ? 'Priority Support' : perkId === 'channel_suggest' ? 'Channel Suggest' : perkId === 'voice_priority' ? 'Voice Priority' : 'Exclusive VIP');
+              const existing = guild.roles.cache.find(r => r.name === name);
+              if (existing) roleId = existing.id;
+              else {
+                const perms = perkId === 'voice_priority' ? (await import('discord.js')).PermissionsBitField.Flags.PrioritySpeaker : undefined;
+                const created = await guild.roles.create({ name, permissions: perms ? new (await import('discord.js')).PermissionsBitField(perms) : undefined, reason: 'Perks panel claim' });
+                roleId = created.id;
+              }
+            }
+            await member.roles.add(roleId!).catch(() => {});
+            return interaction.reply({ content: `✅ Perk claimed: ${perkId.replace('_',' ')}`, ephemeral: true });
+          }
+          if (perkId === 'custom_color') {
+            return interaction.reply({ content: 'Use /setcolor hex:#RRGGBB to choose your color.', ephemeral: true });
+          }
+          if (perkId === 'custom_emoji') {
+            return interaction.reply({ content: 'Use /requestemoji name:<short_name> image:<attachment> to request your emoji.', ephemeral: true });
+          }
+        } catch (e:any) {
+          console.warn('perk panel claim failed:', e?.message ?? e);
+          return interaction.reply({ content: 'Could not process this claim here. Please use /claimperk instead.', ephemeral: true });
+        }
+      }
+      // Emoji approvals: perk-emoji-approve:<id> / reject
+      if (btn.startsWith('perk-emoji-approve:') || btn.startsWith('perk-emoji-reject:')) {
+        if (!interaction.guild) return;
+        const approve = btn.startsWith('perk-emoji-approve:');
+        const idStr = btn.split(':')[1];
+        const reqId = Number(idStr);
+        const db = await import('./services/db').then(m => m.getDB());
+        const row = db.prepare('SELECT * FROM emoji_requests WHERE id = ?').get(reqId) as any;
+        if (!row) return interaction.reply({ content: `Request #${reqId} not found.`, ephemeral: true });
+        if (row.status !== 'pending') return interaction.reply({ content: `Request #${reqId} is already ${row.status}.`, ephemeral: true });
+        if (!approve) {
+          db.prepare('UPDATE emoji_requests SET status = ?, approver_id = ?, decided_at = ? WHERE id = ?').run('rejected', interaction.user.id, new Date().toISOString(), reqId);
+          return interaction.reply({ content: `Rejected request #${reqId}.`, ephemeral: true });
+        }
+        // Approve path: create emoji
+        try {
+          const me = await interaction.guild.members.fetchMe();
+          if (!me.permissions.has((await import('discord.js')).PermissionsBitField.Flags.ManageEmojisAndStickers)) {
+            return interaction.reply({ content: 'I need Manage Emojis permission to approve.', ephemeral: true });
+          }
+          const res = await fetch(row.attachment_url);
+          const buf = Buffer.from(await res.arrayBuffer());
+          const emoji = await interaction.guild.emojis.create({ attachment: buf, name: row.name });
+          db.prepare('UPDATE emoji_requests SET status = ?, approver_id = ?, decided_at = ? WHERE id = ?').run('approved', interaction.user.id, new Date().toISOString(), reqId);
+          return interaction.reply({ content: `✅ Created <:${emoji.name}:${emoji.id}> for request #${reqId}.`, ephemeral: true });
+        } catch (e:any) {
+          db.prepare('UPDATE emoji_requests SET status = ?, approver_id = ?, decision_reason = ?, decided_at = ? WHERE id = ?').run('failed', interaction.user.id, String(e?.message ?? e), new Date().toISOString(), reqId);
+          return interaction.reply({ content: `Failed to create emoji: ${e?.message ?? e}`, ephemeral: true });
+        }
+      }
+      return; // handled button
+    }
+
     if (!interaction.isChatInputCommand()) return;
 
   const name = interaction.commandName;
@@ -1088,7 +1175,30 @@ client.on("interactionCreate", async (interaction) => {
         { name: "addrole", description: "Add a role to a member", options: [{ name: "user", description: "Member to modify", type: 6, required: true }, { name: "role", description: "Role to add", type: 8, required: true }] },
         { name: "removerole", description: "Remove a role from a member", options: [{ name: "user", description: "Member to modify", type: 6, required: true }, { name: "role", description: "Role to remove", type: 8, required: true }] },
         { name: "setdefaultmute", description: "Set default mute duration (e.g. 10m, 1h)", options: [{ name: "duration", description: "Duration (e.g. 10m or seconds)", type: 3, required: true }] },
-        { name: "getdefaultmute", description: "Show the current default mute duration" }
+  { name: "getdefaultmute", description: "Show the current default mute duration" },
+        // Enhanced Features (added to ensure /registercommands includes the new commands)
+        { name: "supportstats", description: "View support member performance stats", options: [ { name: "member", description: "Support member to view stats for", type: 6, required: false } ] },
+        { name: "leaderboard", description: "Show support or achievement leaderboards", options: [ { name: "type", description: "resolution|speed|rating|volume|points|support_category", type: 3, required: true }, { name: "category", description: "Support category (for support_category type)", type: 3, required: false } ] },
+        { name: "kb", description: "📚 Knowledge Base - AI-powered FAQ system", options: [
+          { name: "search", description: "🔍 Search the knowledge base for answers", type: 1, options: [ { name: "query", description: "What you're looking for", type: 3, required: true } ] },
+          { name: "add", description: "➕ Add a new FAQ entry (Admin)", type: 1, options: [ { name: "category", description: "Category (e.g., setup, billing, features)", type: 3, required: true }, { name: "question", description: "The question to add", type: 3, required: true }, { name: "answer", description: "The answer", type: 3, required: true }, { name: "tags", description: "Tags for better search (comma-separated)", type: 3, required: false } ] },
+          { name: "trending", description: "🔥 See most-viewed knowledge entries", type: 1, options: [ { name: "days", description: "Days to look back (default 7)", type: 4, required: false } ] },
+          { name: "suggest", description: "💡 AI suggestions for missing FAQ entries (Admin)", type: 1, options: [ { name: "days", description: "Days to analyze support questions (default 7)", type: 4, required: false } ] },
+          { name: "stats", description: "📊 Knowledge base analytics (Admin)", type: 1 }
+        ] },
+        { name: "achievements", description: "🏆 View earned achievements and rewards", options: [ { name: "user", description: "User to view (defaults to you)", type: 6, required: false } ] },
+        { name: "perks", description: "✨ View your unlocked perks and special abilities" },
+        { name: "perkspanel", description: "Owner: post a perks claim panel in this channel" },
+        { name: "claimperk", description: "Claim an unlocked perk", options: [ { name: "perk", description: "custom_color | priority_support | custom_emoji | channel_suggest | voice_priority | exclusive_role", type: 3, required: true } ] },
+        { name: "setcolor", description: "Set your custom role color (requires custom_color perk)", options: [ { name: "hex", description: "Hex color like #FF8800", type: 3, required: true } ] },
+        { name: "requestemoji", description: "Create a custom emoji (requires custom_emoji perk)", options: [ { name: "name", description: "Emoji name (letters, numbers, _)", type: 3, required: true }, { name: "image", description: "Emoji image (PNG/GIF)", type: 11, required: true } ] },
+        { name: "setperkrole", description: "Owner: bind a server role to a perk so claims use it", options: [ { name: "perk", description: "custom_color|priority_support|custom_emoji|channel_suggest|voice_priority|exclusive_role", type: 3, required: true }, { name: "role", description: "Role to bind", type: 8, required: true } ] },
+        { name: "patterns", description: "📈 Admin: View detected user behavior patterns" },
+        { name: "insights", description: "🔮 Admin: Get AI predictions for best posting times" },
+        { name: "checkins", description: "📋 Admin: View scheduled proactive user follow-ups" },
+        { name: "sentiment", description: "💭 Admin: Real-time emotional analysis of conversations", options: [ { name: "channel", description: "Channel to analyze (defaults to current)", type: 7, required: false } ] },
+        { name: "commonissues", description: "🔍 Admin: Detect recurring support issues", options: [ { name: "hours", description: "Hours to analyze (default 24)", type: 4, required: false } ] },
+        { name: "faq", description: "❓ Quick access to frequently asked questions", options: [ { name: "category", description: "Filter by category", type: 3, required: false } ] }
       ];
       await client.application!.commands.set(cmds as any, interaction.guild.id);
       return interaction.reply({ content: `Re-registered ${cmds.length} slash commands for this server (${interaction.guild.name}).`, ephemeral: true });
@@ -1224,6 +1334,43 @@ client.on("interactionCreate", async (interaction) => {
     } catch (err: any) {
       console.error('setmention failed:', err);
       return interaction.reply({ content: `Failed to set mention: ${err?.message ?? err}`, ephemeral: true });
+    }
+  }
+  if (name === "perkspanel") {
+    if (!isOwnerId(interaction.user.id)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
+    try {
+      const { ButtonBuilder, ButtonStyle, ActionRowBuilder, EmbedBuilder } = await import('discord.js');
+      const embed = new EmbedBuilder().setTitle('🎁 Perks Panel').setDescription('Claim your unlocked perks here').setColor(0x9b59b6);
+      const row1 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId('perk-claim:custom_color').setLabel('Custom Color').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('perk-claim:priority_support').setLabel('Priority Support').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('perk-claim:custom_emoji').setLabel('Custom Emoji').setStyle(ButtonStyle.Secondary)
+      );
+      const row2 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId('perk-claim:channel_suggest').setLabel('Channel Suggest').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('perk-claim:voice_priority').setLabel('Voice Priority').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('perk-claim:exclusive_role').setLabel('Exclusive VIP').setStyle(ButtonStyle.Secondary)
+      );
+      await interaction.reply({ embeds: [embed], components: [row1, row2] });
+      return;
+    } catch (e:any) {
+      console.error('perkspanel failed:', e);
+      return interaction.reply({ content: `Failed to post panel: ${e?.message ?? e}`, ephemeral: true });
+    }
+  }
+  if (name === "setperkrole") {
+    if (!isOwnerId(interaction.user.id)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
+    try {
+      const perk = (interaction.options.getString('perk', true) || '').toLowerCase();
+      const role = interaction.options.getRole('role', true)!;
+      const valid = ['custom_color','priority_support','custom_emoji','channel_suggest','voice_priority','exclusive_role'];
+      if (!valid.includes(perk)) return interaction.reply({ content: `Perk must be one of: ${valid.join(', ')}`, ephemeral: true });
+      const { setPerkRoleId } = await import('./config/perksConfig');
+      setPerkRoleId(perk as any, role.id);
+      return interaction.reply({ content: `Perk '${perk}' bound to role ${role.name} (${role.id}).`, ephemeral: true });
+    } catch (e:any) {
+      console.error('setperkrole failed:', e);
+      return interaction.reply({ content: `Failed: ${e?.message ?? e}`, ephemeral: true });
     }
   }
   if (name === "getmention") {

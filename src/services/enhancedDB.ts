@@ -299,6 +299,21 @@ export function initEnhancedSchema() {
       UNIQUE(pattern_hash)
     );
     CREATE INDEX IF NOT EXISTS idx_cross_pattern ON cross_server_patterns(pattern_type);
+
+    -- Emoji Requests (for approval queue)
+    CREATE TABLE IF NOT EXISTS emoji_requests (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      guild_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      attachment_url TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending', -- pending, approved, rejected, failed
+      approver_id TEXT,
+      decision_reason TEXT,
+      created_at TEXT NOT NULL,
+      decided_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_emoji_req_guild ON emoji_requests(guild_id, status);
   `);
 }
 
