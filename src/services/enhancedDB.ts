@@ -14,6 +14,17 @@ import { getDB } from './db';
 export function initEnhancedSchema() {
   const db = getDB();
   
+  // Drop and recreate achievements table if it has the wrong schema
+  try {
+    const checkSchema = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='achievements'").get() as any;
+    if (checkSchema && !checkSchema.sql.includes('awarded_at')) {
+      console.log('⚠️  Migrating achievements table to new schema...');
+      db.exec('DROP TABLE IF EXISTS achievements');
+    }
+  } catch (err) {
+    // Table doesn't exist yet, that's fine
+  }
+  
   db.exec(`
     -- User Relationships & Context
     CREATE TABLE IF NOT EXISTS user_relationships (
