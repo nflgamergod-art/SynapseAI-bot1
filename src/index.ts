@@ -18,6 +18,8 @@ import { warnings } from "./services/warnings";
 import { LanguageHandler } from "./services/languageHandler";
 import { buildModerationEmbed, sendToModLog } from "./utils/moderationEmbed";
 import { setModLogChannelId, getModLogChannelId, clearModLogChannelId } from "./config";
+import { handleEnhancedCommands } from "./commands/enhancedCommands";
+import { initializeEnhancedFeatures, processMessageWithEnhancedFeatures } from "./services/enhancedIntegration";
 
 const token = (process.env.DISCORD_TOKEN || '').trim();
 const prefix = process.env.PREFIX ?? "!";
@@ -41,8 +43,12 @@ const client = new Client({
 
 
 
-client.once("ready", () => {
+client.once("ready", async () => {
   console.log(`Logged in as ${client.user?.tag}`);
+  
+  // Initialize enhanced features
+  await initializeEnhancedFeatures();
+  
   // Register slash commands. If GUILD_ID is set, register for that guild (instant); otherwise register globally.
   const guildId = process.env.GUILD_ID;
 
@@ -199,7 +205,25 @@ client.once("ready", () => {
     { name: "addrole", description: "Add a role to a member", options: [ { name: "user", description: "Member to modify", type: 6, required: true }, { name: "role", description: "Role to add", type: 8, required: true } ] },
     { name: "removerole", description: "Remove a role from a member", options: [ { name: "user", description: "Member to modify", type: 6, required: true }, { name: "role", description: "Role to remove", type: 8, required: true } ] },
     { name: "setdefaultmute", description: "Set default mute duration (e.g. 10m, 1h)", options: [ { name: "duration", description: "Duration (e.g. 10m or seconds)", type: 3, required: true } ] },
-    { name: "getdefaultmute", description: "Show the current default mute duration" }
+    { name: "getdefaultmute", description: "Show the current default mute duration" },
+    // Enhanced Features Commands
+    { name: "supportstats", description: "View support member performance stats", options: [ { name: "member", description: "Support member to view stats for", type: 6, required: false } ] },
+    { name: "leaderboard", description: "Show support or achievement leaderboards", options: [ { name: "type", description: "resolution|speed|rating|volume|points|support_category", type: 3, required: true }, { name: "category", description: "Support category (for support_category type)", type: 3, required: false } ] },
+    { name: "kb", description: "Knowledge base commands", options: [
+      { name: "search", description: "Search knowledge base", type: 1, options: [ { name: "query", description: "Search query", type: 3, required: true } ] },
+      { name: "add", description: "Add knowledge base entry", type: 1, options: [ { name: "category", description: "Category", type: 3, required: true }, { name: "question", description: "Question", type: 3, required: true }, { name: "answer", description: "Answer", type: 3, required: true }, { name: "tags", description: "Tags (comma-separated)", type: 3, required: false } ] },
+      { name: "trending", description: "View trending knowledge entries", type: 1, options: [ { name: "days", description: "Days to look back (default 7)", type: 4, required: false } ] },
+      { name: "suggest", description: "View suggested knowledge entries to create", type: 1, options: [ { name: "days", description: "Days to analyze (default 7)", type: 4, required: false } ] },
+      { name: "stats", description: "View knowledge base statistics", type: 1 }
+    ] },
+    { name: "achievements", description: "View user achievements", options: [ { name: "user", description: "User to view (defaults to you)", type: 6, required: false } ] },
+    { name: "perks", description: "View your unlocked perks based on points" },
+    { name: "patterns", description: "Admin: View server activity patterns" },
+    { name: "insights", description: "Admin: Get temporal insights and predictions" },
+    { name: "checkins", description: "Admin: View pending proactive check-ins" },
+    { name: "sentiment", description: "Admin: Analyze channel emotional state", options: [ { name: "channel", description: "Channel to analyze", type: 7, required: false } ] },
+    { name: "commonissues", description: "Admin: View recurring support patterns", options: [ { name: "hours", description: "Hours to analyze (default 24)", type: 4, required: false } ] },
+    { name: "faq", description: "Display FAQ from knowledge base", options: [ { name: "category", description: "Category to filter by", type: 3, required: false } ] }
   ];
 
   (async () => {
@@ -372,6 +396,10 @@ client.on("interactionCreate", async (interaction) => {
       } catch (err) { /* ignore */ }
       return false;
     };
+
+  // Try enhanced feature commands first
+  const enhancedHandled = await handleEnhancedCommands(interaction as any);
+  if (enhancedHandled) return;
 
   if (name === "help") return interaction.reply({ content: `Use ${prefix}help or mention me to get conversational replies. Use moderation commands with appropriate permissions.`, ephemeral: true });
   if (name === "rpsai") {
@@ -1883,6 +1911,38 @@ client.on("messageCreate", async (message: Message) => {
   const tryingToUse = message.content.startsWith(prefix)
     || isWakeWord(message, wakeWord)
     || (!!message.mentions && !!message.mentions.users?.has(client.user?.id || ''));
+  
+  // Process message with enhanced features (sentiment, patterns, etc.)
+  try {
+    if (!message.author.bot && message.guild) {
+      const enhancedData = await processMessageWithEnhancedFeatures(message);
+      
+      // Check if we should celebrate a user achievement
+      if (enhancedData.celebration.celebrate) {
+        // Could send a celebration message here
+        console.log(`🎉 Celebration detected for ${message.author.tag}: ${enhancedData.celebration.achievementType}`);
+      }
+      
+      // Check for new achievements
+      if (enhancedData.achievements.length > 0) {
+        console.log(`🏆 New achievements for ${message.author.tag}:`, enhancedData.achievements);
+        // Could notify user of new achievements here
+      }
+      
+      // Log if escalation is needed
+      if (enhancedData.shouldEscalate) {
+        console.log(`⚠️ User ${message.author.tag} may need escalation (high frustration detected)`);
+      }
+      
+      // If auto-response available and confidence is high, could auto-reply here
+      if (enhancedData.autoResponse?.suggested && enhancedData.autoResponse.confidence > 0.8) {
+        console.log(`💡 High-confidence auto-response available for ${message.author.tag}`);
+      }
+    }
+  } catch (err) {
+    console.error('Enhanced features processing error:', err);
+  }
+  
   // Global support interception before whitelist early return
   try {
     if (message.guild) {
