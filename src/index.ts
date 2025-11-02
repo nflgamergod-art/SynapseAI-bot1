@@ -49,6 +49,10 @@ client.once("ready", async () => {
   // Initialize enhanced features
   await initializeEnhancedFeatures();
   
+  // Start achievement cron jobs for periodic checks
+  const { startAchievementCron } = await import('./services/achievementCron');
+  startAchievementCron();
+  
   // Register slash commands. If GUILD_ID is set, register for that guild (instant); otherwise register globally.
   const guildId = process.env.GUILD_ID;
 
@@ -2062,6 +2066,22 @@ client.on("messageCreate", async (message: Message) => {
   // Process message with enhanced features (sentiment, patterns, etc.)
   try {
     if (!message.author.bot && message.guild) {
+        // Track specific interactions for achievements
+        const db = await import('./services/db').then(m => m.getDB());
+      
+        // Track welcome messages
+        if (message.content.toLowerCase().includes('welcome') && message.mentions.users.size > 0) {
+          try {
+            db.prepare(`
+              INSERT INTO user_interactions (user_id, guild_id, interaction_type, target_user_id, created_at)
+              VALUES (?, ?, 'welcomed_user', ?, ?)
+            `).run(message.author.id, message.guild.id, Array.from(message.mentions.users.keys())[0], new Date().toISOString());
+          } catch (e) { /* ignore */ }
+        }
+      
+        // Track conversation starters (we'll mark this if the message later gets a reply)
+        // For now, store message IDs to check later
+      
       const enhancedData = await processMessageWithEnhancedFeatures(message);
       
       // Check if we should celebrate a user achievement
@@ -2570,6 +2590,22 @@ process.on("SIGINT", () => {
   console.log("Shutting down gracefully...");
   client.destroy();
   process.exit(0);
+});
+
+// Track new member joins for welcome detection
+client.on("guildMemberAdd", async (member) => {
+  if (member.user.bot) return;
+  
+  try {
+    const db = await import('./services/db').then(m => m.getDB());
+    // Store new member join time so we can attribute welcomes
+    db.prepare(`
+      INSERT OR REPLACE INTO user_interactions (user_id, guild_id, interaction_type, created_at)
+      VALUES (?, ?, 'member_joined', ?)
+    `).run(member.id, member.guild.id, new Date().toISOString());
+  } catch (e) {
+    console.error('Failed to track member join:', e);
+  }
 });
 
 client.login(token);

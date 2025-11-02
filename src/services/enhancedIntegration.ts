@@ -119,12 +119,108 @@ export async function processMessageWithEnhancedFeatures(message: Message): Prom
     }
   }
   
-  // 7. Rewards: Check for achievements (example stats - customize based on your tracking)
+  // 7. Rewards: Check for achievements with comprehensive stats
   const userPatterns = getUserPatterns(userId, guildId);
-  const achievements = checkAndAwardAchievements(userId, guildId, {
+  const db = await import('./db').then(m => m.getDB());
+  
+  // Gather all stats for achievement checks
+  const stats: any = {
     totalMessages: userPatterns?.message_count || 0
-    // Add more stats as you track them
-  });
+  };
+  
+  // Get support stats if available
+  try {
+    const supportStats = db.prepare(`
+      SELECT 
+        COUNT(*) as totalAssists,
+        SUM(CASE WHEN status = 'resolved' THEN 1 ELSE 0 END) as resolvedCount,
+        SUM(CASE WHEN response_time_minutes < 5 AND status = 'resolved' THEN 1 ELSE 0 END) as fastResolutions
+      FROM support_interactions
+      WHERE supporter_id = ? AND guild_id = ?
+    `).get(userId, guildId) as any;
+    
+    if (supportStats) {
+      stats.totalAssists = supportStats.totalAssists || 0;
+      stats.totalCases = supportStats.totalAssists || 0;
+      stats.fastResolutions = supportStats.fastResolutions || 0;
+      
+      if (stats.totalCases > 0) {
+        stats.resolutionRate = (supportStats.resolvedCount || 0) / stats.totalCases;
+      }
+    }
+  } catch (e) { /* table may not exist yet */ }
+  
+  // Calculate streak
+  try {
+    const recentDays = db.prepare(`
+      SELECT DISTINCT DATE(created_at) as day
+      FROM support_interactions
+      WHERE supporter_id = ? AND guild_id = ?
+      ORDER BY day DESC
+      LIMIT 30
+    `).all(userId, guildId) as { day: string }[];
+    
+    let streak = 0;
+    const today = new Date().toISOString().split('T')[0];
+    let checkDate = new Date();
+    
+    for (let i = 0; i < 30; i++) {
+      const dateStr = checkDate.toISOString().split('T')[0];
+      if (recentDays.some(d => d.day.startsWith(dateStr))) {
+        streak++;
+        checkDate.setDate(checkDate.getDate() - 1);
+      } else if (dateStr !== today) {
+        // Streak broken (allow today to not have activity yet)
+        break;
+      } else {
+        // Today hasn't had activity, keep checking yesterday
+        checkDate.setDate(checkDate.getDate() - 1);
+      }
+    }
+    stats.currentStreak = streak;
+  } catch (e) { /* ignore */ }
+  
+  // Count knowledge contributions
+  try {
+    const kbCount = db.prepare(`
+      SELECT COUNT(*) as count FROM knowledge_base
+      WHERE added_by = ? AND guild_id = ?
+    `).get(userId, guildId) as { count: number };
+    stats.knowledgeEntries = kbCount?.count || 0;
+    stats.qaPairs = kbCount?.count || 0; // Same for now
+  } catch (e) { /* ignore */ }
+  
+  // Count unique interactions
+  try {
+    const uniqueCount = db.prepare(`
+      SELECT COUNT(DISTINCT channel_id) as count
+      FROM sentiment_history
+      WHERE user_id = ? AND guild_id = ?
+    `).get(userId, guildId) as { count: number };
+    stats.uniqueInteractions = uniqueCount?.count || 0;
+  } catch (e) { /* ignore */ }
+  
+  // Check for member welcome and conversation patterns
+  if (content.toLowerCase().includes('welcome')) {
+    try {
+      const welcomeCount = db.prepare(`
+        SELECT COUNT(*) as count FROM user_interactions
+        WHERE user_id = ? AND guild_id = ? AND interaction_type = 'welcomed_user'
+      `).get(userId, guildId) as { count: number };
+      stats.welcomedUsers = welcomeCount?.count || 0;
+    } catch (e) { /* ignore */ }
+  }
+  
+  // Track conversation starters (messages that got replies)
+  try {
+    const convCount = db.prepare(`
+      SELECT COUNT(*) as count FROM user_interactions
+      WHERE user_id = ? AND guild_id = ? AND interaction_type = 'conversation_started'
+    `).get(userId, guildId) as { count: number };
+    stats.conversationsStarted = convCount?.count || 0;
+  } catch (e) { /* ignore */ }
+  
+  const achievements = checkAndAwardAchievements(userId, guildId, stats);
   
   // 8. Support Routing: Check if support escalation needed
   const shouldEscalate = suggestedTone.shouldEscalate;
