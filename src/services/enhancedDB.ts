@@ -68,6 +68,23 @@ export function initEnhancedSchema() {
   } catch (err) {
     // Table doesn't exist yet, that's fine
   }
+  
+  // Ensure sentiment_history has confidence and context columns (non-destructive)
+  try {
+    const cols = db.prepare("PRAGMA table_info('sentiment_history')").all() as Array<{ name: string }>;
+    const hasConfidence = cols.some(c => c.name === 'confidence');
+    const hasContext = cols.some(c => c.name === 'context');
+    if (!hasConfidence) {
+      console.log("⚠️  Adding 'confidence' column to sentiment_history...");
+      db.exec("ALTER TABLE sentiment_history ADD COLUMN confidence REAL");
+    }
+    if (!hasContext) {
+      console.log("⚠️  Adding 'context' column to sentiment_history...");
+      db.exec("ALTER TABLE sentiment_history ADD COLUMN context TEXT");
+    }
+  } catch (err) {
+    // ignore if table doesn't exist yet
+  }
 
   // Ensure support_interactions has 'question' column (non-destructive migration)
   try {
@@ -247,7 +264,9 @@ export function initEnhancedSchema() {
       channel_id TEXT NOT NULL,
       message_id TEXT NOT NULL,
       sentiment TEXT NOT NULL,
+      confidence REAL,
       emotional_markers TEXT,
+      context TEXT,
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_sentiment_user ON sentiment_history(user_id);
