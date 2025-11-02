@@ -4,15 +4,15 @@
     "matchType": "equals",
     "trigger": "12345",
     "response": "Hi",
-    "id": "mhfavbcpf2k4fk",
-    "createdAt": 1761942159673
+    "id": "mhhlxyrszd2cma",
+    "createdAt": 1762081691464
   },
   {
     "type": "phrase",
     "matchType": "contains",
     "trigger": "hello",
     "response": "Hello!",
-    "id": "mhfavbcqkqq7dq",
-    "createdAt": 1761942159674
+    "id": "mhhlxyrt1e3t8t",
+    "createdAt": 1762081691465
   }
 ]

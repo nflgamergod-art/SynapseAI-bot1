@@ -548,7 +548,8 @@ client.on("interactionCreate", async (interaction) => {
     if (!newKey || !/^sk-/.test(newKey)) {
       return interaction.reply({ content: 'That does not look like a valid OpenAI API key (expected to start with sk-).', ephemeral: true });
     }
-    await interaction.reply({ content: 'Updating OPENAI_API_KEY on server and restarting...', ephemeral: true });
+    // Defer and only show the final result (success/failure). Avoid the noisy pre-message.
+    await interaction.deferReply({ ephemeral: true });
     try {
       const fs = await import('fs/promises');
       const path = '/opt/synapseai-bot/.env';
@@ -561,6 +562,15 @@ client.on("interactionCreate", async (interaction) => {
         content = `${content}${nl}OPENAI_API_KEY=${newKey}\n`;
       }
       await fs.writeFile(path, content, 'utf8');
+      // Verify the write succeeded by re-reading the file
+      try {
+        const verify = await fs.readFile(path, 'utf8');
+        if (!verify.includes(`OPENAI_API_KEY=${newKey}`)) {
+          throw new Error('Verification failed: key not found after write.');
+        }
+      } catch (ve: any) {
+        throw ve;
+      }
       // Apply immediately to current process and reset cached client in case restart lags
       try {
         process.env.OPENAI_API_KEY = newKey;
@@ -571,10 +581,10 @@ client.on("interactionCreate", async (interaction) => {
       await new Promise<void>((resolve, reject) => {
         exec('pm2 restart synapseai-bot --update-env', (error) => error ? reject(error) : resolve());
       });
-      await interaction.followUp({ content: 'OpenAI key updated and bot restarted.', ephemeral: true });
+      await interaction.editReply({ content: 'OpenAI key updated and bot restarted.' });
     } catch (err: any) {
       console.error('setopenai failed:', err);
-      await interaction.followUp({ content: `Failed to update key: ${err?.message ?? err}`, ephemeral: true });
+      await interaction.editReply({ content: `Failed to update key: ${err?.message ?? err}` });
     }
     return;
   }
