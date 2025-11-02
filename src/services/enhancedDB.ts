@@ -96,12 +96,13 @@ export function initEnhancedSchema() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id TEXT NOT NULL,
       guild_id TEXT NOT NULL,
-      achievement_id TEXT NOT NULL, -- first_response, week_streak, mvp, etc
-      achievement_tier INTEGER DEFAULT 1, -- bronze, silver, gold tiers
-      unlocked_at TEXT NOT NULL,
-      reward_type TEXT, -- emoji, role, badge, power
-      reward_data TEXT, -- JSON blob
-      UNIQUE(user_id, guild_id, achievement_id, achievement_tier)
+      achievement_id TEXT NOT NULL,
+      achievement_name TEXT NOT NULL,
+      category TEXT NOT NULL,
+      points INTEGER DEFAULT 0,
+      context TEXT,
+      awarded_at TEXT NOT NULL,
+      UNIQUE(user_id, guild_id, achievement_id)
     );
     CREATE INDEX IF NOT EXISTS idx_achievements_user ON achievements(user_id);
 
