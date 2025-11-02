@@ -91,6 +91,16 @@ client.once("ready", () => {
       { name: "enabled", description: "true or false", type: 5, required: true }
     ] },
     { name: "getsupportintercept", description: "Owner: show global 'who are support' interception status" },
+    { name: "setfounderrole", description: "Owner: set the Founder role for this server", options: [
+      { name: "role", description: "Founder role", type: 8, required: true }
+    ] },
+    { name: "addfounder", description: "Owner: add a founder user for this server", options: [
+      { name: "user", description: "User to add as founder", type: 6, required: true }
+    ] },
+    { name: "removefounder", description: "Owner: remove a founder user for this server", options: [
+      { name: "user", description: "User to remove from founders", type: 6, required: true }
+    ] },
+    { name: "getfounders", description: "Owner: show founder config for this server" },
   { name: "registercommands", description: "Owner: re-register slash commands in this server (immediate)" },
     { name: "setmention", description: "Owner: toggle @mentions for PobKC or Joycemember", options: [
       { name: "owner", description: "pobkc or joycemember", type: 3, required: true },
@@ -418,18 +428,25 @@ client.on("interactionCreate", async (interaction) => {
     if (!adminOrBypass(interaction.member) && !isOwnerId(interaction.user.id)) {
       return interaction.reply({ content: "You are not authorized to use this feature.", ephemeral: true });
     }
-    const { saveMemory } = await import('./services/memory');
-    const key = interaction.options.getString('key', true).trim().slice(0, 128);
-    const value = interaction.options.getString('value', true).trim().slice(0, 2000);
-    const typeRaw = (interaction.options.getString('type') || 'fact').toLowerCase();
-    const type = (['fact','preference','note'].includes(typeRaw) ? typeRaw : 'fact') as any;
-    // Basic guard against obvious secrets
-    const dangerous = /(api[-_ ]?key|token|password|pass|secret|ssh|private[-_ ]?key)/i;
-    if (dangerous.test(key) || dangerous.test(value)) {
-      return interaction.reply({ content: "For your security, I won't store secrets like tokens or API keys.", ephemeral: true });
-    }
+    const { saveMemory, upsertUniqueMemory } = await import('./services/memory');
+    const type = (interaction.options.getString('type', true) as string).toLowerCase();
+    const key = interaction.options.getString('key', true).trim();
+    const value = interaction.options.getString('value', true).trim();
     try {
-      saveMemory({ user_id: interaction.user.id, guild_id: interaction.guild?.id ?? null, type, key, value, confidence: 0.9 });
+      const uniq = new Set(['name','timezone','favorite_team','birthday','location']);
+      if (uniq.has(key.toLowerCase())) {
+        upsertUniqueMemory(interaction.user.id, interaction.guild?.id ?? null, key, value);
+      } else {
+        saveMemory({
+          user_id: interaction.user.id,
+          guild_id: interaction.guild?.id ?? null,
+          type: (['fact','preference','note'].includes(type) ? (type as any) : 'fact'),
+          key,
+          value,
+          source_msg_id: null,
+          confidence: 0.9
+        });
+      }
       return interaction.reply({ content: `Saved (${type}) ${key}: ${value}`, ephemeral: true });
     } catch (e) {
       console.error('remember failed', e);
@@ -451,20 +468,20 @@ client.on("interactionCreate", async (interaction) => {
       return interaction.reply({ content: 'Failed to delete memory.', ephemeral: true });
     }
   }
-  if (name === "memories") {
-    if (!adminOrBypass(interaction.member) && !isOwnerId(interaction.user.id)) {
-      return interaction.reply({ content: "You are not authorized to use this feature.", ephemeral: true });
-    }
-    const { listMemories } = await import('./services/memory');
-    const limit = Math.max(1, Math.min(50, interaction.options.getInteger('limit') ?? 10));
+  if (name === "getmention") {
+    if (!isOwnerId(interaction.user.id)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
     try {
-      const items = listMemories(interaction.user.id, interaction.guild?.id ?? null, limit);
-      if (!items.length) return interaction.reply({ content: 'You have no saved memories yet. Use /remember to add one.', ephemeral: true });
-      const lines = items.map(m => `- (${m.type}) ${m.key}: ${m.value}`).join('\n').slice(0, 1900);
-      return interaction.reply({ content: `Your recent memories:\n${lines}`, ephemeral: true });
-    } catch (e) {
-      console.error('memories failed', e);
-      return interaction.reply({ content: 'Failed to list memories.', ephemeral: true });
+      const { getMentionConfig } = await import('./services/ownerMentions');
+      const cfg = getMentionConfig();
+      const lines = [
+        'Owner Mention Preferences:',
+        `PobKC: ${cfg.pobkc ? 'enabled (@mention)' : 'disabled (name only)'}`,
+        `Joycemember: ${cfg.joycemember ? 'enabled (@mention)' : 'disabled (name only)'}`
+      ].join('\n');
+      return interaction.reply({ content: lines, ephemeral: true });
+    } catch (err: any) {
+      console.error('getmention failed:', err);
+      return interaction.reply({ content: `Failed to get mention config: ${err?.message ?? err}`, ephemeral: true });
     }
   }
   if (name === "aliases") {
@@ -888,10 +905,95 @@ client.on("interactionCreate", async (interaction) => {
       return interaction.reply({ content: `Failed to get setting: ${err?.message ?? err}`, ephemeral: true });
     }
   }
+  if (name === "setfounderrole") {
+    if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+    try {
+      const { isFounderUser } = await import('./services/founders');
+      const founderOk = isFounderUser(interaction.guild, interaction.user.id, interaction.member as any);
+      if (!(isOwnerId(interaction.user.id) || founderOk)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
+      const role = interaction.options.getRole('role', true);
+      const { setFounderRole, getFounders } = await import('./services/founders');
+      setFounderRole(interaction.guild.id, role.id);
+      const f = getFounders(interaction.guild.id);
+      const lines = [
+        'Founder config updated:',
+        `Role: <@&${f.roleId}>`,
+        `Users: ${(f.userIds || []).length ? f.userIds.map(id => `<@${id}>`).join(', ') : 'none set'}`
+      ].join('\n');
+      return interaction.reply({ content: lines, ephemeral: true });
+    } catch (err: any) {
+      console.error('setfounderrole failed:', err);
+      return interaction.reply({ content: `Failed to set founder role: ${err?.message ?? err}`, ephemeral: true });
+    }
+  }
+  if (name === "addfounder") {
+    if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+    try {
+      const { isFounderUser } = await import('./services/founders');
+      const founderOk = isFounderUser(interaction.guild, interaction.user.id, interaction.member as any);
+      if (!(isOwnerId(interaction.user.id) || founderOk)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
+      const user = interaction.options.getUser('user', true);
+      const { addFounderUser, getFounders } = await import('./services/founders');
+      addFounderUser(interaction.guild.id, user.id);
+      const f = getFounders(interaction.guild.id);
+      const lines = [
+        'Founder user added:',
+        `Role: ${f.roleId ? `<@&${f.roleId}>` : 'none set'}`,
+        `Users: ${(f.userIds || []).map(id => `<@${id}>`).join(', ') || 'none set'}`
+      ].join('\n');
+      return interaction.reply({ content: lines, ephemeral: true });
+    } catch (err: any) {
+      console.error('addfounder failed:', err);
+      return interaction.reply({ content: `Failed to add founder: ${err?.message ?? err}`, ephemeral: true });
+    }
+  }
+  if (name === "removefounder") {
+    if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+    try {
+      const { isFounderUser } = await import('./services/founders');
+      const founderOk = isFounderUser(interaction.guild, interaction.user.id, interaction.member as any);
+      if (!(isOwnerId(interaction.user.id) || founderOk)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
+      const user = interaction.options.getUser('user', true);
+      const { removeFounderUser, getFounders } = await import('./services/founders');
+      removeFounderUser(interaction.guild.id, user.id);
+      const f = getFounders(interaction.guild.id);
+      const lines = [
+        'Founder user removed:',
+        `Role: ${f.roleId ? `<@&${f.roleId}>` : 'none set'}`,
+        `Users: ${(f.userIds || []).map(id => `<@${id}>`).join(', ') || 'none set'}`
+      ].join('\n');
+      return interaction.reply({ content: lines, ephemeral: true });
+    } catch (err: any) {
+      console.error('removefounder failed:', err);
+      return interaction.reply({ content: `Failed to remove founder: ${err?.message ?? err}`, ephemeral: true });
+    }
+  }
+  if (name === "getfounders") {
+    if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+    try {
+      const { isFounderUser } = await import('./services/founders');
+      const founderOk = isFounderUser(interaction.guild, interaction.user.id, interaction.member as any);
+      if (!(isOwnerId(interaction.user.id) || founderOk)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
+      const { getFounders, DEFAULT_FOUNDER_USER_IDS } = await import('./services/founders');
+      const f = getFounders(interaction.guild.id);
+      const lines = [
+        'Founder configuration:',
+        `Role: ${f.roleId ? `<@&${f.roleId}>` : 'none set'}`,
+        `Users: ${(f.userIds || []).map(id => `<@${id}>`).join(', ') || 'none set'}`,
+        `Defaults (always treated as founders): ${Array.from(DEFAULT_FOUNDER_USER_IDS).map(id => `<@${id}>`).join(', ')}`
+      ].join('\n');
+      return interaction.reply({ content: lines, ephemeral: true });
+    } catch (err: any) {
+      console.error('getfounders failed:', err);
+      return interaction.reply({ content: `Failed to get founder config: ${err?.message ?? err}`, ephemeral: true });
+    }
+  }
   if (name === "registercommands") {
-    if (!isOwnerId(interaction.user.id)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
     if (!interaction.guild) return interaction.reply({ content: 'This must be run inside a server.', ephemeral: true });
     try {
+      const { isFounderUser } = await import('./services/founders');
+      const founderOk = isFounderUser(interaction.guild, interaction.user.id, interaction.member as any);
+      if (!(isOwnerId(interaction.user.id) || founderOk)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
       const cmds = [
         { name: "help", description: "Show help for bot commands" },
         { name: "ping", description: "Check bot latency" },
@@ -913,7 +1015,11 @@ client.on("interactionCreate", async (interaction) => {
         { name: "getsupportroles", description: "Owner: show configured support roles" },
         { name: "support", description: "List current support staff in this server" },
         { name: "setsupportintercept", description: "Owner: toggle global 'who are support' interception for this server", options: [ { name: "enabled", description: "true or false", type: 5, required: true } ] },
-        { name: "getsupportintercept", description: "Owner: show global 'who are support' interception status" },
+  { name: "getsupportintercept", description: "Owner: show global 'who are support' interception status" },
+  { name: "setfounderrole", description: "Owner: set the Founder role for this server", options: [ { name: "role", description: "Founder role", type: 8, required: true } ] },
+  { name: "addfounder", description: "Owner: add a founder user for this server", options: [ { name: "user", description: "User to add as founder", type: 6, required: true } ] },
+  { name: "removefounder", description: "Owner: remove a founder user for this server", options: [ { name: "user", description: "User to remove from founders", type: 6, required: true } ] },
+  { name: "getfounders", description: "Owner: show founder config for this server" },
         { name: "setmention", description: "Owner: toggle @mentions for PobKC or Joycemember", options: [ { name: "owner", description: "pobkc or joycemember", type: 3, required: true }, { name: "enabled", description: "true or false", type: 5, required: true } ] },
         { name: "getmention", description: "Owner: show mention preference status for owners" },
         { name: "addwhitelist", description: "Owner: add a whitelist entry (user or role)", options: [ { name: "type", description: "user or role", type: 3, required: true }, { name: "id", description: "User ID or Role ID (or mention)", type: 3, required: true }, { name: "duration", description: "Optional duration (e.g., 7d, 24h, 3600)", type: 3, required: false }, { name: "autorole", description: "Optional auto-assign role id", type: 3, required: false } ] },
@@ -985,16 +1091,17 @@ client.on("interactionCreate", async (interaction) => {
       if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
       // Defer immediately since fetching members can take a few seconds
       await interaction.deferReply();
-      const { listSupportMembers } = await import('./services/supportRoles');
+  const { listSupportMembers } = await import('./services/supportRoles');
+  const { isFounderUser, isFounderMember } = await import('./services/founders');
       const listsRaw = await listSupportMembers(interaction.guild);
       // Ensure each member appears only under their HIGHEST support role: Head > Support > Trial
-      const OWNER_IDS = new Set<string>(['1272923881052704820','840586296044421160']); // PobKC, Joycemember
-      const FOUNDER_ROLE_ID = '1394923497376972890';
+  // Founder detection is via service; keep constants only as fallback (service includes them)
       const assigned = new Set<string>();
       // Filter out founders from support lists
-      const headOnly = listsRaw.head.filter((m:any) => { if (OWNER_IDS.has(m.id) || assigned.has(m.id)) return false; assigned.add(m.id); return true; });
-      const supportOnly = listsRaw.support.filter((m:any) => { if (OWNER_IDS.has(m.id) || assigned.has(m.id)) return false; assigned.add(m.id); return true; });
-      const trialOnly = listsRaw.trial.filter((m:any) => { if (OWNER_IDS.has(m.id) || assigned.has(m.id)) return false; assigned.add(m.id); return true; });
+  const isFounderMemberLocal = (gm: any) => isFounderMember(gm);
+  const headOnly = listsRaw.head.filter((m:any) => { if (isFounderMemberLocal(m) || assigned.has(m.id)) return false; assigned.add(m.id); return true; });
+  const supportOnly = listsRaw.support.filter((m:any) => { if (isFounderMemberLocal(m) || assigned.has(m.id)) return false; assigned.add(m.id); return true; });
+  const trialOnly = listsRaw.trial.filter((m:any) => { if (isFounderMemberLocal(m) || assigned.has(m.id)) return false; assigned.add(m.id); return true; });
       const lists = { head: headOnly, support: supportOnly, trial: trialOnly } as const;
       const formatList = (arr: any[]) => {
         if (!arr.length) return 'None';
@@ -1002,9 +1109,15 @@ client.on("interactionCreate", async (interaction) => {
         const text = shown.map((m:any) => `<@${m.id}>`).join(', ');
         return text + (arr.length > 25 ? ` …(+${arr.length-25})` : '');
       };
-      const allMembers = ([] as any[]).concat(lists.head, lists.support, lists.trial);
-      const isRequesterSupport = allMembers.some(m => m.id === interaction.user.id);
-      const header = isRequesterSupport ? `You’re part of Support. Here’s the team:` : `Support team:`;
+      // Determine requester context (Founder vs Support vs Other)
+  const requesterId = interaction.user.id;
+  const requesterMember: any = interaction.member;
+    const allMembersFiltered = ([] as any[]).concat(lists.head, lists.support, lists.trial);
+  const isFounder = isFounderUser(interaction.guild, requesterId, requesterMember);
+    const isRequesterSupport = allMembersFiltered.some((m:any) => m.id === requesterId);
+      const header = isFounder
+        ? `You're one of the founders. Here’s the team:`
+        : (isRequesterSupport ? `You’re part of Support. Here’s the team:` : `Support team:`);
       const lines = [
         header,
         `Founders: PobKC, Joycemember`,
@@ -1019,7 +1132,7 @@ client.on("interactionCreate", async (interaction) => {
           if (m.id !== interaction.user.id) mentionedIds.add(m.id);
         }
       }
-      await interaction.editReply({ content: lines, allowedMentions: { users: Array.from(mentionedIds),  } });
+  await interaction.editReply({ content: lines, allowedMentions: { users: Array.from(mentionedIds) } });
       return;
     } catch (err: any) {
       console.error('support list failed:', err);
@@ -1091,7 +1204,7 @@ client.on("interactionCreate", async (interaction) => {
       const { getMentionConfig } = await import('./services/ownerMentions');
       const cfg = getMentionConfig();
       const lines = [
-        `Owner Mention Preferences:`,
+        'Owner Mention Preferences:',
         `PobKC: ${cfg.pobkc ? 'enabled (@mention)' : 'disabled (name only)'}`,
         `Joycemember: ${cfg.joycemember ? 'enabled (@mention)' : 'disabled (name only)'}`
       ].join('\n');
@@ -1781,15 +1894,15 @@ client.on("messageCreate", async (message: Message) => {
         if (supportRe.test(text)) {
           try {
             const { listSupportMembers } = await import('./services/supportRoles');
+            const { isFounderUser, isFounderMember } = await import('./services/founders');
             const listsRaw = await listSupportMembers(message.guild);
             // Highest-role grouping: Head > Support > Trial
-            const OWNER_IDS = new Set<string>(['1272923881052704820','840586296044421160']);
-            const FOUNDER_ROLE_ID = '1394923497376972890';
             const assigned = new Set<string>();
             // Filter out founders from support lists
-            const headOnly = listsRaw.head.filter((m:any) => { if (OWNER_IDS.has(m.id) || assigned.has(m.id)) return false; assigned.add(m.id); return true; });
-            const supportOnly = listsRaw.support.filter((m:any) => { if (OWNER_IDS.has(m.id) || assigned.has(m.id)) return false; assigned.add(m.id); return true; });
-            const trialOnly = listsRaw.trial.filter((m:any) => { if (OWNER_IDS.has(m.id) || assigned.has(m.id)) return false; assigned.add(m.id); return true; });
+            const isFounderMemberLocal = (gm: any) => isFounderMember(gm);
+            const headOnly = listsRaw.head.filter((m:any) => { if (isFounderMemberLocal(m) || assigned.has(m.id)) return false; assigned.add(m.id); return true; });
+            const supportOnly = listsRaw.support.filter((m:any) => { if (isFounderMemberLocal(m) || assigned.has(m.id)) return false; assigned.add(m.id); return true; });
+            const trialOnly = listsRaw.trial.filter((m:any) => { if (isFounderMemberLocal(m) || assigned.has(m.id)) return false; assigned.add(m.id); return true; });
             const lists = { head: headOnly, support: supportOnly, trial: trialOnly } as const;
             const formatList = (arr: any[]) => {
               if (!arr.length) return 'None';
@@ -1797,9 +1910,10 @@ client.on("messageCreate", async (message: Message) => {
               const text = shown.map((m:any) => `<@${m.id}>`).join(', ');
               return text + (arr.length > 25 ? ` …(+${arr.length-25})` : '');
             };
-            const allMembers = ([] as any[]).concat(listsRaw.head, listsRaw.support, listsRaw.trial);
-            const isRequesterSupport = allMembers.some((m:any) => m.id === message.author.id);
-            const header = isRequesterSupport ? `You’re part of Support. Here’s the team:` : `Support team:`;
+            const allMembersFiltered = ([] as any[]).concat(lists.head, lists.support, lists.trial);
+            const isRequesterSupport = allMembersFiltered.some((m:any) => m.id === message.author.id);
+            const isFounder = isFounderUser(message.guild!, message.author.id, message.member as any);
+            const header = isFounder ? `You're one of the founders. Here’s the team:` : (isRequesterSupport ? `You’re part of Support. Here’s the team:` : `Support team:`);
             const lines = [
               header,
               `Founders: PobKC, Joycemember`,
@@ -2064,15 +2178,15 @@ client.on("messageCreate", async (message: Message) => {
       if (supportRe.test(text) && message.guild) {
         try {
           const { listSupportMembers } = await import('./services/supportRoles');
+          const { isFounderUser, isFounderMember } = await import('./services/founders');
           const listsRaw = await listSupportMembers(message.guild);
           // Highest-role grouping: Head > Support > Trial
-          const OWNER_IDS = new Set<string>(['1272923881052704820','840586296044421160']);
-          const FOUNDER_ROLE_ID = '1394923497376972890';
           const assigned = new Set<string>();
           // Filter out founders from support lists
-          const headOnly = listsRaw.head.filter((m:any) => { if (OWNER_IDS.has(m.id) || assigned.has(m.id)) return false; assigned.add(m.id); return true; });
-          const supportOnly = listsRaw.support.filter((m:any) => { if (OWNER_IDS.has(m.id) || assigned.has(m.id)) return false; assigned.add(m.id); return true; });
-          const trialOnly = listsRaw.trial.filter((m:any) => { if (OWNER_IDS.has(m.id) || assigned.has(m.id)) return false; assigned.add(m.id); return true; });
+          const isFounderMemberLocal = (gm: any) => isFounderMember(gm as any);
+          const headOnly = listsRaw.head.filter((m:any) => { if (isFounderMemberLocal(m) || assigned.has(m.id)) return false; assigned.add(m.id); return true; });
+          const supportOnly = listsRaw.support.filter((m:any) => { if (isFounderMemberLocal(m) || assigned.has(m.id)) return false; assigned.add(m.id); return true; });
+          const trialOnly = listsRaw.trial.filter((m:any) => { if (isFounderMemberLocal(m) || assigned.has(m.id)) return false; assigned.add(m.id); return true; });
           const lists = { head: headOnly, support: supportOnly, trial: trialOnly } as const;
           const formatList = (arr: any[]) => {
             if (!arr.length) return 'None';
@@ -2080,9 +2194,10 @@ client.on("messageCreate", async (message: Message) => {
             const text = shown.map((m:any) => `<@${m.id}>`).join(', ');
             return text + (arr.length > 25 ? ` …(+${arr.length-25})` : '');
           };
-          const allMembers = ([] as any[]).concat(listsRaw.head, listsRaw.support, listsRaw.trial);
-          const isRequesterSupport = allMembers.some((m:any) => m.id === message.author.id);
-          const header = isRequesterSupport ? `You’re part of Support. Here’s the team:` : `Support team:`;
+          const allMembersFiltered = ([] as any[]).concat(lists.head, lists.support, lists.trial);
+          const isRequesterSupport = allMembersFiltered.some((m:any) => m.id === message.author.id);
+          const isFounder = isFounderUser(message.guild!, message.author.id, message.member as any);
+          const header = isFounder ? `You're one of the founders. Here’s the team:` : (isRequesterSupport ? `You’re part of Support. Here’s the team:` : `Support team:`);
           const lines = [
             header,
             `Founders: PobKC, Joycemember`,
