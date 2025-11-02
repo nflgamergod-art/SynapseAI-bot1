@@ -514,7 +514,7 @@ client.on("interactionCreate", async (interaction) => {
     if (!newKey || !/^AIza[0-9A-Za-z-_]{30,}$/.test(newKey)) {
       return interaction.reply({ content: 'That does not look like a valid Gemini API key.', ephemeral: true });
     }
-    await interaction.reply({ content: 'Updating GEMINI_API_KEY on server and restarting...', ephemeral: true });
+    await interaction.deferReply({ ephemeral: true });
     try {
       const fs = await import('fs/promises');
       const path = '/opt/synapseai-bot/.env';
@@ -527,18 +527,28 @@ client.on("interactionCreate", async (interaction) => {
         content = `${content}${nl}GEMINI_API_KEY=${newKey}\n`;
       }
       await fs.writeFile(path, content, 'utf8');
-      // Restart bot to load new env
-      const { exec } = await import('child_process');
-      await new Promise<void>((resolve, reject) => {
+      // Verify write
+      const verify = await fs.readFile(path, 'utf8');
+      if (!verify.includes(`GEMINI_API_KEY=${newKey}`)) throw new Error('Verification failed: key not found after write.');
+      // Apply immediately and reset cached client
+      try {
+        process.env.GEMINI_API_KEY = newKey;
+        const { resetGeminiClient } = await import('./services/openai');
+        resetGeminiClient();
+      } catch {}
+      // Respond quickly, restart in background
+      await interaction.editReply({ content: 'Gemini key saved. Restarting the bot now… You can test with /diagai shortly.' });
+      try {
+        const { exec } = await import('child_process');
         exec('pm2 restart synapseai-bot --update-env', (error) => {
-          if (error) return reject(error);
-          resolve();
+          if (error) console.error('pm2 restart failed:', error);
         });
-      });
-      await interaction.followUp({ content: 'Gemini key updated and bot restarted. Try a message with the wake word to test.', ephemeral: true });
+      } catch (e) {
+        console.error('Failed to invoke pm2 restart:', e);
+      }
     } catch (err: any) {
       console.error('setgeminikey failed:', err);
-      await interaction.followUp({ content: `Failed to update key: ${err?.message ?? err}`, ephemeral: true });
+      await interaction.editReply({ content: `Failed to update key: ${err?.message ?? err}` });
     }
     return;
   }
@@ -599,7 +609,7 @@ client.on("interactionCreate", async (interaction) => {
     if (!['openai','gemini'].includes(provider)) {
       return interaction.reply({ content: 'Provider must be openai or gemini.', ephemeral: true });
     }
-    await interaction.reply({ content: `Setting AI_PROVIDER=${provider} and restarting...`, ephemeral: true });
+    await interaction.deferReply({ ephemeral: true });
     try {
       const fs = await import('fs/promises');
       const path = '/opt/synapseai-bot/.env';
@@ -612,14 +622,18 @@ client.on("interactionCreate", async (interaction) => {
         content = `${content}${nl}AI_PROVIDER=${provider}\n`;
       }
       await fs.writeFile(path, content, 'utf8');
-      const { exec } = await import('child_process');
-      await new Promise<void>((resolve, reject) => {
-        exec('pm2 restart synapseai-bot --update-env', (error) => error ? reject(error) : resolve());
-      });
-      await interaction.followUp({ content: `Provider set to ${provider} and bot restarted.`, ephemeral: true });
+      const check = await fs.readFile(path, 'utf8');
+      if (!check.includes(`AI_PROVIDER=${provider}`)) throw new Error('Verification failed: provider not found after write.');
+      // Apply immediately
+      process.env.AI_PROVIDER = provider;
+      await interaction.editReply({ content: `Provider set to ${provider}. Restarting the bot now…` });
+      try {
+        const { exec } = await import('child_process');
+        exec('pm2 restart synapseai-bot --update-env', (error) => { if (error) console.error('pm2 restart failed:', error); });
+      } catch (e) { console.error('Failed to invoke pm2 restart:', e); }
     } catch (err: any) {
       console.error('setprovider failed:', err);
-      await interaction.followUp({ content: `Failed to set provider: ${err?.message ?? err}`, ephemeral: true });
+      await interaction.editReply({ content: `Failed to set provider: ${err?.message ?? err}` });
     }
     return;
   }
@@ -667,7 +681,7 @@ client.on("interactionCreate", async (interaction) => {
     const model = interaction.options.getString('model', true).trim();
     if (!['openai','gemini'].includes(provider)) return interaction.reply({ content: 'Provider must be openai or gemini.', ephemeral: true });
     if (!model) return interaction.reply({ content: 'Model cannot be empty.', ephemeral: true });
-    await interaction.reply({ content: `Setting ${provider.toUpperCase()} model to ${model} and restarting...`, ephemeral: true });
+    await interaction.deferReply({ ephemeral: true });
     try {
       const fs = await import('fs/promises');
       const path = '/opt/synapseai-bot/.env';
@@ -682,14 +696,17 @@ client.on("interactionCreate", async (interaction) => {
         content = `${content}${nl}${key}=${model}\n`;
       }
       await fs.writeFile(path, content, 'utf8');
-      const { exec } = await import('child_process');
-      await new Promise<void>((resolve, reject) => {
-        exec('pm2 restart synapseai-bot --update-env', (error) => error ? reject(error) : resolve());
-      });
-      await interaction.followUp({ content: `Model updated. Provider=${provider}, model=${model}`, ephemeral: true });
+      const verify = await fs.readFile(path, 'utf8');
+      if (!verify.includes(`${key}=${model}`)) throw new Error('Verification failed: model not found after write.');
+      process.env[key] = model;
+      await interaction.editReply({ content: `Model updated. ${key}=${model}. Restarting the bot now…` });
+      try {
+        const { exec } = await import('child_process');
+        exec('pm2 restart synapseai-bot --update-env', (error) => { if (error) console.error('pm2 restart failed:', error); });
+      } catch (e) { console.error('Failed to invoke pm2 restart:', e); }
     } catch (err: any) {
       console.error('setmodel failed:', err);
-      await interaction.followUp({ content: `setmodel failed: ${err?.message ?? err}`, ephemeral: true });
+      await interaction.editReply({ content: `setmodel failed: ${err?.message ?? err}` });
     }
     return;
   }
@@ -716,7 +733,7 @@ client.on("interactionCreate", async (interaction) => {
     };
 
     const model = pickModel(provider, preset);
-    await interaction.reply({ content: `Setting ${provider.toUpperCase()} model preset '${preset}' -> ${model} and restarting...`, ephemeral: true });
+    await interaction.deferReply({ ephemeral: true });
     try {
       const fs = await import('fs/promises');
       const path = '/opt/synapseai-bot/.env';
@@ -731,14 +748,17 @@ client.on("interactionCreate", async (interaction) => {
         content = `${content}${nl}${key}=${model}\n`;
       }
       await fs.writeFile(path, content, 'utf8');
-      const { exec } = await import('child_process');
-      await new Promise<void>((resolve, reject) => {
-        exec('pm2 restart synapseai-bot --update-env', (error) => error ? reject(error) : resolve());
-      });
-      await interaction.followUp({ content: `Model updated: ${key}=${model}.`, ephemeral: true });
+      const verify = await fs.readFile(path, 'utf8');
+      if (!verify.includes(`${key}=${model}`)) throw new Error('Verification failed: model not found after write.');
+      process.env[key] = model;
+      await interaction.editReply({ content: `Model preset '${preset}' applied: ${key}=${model}. Restarting the bot now…` });
+      try {
+        const { exec } = await import('child_process');
+        exec('pm2 restart synapseai-bot --update-env', (error) => { if (error) console.error('pm2 restart failed:', error); });
+      } catch (e) { console.error('Failed to invoke pm2 restart:', e); }
     } catch (err: any) {
       console.error('setmodelpreset failed:', err);
-      await interaction.followUp({ content: `setmodelpreset failed: ${err?.message ?? err}`, ephemeral: true });
+      await interaction.editReply({ content: `setmodelpreset failed: ${err?.message ?? err}` });
     }
     return;
   }
