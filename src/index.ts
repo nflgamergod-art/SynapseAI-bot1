@@ -577,11 +577,16 @@ client.on("interactionCreate", async (interaction) => {
         const { resetOpenAIClient } = await import('./services/openai');
         resetOpenAIClient();
       } catch {}
-      const { exec } = await import('child_process');
-      await new Promise<void>((resolve, reject) => {
-        exec('pm2 restart synapseai-bot --update-env', (error) => error ? reject(error) : resolve());
-      });
-      await interaction.editReply({ content: 'OpenAI key updated and bot restarted.' });
+      // Respond first to minimize the "thinking" time, then restart in background
+      await interaction.editReply({ content: 'OpenAI key saved. Restarting the bot now… You can test with /diagai in a few seconds.' });
+      try {
+        const { exec } = await import('child_process');
+        exec('pm2 restart synapseai-bot --update-env', (error) => {
+          if (error) console.error('pm2 restart failed:', error);
+        });
+      } catch (e) {
+        console.error('Failed to invoke pm2 restart:', e);
+      }
     } catch (err: any) {
       console.error('setopenai failed:', err);
       await interaction.editReply({ content: `Failed to update key: ${err?.message ?? err}` });
