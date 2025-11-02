@@ -43,9 +43,9 @@ export function startSupportInteraction(opts: {
   
   const result = db.prepare(`
     INSERT INTO support_interactions 
-    (user_id, support_member_id, guild_id, channel_id, question_category, started_at, was_resolved, escalated)
-    VALUES (?, ?, ?, ?, ?, ?, FALSE, FALSE)
-  `).run(userId, supportMemberId, guildId, channelId, category, now);
+    (user_id, support_member_id, guild_id, channel_id, question_category, question, started_at, was_resolved, escalated)
+    VALUES (?, ?, ?, ?, ?, ?, ?, FALSE, FALSE)
+  `).run(userId, supportMemberId, guildId, channelId, category, questionText, now);
   
   return Number(result.lastInsertRowid);
 }

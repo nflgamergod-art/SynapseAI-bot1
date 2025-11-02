@@ -68,6 +68,18 @@ export function initEnhancedSchema() {
   } catch (err) {
     // Table doesn't exist yet, that's fine
   }
+
+  // Ensure support_interactions has 'question' column (non-destructive migration)
+  try {
+    const cols = db.prepare("PRAGMA table_info('support_interactions')").all() as Array<{ name: string }>;
+    const hasQuestion = cols.some(c => c.name === 'question');
+    if (!hasQuestion) {
+      console.log("⚠️  Adding 'question' column to support_interactions...");
+      db.exec("ALTER TABLE support_interactions ADD COLUMN question TEXT");
+    }
+  } catch (err) {
+    // Table may not exist yet; it will be created below
+  }
   
   db.exec(`
     -- User Relationships & Context

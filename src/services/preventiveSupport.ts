@@ -275,10 +275,10 @@ export function suggestMissingKnowledge(guildId: string | null, days = 7): {
   
   // Get unresolved or slow-to-resolve interactions
   const slowResolutions = db.prepare(`
-    SELECT question, category, 
-      (julianday(resolved_at) - julianday(started_at)) * 24 * 60 as resolution_minutes
+    SELECT question, question_category as category,
+      (julianday(ended_at) - julianday(started_at)) * 24 * 60 as resolution_minutes
     FROM support_interactions
-    WHERE guild_id = ? AND started_at > ? AND status = 'resolved' AND question IS NOT NULL
+    WHERE guild_id = ? AND started_at > ? AND was_resolved = 1 AND question IS NOT NULL AND ended_at IS NOT NULL
   `).all(guildId, since) as { question: string; category: string; resolution_minutes: number }[];
   
   // Group similar questions
