@@ -36,12 +36,23 @@ export function initEnhancedSchema() {
     // Table doesn't exist yet, that's fine
   }
   
-  // Drop and recreate knowledge_base table if it has the wrong schema
+  // Drop and recreate user_patterns table if it has the wrong schema
   try {
-    const checkSchema = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='knowledge_base'").get() as any;
-    if (checkSchema && !checkSchema.sql.includes('question TEXT')) {
-      console.log('⚠️  Migrating knowledge_base table to new schema...');
-      db.exec('DROP TABLE IF EXISTS knowledge_base');
+    const checkSchema = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='user_patterns'").get() as any;
+    if (checkSchema && !checkSchema.sql.includes('active_hours TEXT')) {
+      console.log('⚠️  Migrating user_patterns table to new schema...');
+      db.exec('DROP TABLE IF EXISTS user_patterns');
+    }
+  } catch (err) {
+    // Table doesn't exist yet, that's fine
+  }
+  
+  // Drop and recreate sentiment_history table if it has the wrong schema
+  try {
+    const checkSchema = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='sentiment_history'").get() as any;
+    if (checkSchema && !checkSchema.sql.includes('sentiment TEXT')) {
+      console.log('⚠️  Migrating sentiment_history table to new schema...');
+      db.exec('DROP TABLE IF EXISTS sentiment_history');
     }
   } catch (err) {
     // Table doesn't exist yet, that's fine
@@ -67,11 +78,14 @@ export function initEnhancedSchema() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id TEXT NOT NULL,
       guild_id TEXT,
-      pattern_type TEXT NOT NULL, -- timezone, active_hours, question_topics, mood_trend
-      pattern_data TEXT NOT NULL, -- JSON blob
+      timezone TEXT,
+      active_hours TEXT,
+      question_topics TEXT,
+      mood_trend TEXT,
       confidence REAL DEFAULT 0.5,
       last_updated_at TEXT NOT NULL,
-      UNIQUE(user_id, guild_id, pattern_type)
+      created_at TEXT NOT NULL,
+      UNIQUE(user_id, guild_id)
     );
     CREATE INDEX IF NOT EXISTS idx_patterns_user ON user_patterns(user_id);
 
@@ -212,11 +226,12 @@ export function initEnhancedSchema() {
       guild_id TEXT,
       channel_id TEXT NOT NULL,
       message_id TEXT NOT NULL,
-      sentiment_score REAL, -- -1 (very negative) to 1 (very positive)
-      emotion_tags TEXT, -- JSON array: frustrated, excited, confused, etc
-      detected_at TEXT NOT NULL
+      sentiment TEXT NOT NULL,
+      emotional_markers TEXT,
+      created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_sentiment_user ON sentiment_history(user_id);
+    CREATE INDEX IF NOT EXISTS idx_sentiment_channel ON sentiment_history(channel_id);
 
     -- Proactive Check-ins
     CREATE TABLE IF NOT EXISTS scheduled_checkins (
