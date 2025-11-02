@@ -25,6 +25,28 @@ export function initEnhancedSchema() {
     // Table doesn't exist yet, that's fine
   }
   
+  // Drop and recreate scheduled_checkins table if it has the wrong schema
+  try {
+    const checkSchema = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='scheduled_checkins'").get() as any;
+    if (checkSchema && !checkSchema.sql.includes('status TEXT')) {
+      console.log('⚠️  Migrating scheduled_checkins table to new schema...');
+      db.exec('DROP TABLE IF EXISTS scheduled_checkins');
+    }
+  } catch (err) {
+    // Table doesn't exist yet, that's fine
+  }
+  
+  // Drop and recreate knowledge_base table if it has the wrong schema
+  try {
+    const checkSchema = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='knowledge_base'").get() as any;
+    if (checkSchema && !checkSchema.sql.includes('question TEXT')) {
+      console.log('⚠️  Migrating knowledge_base table to new schema...');
+      db.exec('DROP TABLE IF EXISTS knowledge_base');
+    }
+  } catch (err) {
+    // Table doesn't exist yet, that's fine
+  }
+  
   db.exec(`
     -- User Relationships & Context
     CREATE TABLE IF NOT EXISTS user_relationships (
@@ -153,13 +175,14 @@ export function initEnhancedSchema() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       guild_id TEXT NOT NULL,
       category TEXT NOT NULL,
-      question_pattern TEXT NOT NULL, -- normalized/generalized question
-      answer_text TEXT NOT NULL,
-      source_interaction_ids TEXT, -- JSON array of support_interaction IDs
-      times_referenced INTEGER DEFAULT 1,
-      success_rate REAL DEFAULT 1.0,
-      last_updated_at TEXT NOT NULL,
-      created_at TEXT NOT NULL
+      question TEXT NOT NULL,
+      answer TEXT NOT NULL,
+      tags TEXT, -- JSON array
+      source_message_id TEXT,
+      times_helpful INTEGER DEFAULT 0,
+      added_by TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_kb_guild ON knowledge_base(guild_id);
     CREATE INDEX IF NOT EXISTS idx_kb_category ON knowledge_base(category);
@@ -203,11 +226,11 @@ export function initEnhancedSchema() {
       checkin_type TEXT NOT NULL, -- followup, recurring, issue_monitor
       context_data TEXT NOT NULL, -- JSON: what to check in about
       scheduled_for TEXT NOT NULL,
-      completed BOOLEAN DEFAULT FALSE,
+      status TEXT DEFAULT 'pending',
       completed_at TEXT,
       created_at TEXT NOT NULL
     );
-    CREATE INDEX IF NOT EXISTS idx_checkin_schedule ON scheduled_checkins(scheduled_for, completed);
+    CREATE INDEX IF NOT EXISTS idx_checkin_schedule ON scheduled_checkins(scheduled_for, status);
 
     -- Cross-Server Intelligence (anonymized patterns)
     CREATE TABLE IF NOT EXISTS cross_server_patterns (
