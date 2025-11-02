@@ -87,6 +87,11 @@ client.once("ready", () => {
     ] },
     { name: "getsupportroles", description: "Owner: show configured support roles" },
     { name: "support", description: "List current support staff in this server" },
+    { name: "setsupportintercept", description: "Owner: toggle global 'who are support' interception for this server", options: [
+      { name: "enabled", description: "true or false", type: 5, required: true }
+    ] },
+    { name: "getsupportintercept", description: "Owner: show global 'who are support' interception status" },
+  { name: "registercommands", description: "Owner: re-register slash commands in this server (immediate)" },
     { name: "setmention", description: "Owner: toggle @mentions for PobKC or Joycemember", options: [
       { name: "owner", description: "pobkc or joycemember", type: 3, required: true },
       { name: "enabled", description: "true or false", type: 5, required: true }
@@ -857,6 +862,107 @@ client.on("interactionCreate", async (interaction) => {
       return interaction.reply({ content: `Failed to set support roles: ${err?.message ?? err}`, ephemeral: true });
     }
   }
+  if (name === "setsupportintercept") {
+    if (!isOwnerId(interaction.user.id)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
+    if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+    try {
+      const enabled = interaction.options.getBoolean('enabled', true);
+      const { setSupportInterceptEnabled, getSupportInterceptStatus } = await import('./services/supportIntercept');
+      setSupportInterceptEnabled(interaction.guild.id, !!enabled);
+      const status = getSupportInterceptStatus(interaction.guild.id);
+      return interaction.reply({ content: `Global support interception is now ${status} for this server.`, ephemeral: true });
+    } catch (err: any) {
+      console.error('setsupportintercept failed:', err);
+      return interaction.reply({ content: `Failed to update setting: ${err?.message ?? err}`, ephemeral: true });
+    }
+  }
+  if (name === "getsupportintercept") {
+    if (!isOwnerId(interaction.user.id)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
+    if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+    try {
+      const { getSupportInterceptStatus } = await import('./services/supportIntercept');
+      const status = getSupportInterceptStatus(interaction.guild.id);
+      return interaction.reply({ content: `Global support interception: ${status}`, ephemeral: true });
+    } catch (err: any) {
+      console.error('getsupportintercept failed:', err);
+      return interaction.reply({ content: `Failed to get setting: ${err?.message ?? err}`, ephemeral: true });
+    }
+  }
+  if (name === "registercommands") {
+    if (!isOwnerId(interaction.user.id)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
+    if (!interaction.guild) return interaction.reply({ content: 'This must be run inside a server.', ephemeral: true });
+    try {
+      const cmds = [
+        { name: "help", description: "Show help for bot commands" },
+        { name: "ping", description: "Check bot latency" },
+        { name: "pong", description: "Alias for ping" },
+        { name: "joke", description: "Tell a random joke" },
+        { name: "dadjoke", description: "Tell a dad joke" },
+        { name: "redeploy", description: "Owner: pull latest code and restart bot (runs deploy.sh)" },
+        { name: "setgeminikey", description: "Owner: set Gemini API key and restart bot", options: [ { name: "key", description: "Gemini API key", type: 3, required: true } ] },
+        { name: "setopenai", description: "Owner: set OpenAI API key and restart bot", options: [ { name: "key", description: "OpenAI API key", type: 3, required: true } ] },
+        { name: "setprovider", description: "Owner: choose AI provider (openai|gemini) and restart", options: [ { name: "provider", description: "openai or gemini", type: 3, required: true } ] },
+        { name: "pm2clean", description: "Owner: remove old PM2 process 'synapseai' and save" },
+        { name: "version", description: "Owner: show running commit and config" },
+        { name: "envcheck", description: "Owner: verify env values on server (masked)", options: [ { name: "name", description: "Optional env name to check (e.g., OPENAI_API_KEY)", type: 3, required: false } ] },
+        { name: "setmodel", description: "Owner: set AI model for a provider and restart", options: [ { name: "provider", description: "openai or gemini", type: 3, required: true }, { name: "model", description: "Model id (e.g., gpt-4o-mini or gemini-1.5-pro-latest)", type: 3, required: true } ] },
+        { name: "setmodelpreset", description: "Owner: set AI model by preset (fast|balanced|cheap)", options: [ { name: "preset", description: "fast | balanced | cheap", type: 3, required: true }, { name: "provider", description: "openai or gemini (defaults to AI_PROVIDER)", type: 3, required: false } ] },
+        { name: "settaunt", description: "Owner: set trash talk tone (soft|normal|edgy)", options: [ { name: "tone", description: "soft | normal | edgy", type: 3, required: true } ] },
+        { name: "diagai", description: "Owner: AI health check (env + test call)" },
+        { name: "setsupportroles", description: "Owner: set support role IDs (head/support/trial)", options: [ { name: "head", description: "Head Support role", type: 8, required: false }, { name: "support", description: "Support role", type: 8, required: false }, { name: "trial", description: "Trial Support role", type: 8, required: false } ] },
+        { name: "getsupportroles", description: "Owner: show configured support roles" },
+        { name: "support", description: "List current support staff in this server" },
+        { name: "setsupportintercept", description: "Owner: toggle global 'who are support' interception for this server", options: [ { name: "enabled", description: "true or false", type: 5, required: true } ] },
+        { name: "getsupportintercept", description: "Owner: show global 'who are support' interception status" },
+        { name: "setmention", description: "Owner: toggle @mentions for PobKC or Joycemember", options: [ { name: "owner", description: "pobkc or joycemember", type: 3, required: true }, { name: "enabled", description: "true or false", type: 5, required: true } ] },
+        { name: "getmention", description: "Owner: show mention preference status for owners" },
+        { name: "addwhitelist", description: "Owner: add a whitelist entry (user or role)", options: [ { name: "type", description: "user or role", type: 3, required: true }, { name: "id", description: "User ID or Role ID (or mention)", type: 3, required: true }, { name: "duration", description: "Optional duration (e.g., 7d, 24h, 3600)", type: 3, required: false }, { name: "autorole", description: "Optional auto-assign role id", type: 3, required: false } ] },
+        { name: "removewhitelist", description: "Owner: remove a whitelist entry", options: [ { name: "type", description: "user or role", type: 3, required: true }, { name: "id", description: "User ID or Role ID (or mention)", type: 3, required: true } ] },
+        { name: "listwhitelist", description: "Owner: list whitelist entries" },
+        { name: "addblacklist", description: "Owner: add a blacklist entry (user or role)", options: [ { name: "type", description: "user or role", type: 3, required: true }, { name: "id", description: "User ID or Role ID (or mention)", type: 3, required: true }, { name: "reason", description: "Reason for blacklist", type: 3, required: false } ] },
+        { name: "removeblacklist", description: "Owner: remove a blacklist entry", options: [ { name: "type", description: "user or role", type: 3, required: true }, { name: "id", description: "User ID or Role ID (or mention)", type: 3, required: true } ] },
+        { name: "listblacklist", description: "Owner: list blacklist entries" },
+        { name: "giveaway", description: "Manage giveaways", options: [ { name: "start", description: "Start a new giveaway", type: 1, options: [ { name: "prize", description: "Prize for the giveaway", type: 3, required: true }, { name: "duration", description: "Duration (e.g., 7d, 24h, 3600)", type: 3, required: true }, { name: "winners", description: "Number of winners", type: 4, required: true }, { name: "channel", description: "Channel for giveaway", type: 7, required: false }, { name: "minmessages", description: "Minimum messages requirement", type: 4, required: false }, { name: "mininvites", description: "Minimum invites requirement", type: 4, required: false }, { name: "requiredroles", description: "Required role IDs (comma-separated)", type: 3, required: false } ] }, { name: "end", description: "End a giveaway early", type: 1, options: [ { name: "id", description: "Giveaway ID", type: 3, required: true } ] }, { name: "reroll", description: "Reroll winners for a giveaway", type: 1, options: [ { name: "id", description: "Giveaway ID", type: 3, required: true } ] }, { name: "list", description: "List active giveaways", type: 1 } ] },
+        { name: "rpsai", description: "Play Rock-Paper-Scissors vs SynapseAI", options: [ { name: "difficulty", description: "easy | normal | hard", type: 3, required: false }, { name: "mode", description: "bo1 | bo3", type: 3, required: false } ] },
+        { name: "blackjack", description: "Play Blackjack vs SynapseAI", options: [ { name: "difficulty", description: "easy | normal | hard", type: 3, required: false } ] },
+        { name: "remember", description: "Save a personal fact or preference for better replies", options: [ { name: "key", description: "Short label (e.g., name, timezone, favorite_team)", type: 3, required: true }, { name: "value", description: "Value to remember", type: 3, required: true }, { name: "type", description: "Type: fact | preference | note", type: 3, required: false } ] },
+        { name: "forget", description: "Delete a saved memory by key", options: [ { name: "key", description: "The memory key to delete", type: 3, required: true } ] },
+        { name: "memories", description: "List your recent saved memories", options: [ { name: "limit", description: "How many to show (default 10)", type: 4, required: false } ] },
+        { name: "aliases", description: "View your name aliases (alternate spellings)" },
+        { name: "history", description: "See change history for a saved fact", options: [ { name: "key", description: "Memory key (e.g., name, timezone)", type: 3, required: true }, { name: "limit", description: "How many changes to show (default 5)", type: 4, required: false } ] },
+        { name: "revert", description: "Undo the last change to a memory", options: [ { name: "key", description: "Memory key to revert (e.g., name)", type: 3, required: true } ] },
+        { name: "setquestiontimeout", description: "Set the question repeat timeout (in seconds)", options: [{ name: "seconds", description: "Timeout in seconds (e.g., 300 for 5 minutes)", type: 4, required: true }] },
+        { name: "getquestiontimeout", description: "Get the current question repeat timeout" },
+        { name: "addbypass", description: "Add a bypass entry (user or role) to allow using admin commands", options: [{ name: 'type', description: 'user or role', type: 3, required: true }, { name: 'id', description: 'User ID or Role ID (or mention)', type: 3, required: true }] },
+        { name: "removebypass", description: "Remove a bypass entry", options: [{ name: 'type', description: 'user or role', type: 3, required: true }, { name: 'id', description: 'User ID or Role ID (or mention)', type: 3, required: true }] },
+        { name: "listbypass", description: "List bypass entries" },
+        { name: "setresponserule", description: "Add a rule to customize responses (admin)", options: [{ name: 'type', description: 'Type: phrase|emoji|sticker', type: 3, required: true }, { name: 'trigger', description: 'Trigger text/emoji/sticker id', type: 3, required: true }, { name: 'response', description: 'Response text (use __IGNORE__ to make bot ignore). Can be JSON object for translations.', type: 3, required: true }, { name: 'match', description: 'Match type: contains|equals|regex (phrase only)', type: 3, required: false }] },
+        { name: "listresponserules", description: "List configured response rules (admin)" },
+        { name: "delresponserule", description: "Delete a response rule by id (admin)", options: [{ name: 'id', description: 'Rule id', type: 3, required: true }] },
+        { name: "setmodlog", description: "Set the moderation log channel (admin)", options: [{ name: 'channel', type: 7, description: 'Channel to receive moderation logs', required: true }] },
+        { name: "getmodlog", description: "Show the current moderation log channel (admin)" },
+        { name: "clearmodlog", description: "Clear the moderation log channel (admin)" },
+        { name: "warn", description: "Warn a user (DM and record)", options: [{ name: 'user', type: 6, description: 'User to warn', required: true }, { name: 'reason', type: 3, description: 'Reason', required: false }] },
+        { name: "clearwarn", description: "Clear warnings for a user", options: [{ name: 'user', type: 6, description: 'User', required: true }] },
+        { name: "unmute", description: "Remove timeout from a member", options: [{ name: 'user', type: 6, description: 'Member to unmute', required: true }] },
+        { name: "announce", description: "Send an announcement as the bot", options: [{ name: 'message', type: 3, description: 'Message content', required: true }, { name: 'channel', type: 7, description: 'Channel to announce in', required: false }] },
+        { name: "membercount", description: "Show member count (optionally for a role)", options: [{ name: 'role', type: 8, description: 'Role to count', required: false }] },
+        { name: "purge", description: "Delete recent messages from the channel", options: [{ name: 'count', type: 4, description: 'Number of messages to delete', required: true }] },
+        { name: "kick", description: "Kick a member", options: [{ name: "user", description: "Member to kick", type: 6, required: true }, { name: "reason", description: "Reason for kick", type: 3, required: false }] },
+        { name: "ban", description: "Ban a member", options: [{ name: "user", description: "Member to ban", type: 6, required: true }, { name: "reason", description: "Reason for ban", type: 3, required: false }] },
+        { name: "mute", description: "Timeout a member", options: [{ name: "user", description: "Member to timeout", type: 6, required: true }, { name: "duration", description: "Duration (e.g., 20s, 10m, 1h, or seconds)", type: 3, required: false }, { name: "reason", description: "Reason", type: 3, required: false }] },
+        { name: "addrole", description: "Add a role to a member", options: [{ name: "user", description: "Member to modify", type: 6, required: true }, { name: "role", description: "Role to add", type: 8, required: true }] },
+        { name: "removerole", description: "Remove a role from a member", options: [{ name: "user", description: "Member to modify", type: 6, required: true }, { name: "role", description: "Role to remove", type: 8, required: true }] },
+        { name: "setdefaultmute", description: "Set default mute duration (e.g. 10m, 1h)", options: [{ name: "duration", description: "Duration (e.g. 10m or seconds)", type: 3, required: true }] },
+        { name: "getdefaultmute", description: "Show the current default mute duration" }
+      ];
+      await client.application!.commands.set(cmds as any, interaction.guild.id);
+      return interaction.reply({ content: `Re-registered ${cmds.length} slash commands for this server (${interaction.guild.name}).`, ephemeral: true });
+    } catch (err: any) {
+      console.error('registercommands failed:', err);
+      return interaction.reply({ content: `Failed to register commands: ${err?.message ?? err}`, ephemeral: true });
+    }
+  }
   if (name === "getsupportroles") {
     if (!isOwnerId(interaction.user.id)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
     try {
@@ -877,18 +983,31 @@ client.on("interactionCreate", async (interaction) => {
   if (name === "support") {
     try {
       if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+      // Defer immediately since fetching members can take a few seconds
+      await interaction.deferReply();
       const { listSupportMembers } = await import('./services/supportRoles');
       const lists = await listSupportMembers(interaction.guild);
       const formatList = (arr: any[]) => arr.length ? arr.slice(0, 25).map(m => `<@${m.id}>`).join(', ') + (arr.length > 25 ? ` …(+${arr.length-25})` : '') : 'None';
+      const allMembers = ([] as any[]).concat(lists.head, lists.support, lists.trial);
+      const isRequesterSupport = allMembers.some(m => m.id === interaction.user.id);
+      const header = isRequesterSupport ? `You’re part of Support. Here’s the team:` : `Support team:`;
       const lines = [
+        header,
         `Head Support: ${formatList(lists.head)}`,
         `Support: ${formatList(lists.support)}`,
         `Trial Support: ${formatList(lists.trial)}`
       ].join('\n');
-      return interaction.reply({ content: lines, allowedMentions: { users: lists.head.concat(lists.support, lists.trial).map(m => m.id) } });
+      const mentionIds = lists.head.concat(lists.support, lists.trial).map(m => m.id).filter(id => id !== interaction.user.id);
+      await interaction.editReply({ content: lines, allowedMentions: { users: mentionIds } });
+      return;
     } catch (err: any) {
       console.error('support list failed:', err);
-      return interaction.reply({ content: `Failed to list support members: ${err?.message ?? err}`, ephemeral: true });
+      if (interaction.deferred || interaction.replied) {
+        await interaction.editReply({ content: `Failed to list support members: ${err?.message ?? err}` });
+      } else {
+        await interaction.reply({ content: `Failed to list support members: ${err?.message ?? err}`, ephemeral: true });
+      }
+      return;
     }
   }
   if (name === "diagai") {
@@ -1630,6 +1749,40 @@ client.on("messageCreate", async (message: Message) => {
   const tryingToUse = message.content.startsWith(prefix)
     || isWakeWord(message, wakeWord)
     || (!!message.mentions && !!message.mentions.users?.has(client.user?.id || ''));
+  // Global support interception before whitelist early return
+  try {
+    if (message.guild) {
+      const { isSupportInterceptEnabled } = await import('./services/supportIntercept');
+      const enabled = isSupportInterceptEnabled(message.guild.id);
+      if (enabled) {
+        const text = (message.content || '').toLowerCase();
+        const supportRe = /\b(who(?:'s| is| are)?\s+(?:the\s+)?support|support\s+team|who\s+are\s+staff(?:\s+support)?|who\s+are\s+(?:head\s+)?support)\b/;
+        if (supportRe.test(text)) {
+          try {
+            const { listSupportMembers } = await import('./services/supportRoles');
+            const lists = await listSupportMembers(message.guild);
+            const formatList = (arr: any[]) => arr.length ? arr.slice(0, 25).map(m => `<@${m.id}>`).join(', ') + (arr.length > 25 ? ` …(+${arr.length-25})` : '') : 'None';
+            const allMembers = ([] as any[]).concat(lists.head, lists.support, lists.trial);
+            const isRequesterSupport = allMembers.some((m:any) => m.id === message.author.id);
+            const header = isRequesterSupport ? `You’re part of Support. Here’s the team:` : `Support team:`;
+            const lines = [
+              header,
+              `Head Support: ${formatList(lists.head)}`,
+              `Support: ${formatList(lists.support)}`,
+              `Trial Support: ${formatList(lists.trial)}`
+            ].join('\n');
+            const mentionIds = lists.head.concat(lists.support, lists.trial).map((m:any) => m.id).filter((id:string) => id !== message.author.id);
+            await message.reply({ content: lines, allowedMentions: { users: mentionIds } as any });
+            return;
+          } catch (e) {
+            console.warn('Global support intercept failed to assemble list:', (e as any)?.message ?? e);
+          }
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('Global support intercept check failed:', (e as any)?.message ?? e);
+  }
   if (!whitelisted && !isOwnerId(userId)) {
     if (tryingToUse) {
       try {
@@ -1872,12 +2025,17 @@ client.on("messageCreate", async (message: Message) => {
           const { listSupportMembers } = await import('./services/supportRoles');
           const lists = await listSupportMembers(message.guild);
           const formatList = (arr: any[]) => arr.length ? arr.slice(0, 25).map(m => `<@${m.id}>`).join(', ') + (arr.length > 25 ? ` …(+${arr.length-25})` : '') : 'None';
+          const allMembers = ([] as any[]).concat(lists.head, lists.support, lists.trial);
+          const isRequesterSupport = allMembers.some((m:any) => m.id === message.author.id);
+          const header = isRequesterSupport ? `You’re part of Support. Here’s the team:` : `Support team:`;
           const lines = [
+            header,
             `Head Support: ${formatList(lists.head)}`,
             `Support: ${formatList(lists.support)}`,
             `Trial Support: ${formatList(lists.trial)}`
           ].join('\n');
-          await message.reply({ content: lines, allowedMentions: { users: lists.head.concat(lists.support, lists.trial).map((m:any) => m.id) } as any });
+          const mentionIds = lists.head.concat(lists.support, lists.trial).map((m:any) => m.id).filter((id:string) => id !== message.author.id);
+          await message.reply({ content: lines, allowedMentions: { users: mentionIds } as any });
           return;
         } catch (e) {
           console.warn('Failed to assemble support list:', (e as any)?.message ?? e);

@@ -49,16 +49,36 @@ export function setSupportRole(kind: 'head'|'support'|'trial', roleId: string | 
 }
 
 export async function listSupportMembers(guild: Guild): Promise<{ head: GuildMember[]; support: GuildMember[]; trial: GuildMember[]; }>{
-  await guild.members.fetch();
   const ids = getSupportRoles();
-  const head: GuildMember[] = [];
-  const support: GuildMember[] = [];
-  const trial: GuildMember[] = [];
-  guild.members.cache.forEach(m => {
-    const r = (m.roles as any).cache;
-    if (ids.head && r.has(ids.head)) head.push(m);
-    if (ids.support && r.has(ids.support)) support.push(m);
-    if (ids.trial && r.has(ids.trial)) trial.push(m);
-  });
+
+  // Helper: get members from role cache without requiring privileged fetch
+  const fromRoleCache = (roleId?: string | null): GuildMember[] => {
+    if (!roleId) return [];
+    const role = guild.roles.cache.get(roleId);
+    if (!role) return [];
+    // role.members is a Collection<string, GuildMember>
+    return Array.from((role.members as any).values()) as GuildMember[];
+  };
+
+  let head = fromRoleCache(ids.head);
+  let support = fromRoleCache(ids.support);
+  let trial = fromRoleCache(ids.trial);
+
+  // If cache is likely incomplete, try to fetch all members. If it fails (missing intent), keep partials.
+  try {
+    // Only fetch if any configured role returned zero; avoid heavy fetch when cache suffices
+    const needFetch = (!!ids.head && head.length === 0) || (!!ids.support && support.length === 0) || (!!ids.trial && trial.length === 0);
+    if (needFetch) {
+      await guild.members.fetch();
+      // Recompute using full member cache after fetch
+      head = fromRoleCache(ids.head);
+      support = fromRoleCache(ids.support);
+      trial = fromRoleCache(ids.trial);
+    }
+  } catch (e) {
+    // Missing GUILD_MEMBERS intent or insufficient permissions — fall back to whatever is cached
+    // Intentionally ignore error and return partial results.
+  }
+
   return { head, support, trial };
 }
