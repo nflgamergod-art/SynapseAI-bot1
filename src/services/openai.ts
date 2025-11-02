@@ -18,6 +18,14 @@ function getOpenAIClient(): OpenAI {
   return cachedOpenAI;
 }
 
+// Allow runtime reset when keys change via slash commands
+export function resetOpenAIClient() {
+  cachedOpenAI = null;
+}
+export function resetGeminiClient() {
+  cachedGemini = null;
+}
+
 const GEMINI_MODEL_CANDIDATES = [
   // Prefer latest aliases first
   "gemini-1.5-pro-latest",

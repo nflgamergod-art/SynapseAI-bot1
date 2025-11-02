@@ -561,6 +561,12 @@ client.on("interactionCreate", async (interaction) => {
         content = `${content}${nl}OPENAI_API_KEY=${newKey}\n`;
       }
       await fs.writeFile(path, content, 'utf8');
+      // Apply immediately to current process and reset cached client in case restart lags
+      try {
+        process.env.OPENAI_API_KEY = newKey;
+        const { resetOpenAIClient } = await import('./services/openai');
+        resetOpenAIClient();
+      } catch {}
       const { exec } = await import('child_process');
       await new Promise<void>((resolve, reject) => {
         exec('pm2 restart synapseai-bot --update-env', (error) => error ? reject(error) : resolve());
