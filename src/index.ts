@@ -80,6 +80,13 @@ client.once("ready", () => {
       { name: "tone", description: "soft | normal | edgy", type: 3, required: true }
     ] },
     { name: "diagai", description: "Owner: AI health check (env + test call)" },
+    { name: "setsupportroles", description: "Owner: set support role IDs (head/support/trial)", options: [
+      { name: "head", description: "Head Support role", type: 8, required: false },
+      { name: "support", description: "Support role", type: 8, required: false },
+      { name: "trial", description: "Trial Support role", type: 8, required: false }
+    ] },
+    { name: "getsupportroles", description: "Owner: show configured support roles" },
+    { name: "support", description: "List current support staff in this server" },
     { name: "setmention", description: "Owner: toggle @mentions for PobKC or Joycemember", options: [
       { name: "owner", description: "pobkc or joycemember", type: 3, required: true },
       { name: "enabled", description: "true or false", type: 5, required: true }
@@ -825,6 +832,63 @@ client.on("interactionCreate", async (interaction) => {
     } catch (err: any) {
       console.error('settaunt failed:', err);
       return interaction.reply({ content: `Failed to set tone: ${err?.message ?? err}`, ephemeral: true });
+    }
+  }
+  if (name === "setsupportroles") {
+    if (!isOwnerId(interaction.user.id)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
+    try {
+      const headRole = interaction.options.getRole('head');
+      const supportRole = interaction.options.getRole('support');
+      const trialRole = interaction.options.getRole('trial');
+      const { setSupportRole, getSupportRoles } = await import('./services/supportRoles');
+      if (headRole) setSupportRole('head', headRole.id);
+      if (supportRole) setSupportRole('support', supportRole.id);
+      if (trialRole) setSupportRole('trial', trialRole.id);
+      const cfg = getSupportRoles();
+      const lines = [
+        'Support roles updated:',
+        `Head: ${cfg.head ? `<@&${cfg.head}>` : 'not set'}`,
+        `Support: ${cfg.support ? `<@&${cfg.support}>` : 'not set'}`,
+        `Trial: ${cfg.trial ? `<@&${cfg.trial}>` : 'not set'}`
+      ].join('\n');
+      return interaction.reply({ content: lines, ephemeral: true });
+    } catch (err: any) {
+      console.error('setsupportroles failed:', err);
+      return interaction.reply({ content: `Failed to set support roles: ${err?.message ?? err}`, ephemeral: true });
+    }
+  }
+  if (name === "getsupportroles") {
+    if (!isOwnerId(interaction.user.id)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
+    try {
+      const { getSupportRoles } = await import('./services/supportRoles');
+      const cfg = getSupportRoles();
+      const lines = [
+        `Configured support roles:`,
+        `Head: ${cfg.head ? `<@&${cfg.head}>` : 'not set'}`,
+        `Support: ${cfg.support ? `<@&${cfg.support}>` : 'not set'}`,
+        `Trial: ${cfg.trial ? `<@&${cfg.trial}>` : 'not set'}`
+      ].join('\n');
+      return interaction.reply({ content: lines, ephemeral: true });
+    } catch (err: any) {
+      console.error('getsupportroles failed:', err);
+      return interaction.reply({ content: `Failed to get support roles: ${err?.message ?? err}`, ephemeral: true });
+    }
+  }
+  if (name === "support") {
+    try {
+      if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+      const { listSupportMembers } = await import('./services/supportRoles');
+      const lists = await listSupportMembers(interaction.guild);
+      const formatList = (arr: any[]) => arr.length ? arr.slice(0, 25).map(m => `<@${m.id}>`).join(', ') + (arr.length > 25 ? ` …(+${arr.length-25})` : '') : 'None';
+      const lines = [
+        `Head Support: ${formatList(lists.head)}`,
+        `Support: ${formatList(lists.support)}`,
+        `Trial Support: ${formatList(lists.trial)}`
+      ].join('\n');
+      return interaction.reply({ content: lines, allowedMentions: { users: lists.head.concat(lists.support, lists.trial).map(m => m.id) } });
+    } catch (err: any) {
+      console.error('support list failed:', err);
+      return interaction.reply({ content: `Failed to list support members: ${err?.message ?? err}`, ephemeral: true });
     }
   }
   if (name === "diagai") {
@@ -1800,6 +1864,25 @@ client.on("messageCreate", async (message: Message) => {
   // Wake word or mention -> conversational reply
   try {
     if (isWakeWord(message, wakeWord)) {
+      // Intercept common "support" queries to list staff by roles
+      const text = (message.content || '').toLowerCase();
+      const supportRe = /\b(who(?:'s| is| are)?\s+(?:the\s+)?support|support\s+team|who\s+are\s+staff(?:\s+support)?|who\s+are\s+(?:head\s+)?support)\b/;
+      if (supportRe.test(text) && message.guild) {
+        try {
+          const { listSupportMembers } = await import('./services/supportRoles');
+          const lists = await listSupportMembers(message.guild);
+          const formatList = (arr: any[]) => arr.length ? arr.slice(0, 25).map(m => `<@${m.id}>`).join(', ') + (arr.length > 25 ? ` …(+${arr.length-25})` : '') : 'None';
+          const lines = [
+            `Head Support: ${formatList(lists.head)}`,
+            `Support: ${formatList(lists.support)}`,
+            `Trial Support: ${formatList(lists.trial)}`
+          ].join('\n');
+          await message.reply({ content: lines, allowedMentions: { users: lists.head.concat(lists.support, lists.trial).map((m:any) => m.id) } as any });
+          return;
+        } catch (e) {
+          console.warn('Failed to assemble support list:', (e as any)?.message ?? e);
+        }
+      }
       await handleConversationalReply(message);
     }
   } catch (err) {
