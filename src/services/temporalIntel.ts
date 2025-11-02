@@ -248,29 +248,62 @@ export function analyzeServerTemporalPatterns(guildId: string | null): {
 } {
   const db = getDB();
   
-  // Get all user patterns for this guild
-  const allPatterns = db.prepare(`
-    SELECT active_hours, timezone FROM user_patterns
-    WHERE guild_id = ?
-  `).all(guildId) as { active_hours: string | null; timezone: string | null }[];
-  
+  // Get all user patterns for this guild (generic row-based storage)
+  const patternRows = db.prepare(`
+    SELECT pattern_type, pattern_data
+    FROM user_patterns
+    WHERE guild_id = ? OR guild_id IS NULL
+  `).all(guildId) as { pattern_type: string; pattern_data: string }[];
+
   // Aggregate hourly activity
   const hourlyCounts: number[] = new Array(24).fill(0);
   const timezones: Record<string, number> = {};
-  
-  for (const pattern of allPatterns) {
-    if (pattern.active_hours) {
-      const ranges = pattern.active_hours.split(',');
-      for (const range of ranges) {
-        const [start, end] = range.split('-').map(Number);
-        for (let h = start; h <= end; h++) {
-          hourlyCounts[h]++;
+
+  for (const row of patternRows) {
+    try {
+      const data = JSON.parse(row.pattern_data || '{}');
+      if (row.pattern_type === 'active_hours') {
+        // Supports either ranges string "HH-HH,HH-HH" or explicit hours array
+        const rangesStr: string | undefined = data.ranges || data.active_hours;
+        const hoursArr: number[] | undefined = data.hours;
+        if (rangesStr) {
+          const ranges = String(rangesStr).split(',');
+          for (const range of ranges) {
+            const [start, end] = range.split('-').map((n: string) => parseInt(n, 10));
+            if (!isNaN(start) && !isNaN(end)) {
+              for (let h = start; h <= end; h++) {
+                hourlyCounts[(h + 24) % 24]++;
+              }
+            }
+          }
+        } else if (Array.isArray(hoursArr)) {
+          for (const h of hoursArr) {
+            if (typeof h === 'number' && h >= 0 && h < 24) hourlyCounts[h]++;
+          }
         }
       }
-    }
-    
-    if (pattern.timezone) {
-      timezones[pattern.timezone] = (timezones[pattern.timezone] || 0) + 1;
+      if (row.pattern_type === 'timezone') {
+        // Derive timezone label if available
+        // Prefer explicit tz string; fallback to estimatedOffset
+        const tz: string | undefined = data.timezone || data.tz;
+        const estimatedOffset: number | undefined = data.estimatedOffset;
+        if (tz) {
+          timezones[tz] = (timezones[tz] || 0) + 1;
+        } else if (typeof estimatedOffset === 'number') {
+          const label = estimatedOffset >= 0 ? `UTC+${estimatedOffset}` : `UTC${estimatedOffset}`;
+          timezones[label] = (timezones[label] || 0) + 1;
+        }
+        // Also aggregate hourDistribution if present
+        const dist: number[] | undefined = data.hourDistribution;
+        if (Array.isArray(dist) && dist.length === 24) {
+          for (let h = 0; h < 24; h++) {
+            const inc = typeof dist[h] === 'number' ? dist[h] : 0;
+            hourlyCounts[h] += inc;
+          }
+        }
+      }
+    } catch {
+      // ignore malformed
     }
   }
   

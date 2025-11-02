@@ -25,6 +25,17 @@ export function initEnhancedSchema() {
     // Table doesn't exist yet, that's fine
   }
   
+  // Drop and recreate knowledge_base table if it has the wrong schema
+  try {
+    const checkSchema = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='knowledge_base'").get() as any;
+    if (checkSchema && (!checkSchema.sql.includes('question TEXT') || !checkSchema.sql.includes('answer TEXT'))) {
+      console.log('⚠️  Migrating knowledge_base table to new schema...');
+      db.exec('DROP TABLE IF EXISTS knowledge_base');
+    }
+  } catch (err) {
+    // Table doesn't exist yet, that's fine
+  }
+  
   // Drop and recreate scheduled_checkins table if it has the wrong schema
   try {
     const checkSchema = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='scheduled_checkins'").get() as any;
@@ -39,7 +50,7 @@ export function initEnhancedSchema() {
   // Drop and recreate user_patterns table if it has the wrong schema
   try {
     const checkSchema = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='user_patterns'").get() as any;
-    if (checkSchema && !checkSchema.sql.includes('active_hours TEXT')) {
+    if (checkSchema && (!checkSchema.sql.includes('pattern_type TEXT') || !checkSchema.sql.includes('pattern_data TEXT'))) {
       console.log('⚠️  Migrating user_patterns table to new schema...');
       db.exec('DROP TABLE IF EXISTS user_patterns');
     }
@@ -73,19 +84,16 @@ export function initEnhancedSchema() {
     );
     CREATE INDEX IF NOT EXISTS idx_rel_users ON user_relationships(user_a_id, user_b_id);
 
-    -- User Behavioral Patterns
+    -- User Behavioral Patterns (row-based by pattern_type)
     CREATE TABLE IF NOT EXISTS user_patterns (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id TEXT NOT NULL,
       guild_id TEXT,
-      timezone TEXT,
-      active_hours TEXT,
-      question_topics TEXT,
-      mood_trend TEXT,
+      pattern_type TEXT NOT NULL, -- timezone, active_hours, question_topics, mood_trend
+      pattern_data TEXT NOT NULL, -- JSON blob
       confidence REAL DEFAULT 0.5,
       last_updated_at TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      UNIQUE(user_id, guild_id)
+      UNIQUE(user_id, guild_id, pattern_type)
     );
     CREATE INDEX IF NOT EXISTS idx_patterns_user ON user_patterns(user_id);
 
@@ -308,11 +316,12 @@ export type KnowledgeBaseEntry = {
   id?: number;
   guild_id: string;
   category: string;
-  question_pattern: string;
-  answer_text: string;
-  source_interaction_ids: string; // JSON array
-  times_referenced: number;
-  success_rate: number;
-  last_updated_at: string;
+  question: string;
+  answer: string;
+  tags?: string | null; // JSON array
+  source_message_id?: string | null;
+  times_helpful: number;
+  added_by: string;
   created_at: string;
+  updated_at: string;
 };
