@@ -1007,7 +1007,7 @@ client.on("interactionCreate", async (interaction) => {
       const header = isRequesterSupport ? `You’re part of Support. Here’s the team:` : `Support team:`;
       const lines = [
         header,
-        `Founders: <@&${FOUNDER_ROLE_ID}>`,
+        `Founders: PobKC, Joycemember`,
         `Head Support: ${formatList(lists.head)}`,
         `Support: ${formatList(lists.support)}`,
         `Trial Support: ${formatList(lists.trial)}`
@@ -1019,7 +1019,7 @@ client.on("interactionCreate", async (interaction) => {
           if (m.id !== interaction.user.id) mentionedIds.add(m.id);
         }
       }
-      await interaction.editReply({ content: lines, allowedMentions: { users: Array.from(mentionedIds), roles: [FOUNDER_ROLE_ID] } });
+      await interaction.editReply({ content: lines, allowedMentions: { users: Array.from(mentionedIds),  } });
       return;
     } catch (err: any) {
       console.error('support list failed:', err);
@@ -1802,7 +1802,7 @@ client.on("messageCreate", async (message: Message) => {
             const header = isRequesterSupport ? `You’re part of Support. Here’s the team:` : `Support team:`;
             const lines = [
               header,
-              `Founders: <@&${FOUNDER_ROLE_ID}>`,
+              `Founders: PobKC, Joycemember`,
               `Head Support: ${formatList(lists.head)}`,
               `Support: ${formatList(lists.support)}`,
               `Trial Support: ${formatList(lists.trial)}`
@@ -1813,7 +1813,7 @@ client.on("messageCreate", async (message: Message) => {
                 if (m.id !== message.author.id) mentionedIds.add(m.id);
               }
             }
-            await message.reply({ content: lines, allowedMentions: { users: Array.from(mentionedIds), roles: [FOUNDER_ROLE_ID] } as any });
+            await message.reply({ content: lines, allowedMentions: { users: Array.from(mentionedIds),  } as any });
             return;
           } catch (e) {
             console.warn('Global support intercept failed to assemble list:', (e as any)?.message ?? e);
@@ -2085,7 +2085,7 @@ client.on("messageCreate", async (message: Message) => {
           const header = isRequesterSupport ? `You’re part of Support. Here’s the team:` : `Support team:`;
           const lines = [
             header,
-            `Founders: <@&${FOUNDER_ROLE_ID}>`,
+            `Founders: PobKC, Joycemember`,
             `Head Support: ${formatList(lists.head)}`,
             `Support: ${formatList(lists.support)}`,
             `Trial Support: ${formatList(lists.trial)}`
@@ -2096,7 +2096,7 @@ client.on("messageCreate", async (message: Message) => {
               if (m.id !== message.author.id) mentionedIds.add(m.id);
             }
           }
-          await message.reply({ content: lines, allowedMentions: { users: Array.from(mentionedIds), roles: [FOUNDER_ROLE_ID] } as any });
+          await message.reply({ content: lines, allowedMentions: { users: Array.from(mentionedIds),  } as any });
           return;
         } catch (e) {
           console.warn('Failed to assemble support list:', (e as any)?.message ?? e);
