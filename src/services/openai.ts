@@ -40,7 +40,14 @@ const GEMINI_MODEL_CANDIDATES = [
 
 export async function generateReply(prompt: string) {
   const provider = (process.env.AI_PROVIDER || '').toLowerCase();
-  const systemPrompt = "You are SynapseAI, a highly intelligent and helpful Discord assistant. Provide detailed, thoughtful, and comprehensive responses. You can engage in complex discussions, explain concepts thoroughly, and provide in-depth answers. Be friendly, knowledgeable, and adapt your response length to match the complexity of the question.";
+  const systemPrompt = `You are SynapseAI, a highly intelligent and helpful Discord assistant. Provide detailed, thoughtful, and comprehensive responses. You can engage in complex discussions, explain concepts thoroughly, and provide in-depth answers. Be friendly, knowledgeable, and adapt your response length to match the complexity of the question.
+
+IMPORTANT CONTEXT:
+- Bot Creator: PobKC (Discord ID: 1272923881052704820) created this Discord bot.
+- Synapse Server/Script Owners/Founders: PobKC (Discord ID: 1272923881052704820) and Joycemember (Discord ID: 840586296044421160) are the owners and founders of the Synapse server and script.
+- When asked about who made the bot, credit PobKC.
+- When asked about the Synapse server, script, founders, or owners, mention both PobKC and Joycemember.
+- Recognize them by their Discord names (PobKC, Joycemember) or IDs.`;
   const fullPrompt = `${systemPrompt}\n\nUser: ${prompt}\nAssistant:`;
 
   // Prefer explicit provider when set
@@ -98,7 +105,13 @@ async function generateWithOpenAI(fullPrompt: string) {
       const resp = await client.chat.completions.create({
         model,
         messages: [
-          { role: 'system', content: 'You are SynapseAI, a helpful Discord assistant.' },
+          { role: 'system', content: `You are SynapseAI, a helpful Discord assistant.
+
+IMPORTANT CONTEXT:
+- Bot Creator: PobKC (Discord ID: 1272923881052704820) created this Discord bot.
+- Synapse Server/Script Owners/Founders: PobKC (Discord ID: 1272923881052704820) and Joycemember (Discord ID: 840586296044421160) are the owners and founders of the Synapse server and script.
+- When asked about who made the bot, credit PobKC.
+- When asked about the Synapse server, script, founders, or owners, mention both PobKC and Joycemember.` },
           { role: 'user', content: fullPrompt }
         ],
         temperature: 0.7,
