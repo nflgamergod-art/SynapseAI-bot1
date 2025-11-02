@@ -65,6 +65,9 @@ client.once("ready", () => {
     ] },
     { name: "pm2clean", description: "Owner: remove old PM2 process 'synapseai' and save" },
     { name: "version", description: "Owner: show running commit and config" },
+    { name: "envcheck", description: "Owner: verify env values on server (masked)", options: [
+      { name: "name", description: "Optional env name to check (e.g., OPENAI_API_KEY)", type: 3, required: false }
+    ] },
     { name: "setmodel", description: "Owner: set AI model for a provider and restart", options: [
       { name: "provider", description: "openai or gemini", type: 3, required: true },
       { name: "model", description: "Model id (e.g., gpt-4o-mini or gemini-1.5-pro-latest)", type: 3, required: true }
@@ -673,6 +676,49 @@ client.on("interactionCreate", async (interaction) => {
     } catch (err: any) {
       console.error('version failed:', err);
       return interaction.reply({ content: `version failed: ${err?.message ?? err}`, ephemeral: true });
+    }
+  }
+  if (name === "envcheck") {
+    if (!isOwnerId(interaction.user.id)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
+    try {
+      const target = (interaction.options.getString('name') || '').trim();
+      const fs = await import('fs/promises');
+      const path = '/opt/synapseai-bot/.env';
+      let text = '';
+      try { text = await fs.readFile(path, 'utf8'); } catch { text = ''; }
+      const parseEnv = (t: string) => {
+        const out: Record<string,string> = {};
+        t.split(/\r?\n/).forEach(line => {
+          const s = line.trim();
+          if (!s || s.startsWith('#')) return;
+          const idx = s.indexOf('=');
+          if (idx === -1) return;
+          const k = s.slice(0, idx).trim();
+          const v = s.slice(idx + 1).trim();
+          out[k] = v;
+        });
+        return out;
+      };
+      const fileEnv = parseEnv(text);
+      const mask = (key: string, val?: string) => {
+        if (!val) return 'absent';
+        if (!key.endsWith('_API_KEY')) return val;
+        const head = val.slice(0, 3);
+        const tail = val.slice(-4);
+        return `${head}…${tail} (len=${val.length})`;
+      };
+      const keys = target ? [target] : ['AI_PROVIDER','OPENAI_MODEL','GEMINI_MODEL','OPENAI_API_KEY','GEMINI_API_KEY'];
+      const lines: string[] = [];
+      for (const k of keys) {
+        const fv = fileEnv[k];
+        const rv = process.env[k];
+        const match = (fv ?? '') === (rv ?? '');
+        lines.push(`${k}: file=${mask(k, fv)} | runtime=${mask(k, rv)} | match=${match ? 'yes' : 'no'}`);
+      }
+      return interaction.reply({ content: `Env check:\n${lines.join('\n')}`.slice(0, 1900), ephemeral: true });
+    } catch (err: any) {
+      console.error('envcheck failed:', err);
+      return interaction.reply({ content: `envcheck failed: ${err?.message ?? err}`, ephemeral: true });
     }
   }
   if (name === "setmodel") {
