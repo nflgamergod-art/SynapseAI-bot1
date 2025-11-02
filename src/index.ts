@@ -986,22 +986,40 @@ client.on("interactionCreate", async (interaction) => {
       // Defer immediately since fetching members can take a few seconds
       await interaction.deferReply();
       const { listSupportMembers } = await import('./services/supportRoles');
-      const lists = await listSupportMembers(interaction.guild);
-      const formatList = (arr: any[]) => arr.length ? arr.slice(0, 25).map(m => `<@${m.id}>`).join(', ') + (arr.length > 25 ? ` …(+${arr.length-25})` : '') : 'None';
+      const listsRaw = await listSupportMembers(interaction.guild);
+      // Ensure each member appears only under their HIGHEST support role: Head > Support > Trial
+      const OWNER_IDS = new Set<string>(['1272923881052704820','840586296044421160']); // PobKC, Joycemember
+      const FOUNDER_ROLE_ID = '1394923497376972890';
+      const assigned = new Set<string>();
+      // Filter out founders from support lists
+      const headOnly = listsRaw.head.filter((m:any) => { if (OWNER_IDS.has(m.id) || assigned.has(m.id)) return false; assigned.add(m.id); return true; });
+      const supportOnly = listsRaw.support.filter((m:any) => { if (OWNER_IDS.has(m.id) || assigned.has(m.id)) return false; assigned.add(m.id); return true; });
+      const trialOnly = listsRaw.trial.filter((m:any) => { if (OWNER_IDS.has(m.id) || assigned.has(m.id)) return false; assigned.add(m.id); return true; });
+      const lists = { head: headOnly, support: supportOnly, trial: trialOnly } as const;
+      const formatList = (arr: any[]) => {
+        if (!arr.length) return 'None';
+        const shown = arr.slice(0, 25);
+        const text = shown.map((m:any) => `<@${m.id}>`).join(', ');
+        return text + (arr.length > 25 ? ` …(+${arr.length-25})` : '');
+      };
       const allMembers = ([] as any[]).concat(lists.head, lists.support, lists.trial);
       const isRequesterSupport = allMembers.some(m => m.id === interaction.user.id);
       const header = isRequesterSupport ? `You’re part of Support. Here’s the team:` : `Support team:`;
       const lines = [
         header,
+        `Founders: <@&${FOUNDER_ROLE_ID}>`,
         `Head Support: ${formatList(lists.head)}`,
         `Support: ${formatList(lists.support)}`,
         `Trial Support: ${formatList(lists.trial)}`
       ].join('\n');
-  const headIds = lists.head.slice(0, 25).map(m => m.id);
-  const supportIds = lists.support.slice(0, 25).map(m => m.id);
-  const trialIds = lists.trial.slice(0, 25).map(m => m.id);
-  const uniq = Array.from(new Set([...headIds, ...supportIds, ...trialIds].filter(id => id !== interaction.user.id)));
-  await interaction.editReply({ content: lines, allowedMentions: { users: uniq } });
+      // Only allow mentions for members we actually mentioned (exclude requester)
+      const mentionedIds = new Set<string>();
+      for (const arr of [lists.head, lists.support, lists.trial]) {
+        for (const m of arr.slice(0,25)) {
+          if (m.id !== interaction.user.id) mentionedIds.add(m.id);
+        }
+      }
+      await interaction.editReply({ content: lines, allowedMentions: { users: Array.from(mentionedIds), roles: [FOUNDER_ROLE_ID] } });
       return;
     } catch (err: any) {
       console.error('support list failed:', err);
@@ -1763,22 +1781,39 @@ client.on("messageCreate", async (message: Message) => {
         if (supportRe.test(text)) {
           try {
             const { listSupportMembers } = await import('./services/supportRoles');
-            const lists = await listSupportMembers(message.guild);
-            const formatList = (arr: any[]) => arr.length ? arr.slice(0, 25).map(m => `<@${m.id}>`).join(', ') + (arr.length > 25 ? ` …(+${arr.length-25})` : '') : 'None';
-            const allMembers = ([] as any[]).concat(lists.head, lists.support, lists.trial);
+            const listsRaw = await listSupportMembers(message.guild);
+            // Highest-role grouping: Head > Support > Trial
+            const OWNER_IDS = new Set<string>(['1272923881052704820','840586296044421160']);
+            const FOUNDER_ROLE_ID = '1394923497376972890';
+            const assigned = new Set<string>();
+            // Filter out founders from support lists
+            const headOnly = listsRaw.head.filter((m:any) => { if (OWNER_IDS.has(m.id) || assigned.has(m.id)) return false; assigned.add(m.id); return true; });
+            const supportOnly = listsRaw.support.filter((m:any) => { if (OWNER_IDS.has(m.id) || assigned.has(m.id)) return false; assigned.add(m.id); return true; });
+            const trialOnly = listsRaw.trial.filter((m:any) => { if (OWNER_IDS.has(m.id) || assigned.has(m.id)) return false; assigned.add(m.id); return true; });
+            const lists = { head: headOnly, support: supportOnly, trial: trialOnly } as const;
+            const formatList = (arr: any[]) => {
+              if (!arr.length) return 'None';
+              const shown = arr.slice(0, 25);
+              const text = shown.map((m:any) => `<@${m.id}>`).join(', ');
+              return text + (arr.length > 25 ? ` …(+${arr.length-25})` : '');
+            };
+            const allMembers = ([] as any[]).concat(listsRaw.head, listsRaw.support, listsRaw.trial);
             const isRequesterSupport = allMembers.some((m:any) => m.id === message.author.id);
             const header = isRequesterSupport ? `You’re part of Support. Here’s the team:` : `Support team:`;
             const lines = [
               header,
+              `Founders: <@&${FOUNDER_ROLE_ID}>`,
               `Head Support: ${formatList(lists.head)}`,
               `Support: ${formatList(lists.support)}`,
               `Trial Support: ${formatList(lists.trial)}`
             ].join('\n');
-            const headIds = lists.head.slice(0, 25).map((m:any) => m.id);
-            const supportIds = lists.support.slice(0, 25).map((m:any) => m.id);
-            const trialIds = lists.trial.slice(0, 25).map((m:any) => m.id);
-            const uniq = Array.from(new Set<string>([...headIds, ...supportIds, ...trialIds].filter((id:string) => id !== message.author.id)));
-            await message.reply({ content: lines, allowedMentions: { users: uniq } as any });
+            const mentionedIds = new Set<string>();
+            for (const arr of [lists.head, lists.support, lists.trial]) {
+              for (const m of arr.slice(0,25)) {
+                if (m.id !== message.author.id) mentionedIds.add(m.id);
+              }
+            }
+            await message.reply({ content: lines, allowedMentions: { users: Array.from(mentionedIds), roles: [FOUNDER_ROLE_ID] } as any });
             return;
           } catch (e) {
             console.warn('Global support intercept failed to assemble list:', (e as any)?.message ?? e);
@@ -2029,22 +2064,39 @@ client.on("messageCreate", async (message: Message) => {
       if (supportRe.test(text) && message.guild) {
         try {
           const { listSupportMembers } = await import('./services/supportRoles');
-          const lists = await listSupportMembers(message.guild);
-          const formatList = (arr: any[]) => arr.length ? arr.slice(0, 25).map(m => `<@${m.id}>`).join(', ') + (arr.length > 25 ? ` …(+${arr.length-25})` : '') : 'None';
-          const allMembers = ([] as any[]).concat(lists.head, lists.support, lists.trial);
+          const listsRaw = await listSupportMembers(message.guild);
+          // Highest-role grouping: Head > Support > Trial
+          const OWNER_IDS = new Set<string>(['1272923881052704820','840586296044421160']);
+          const FOUNDER_ROLE_ID = '1394923497376972890';
+          const assigned = new Set<string>();
+          // Filter out founders from support lists
+          const headOnly = listsRaw.head.filter((m:any) => { if (OWNER_IDS.has(m.id) || assigned.has(m.id)) return false; assigned.add(m.id); return true; });
+          const supportOnly = listsRaw.support.filter((m:any) => { if (OWNER_IDS.has(m.id) || assigned.has(m.id)) return false; assigned.add(m.id); return true; });
+          const trialOnly = listsRaw.trial.filter((m:any) => { if (OWNER_IDS.has(m.id) || assigned.has(m.id)) return false; assigned.add(m.id); return true; });
+          const lists = { head: headOnly, support: supportOnly, trial: trialOnly } as const;
+          const formatList = (arr: any[]) => {
+            if (!arr.length) return 'None';
+            const shown = arr.slice(0, 25);
+            const text = shown.map((m:any) => `<@${m.id}>`).join(', ');
+            return text + (arr.length > 25 ? ` …(+${arr.length-25})` : '');
+          };
+          const allMembers = ([] as any[]).concat(listsRaw.head, listsRaw.support, listsRaw.trial);
           const isRequesterSupport = allMembers.some((m:any) => m.id === message.author.id);
           const header = isRequesterSupport ? `You’re part of Support. Here’s the team:` : `Support team:`;
           const lines = [
             header,
+            `Founders: <@&${FOUNDER_ROLE_ID}>`,
             `Head Support: ${formatList(lists.head)}`,
             `Support: ${formatList(lists.support)}`,
             `Trial Support: ${formatList(lists.trial)}`
           ].join('\n');
-          const headIds = lists.head.slice(0, 25).map((m:any) => m.id);
-          const supportIds = lists.support.slice(0, 25).map((m:any) => m.id);
-          const trialIds = lists.trial.slice(0, 25).map((m:any) => m.id);
-          const uniq = Array.from(new Set<string>([...headIds, ...supportIds, ...trialIds].filter((id:string) => id !== message.author.id)));
-          await message.reply({ content: lines, allowedMentions: { users: uniq } as any });
+          const mentionedIds = new Set<string>();
+          for (const arr of [lists.head, lists.support, lists.trial]) {
+            for (const m of arr.slice(0,25)) {
+              if (m.id !== message.author.id) mentionedIds.add(m.id);
+            }
+          }
+          await message.reply({ content: lines, allowedMentions: { users: Array.from(mentionedIds), roles: [FOUNDER_ROLE_ID] } as any });
           return;
         } catch (e) {
           console.warn('Failed to assemble support list:', (e as any)?.message ?? e);
