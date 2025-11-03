@@ -243,7 +243,29 @@ client.once("clientReady", async () => {
     { name: "checkins", description: "📋 Admin: View scheduled proactive user follow-ups" },
     { name: "sentiment", description: "💭 Admin: Real-time emotional analysis of conversations", options: [ { name: "channel", description: "Channel to analyze (defaults to current)", type: 7, required: false } ] },
     { name: "commonissues", description: "🔍 Admin: Detect recurring support issues", options: [ { name: "hours", description: "Hours to analyze (default 24)", type: 4, required: false } ] },
-    { name: "faq", description: "❓ Quick access to frequently asked questions", options: [ { name: "category", description: "Filter by category", type: 3, required: false } ] }
+    { name: "faq", description: "❓ Quick access to frequently asked questions", options: [ { name: "category", description: "Filter by category", type: 3, required: false } ] },
+    // Command Permissions Management
+    { name: "cmdpermissions", description: "🔐 Owner: Manage command permissions panel", options: [
+      { name: "panel", description: "Show interactive command permissions panel", type: 1 },
+      { name: "add", description: "Add command permission to a role", type: 1, options: [
+        { name: "role", description: "Role to grant permission", type: 8, required: true },
+        { name: "command", description: "Command name (e.g., kick, ban, mute)", type: 3, required: true }
+      ] },
+      { name: "remove", description: "Remove command permission from a role", type: 1, options: [
+        { name: "role", description: "Role to remove permission from", type: 8, required: true },
+        { name: "command", description: "Command name", type: 3, required: true }
+      ] },
+      { name: "preset", description: "Apply command preset to a role", type: 1, options: [
+        { name: "role", description: "Role to configure", type: 8, required: true },
+        { name: "preset", description: "head_support|support|trial_support|moderator|admin", type: 3, required: true }
+      ] },
+      { name: "clear", description: "Clear all command permissions for a role", type: 1, options: [
+        { name: "role", description: "Role to clear permissions from", type: 8, required: true }
+      ] },
+      { name: "list", description: "List command permissions for a role", type: 1, options: [
+        { name: "role", description: "Role to view permissions for", type: 8, required: true }
+      ] }
+    ] }
   ];
 
   (async () => {
@@ -505,6 +527,138 @@ client.on("interactionCreate", async (interaction) => {
         return interaction.reply({ content: 'Failed to list blacklist entries.', ephemeral: true });
       }
     }
+
+    // Command Permissions Management
+    if (interaction.commandName === "cmdpermissions") {
+      if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+      
+      const { 
+        addCommandPermission, 
+        removeCommandPermission, 
+        clearRoleCommandPermissions, 
+        getRoleCommands,
+        RESTRICTABLE_COMMANDS,
+        COMMAND_PRESETS
+      } = await import('./services/commandPermissions');
+
+      const subcommand = interaction.options.getSubcommand();
+
+      if (subcommand === "panel") {
+        // Interactive panel with buttons
+        const embed = new EmbedBuilder()
+          .setTitle('🔐 Command Permissions System')
+          .setColor(0xe74c3c)
+          .setDescription('Configure which roles can use specific commands. Use the subcommands below:')
+          .addFields(
+            { name: '📝 Add Permission', value: '`/cmdpermissions add role:<role> command:<command>`\nGrant a command to a role', inline: false },
+            { name: '🗑️ Remove Permission', value: '`/cmdpermissions remove role:<role> command:<command>`\nRevoke a command from a role', inline: false },
+            { name: '📦 Apply Preset', value: '`/cmdpermissions preset role:<role> preset:<preset>`\nPresets: `head_support`, `support`, `trial_support`, `moderator`, `admin`', inline: false },
+            { name: '📋 List Permissions', value: '`/cmdpermissions list role:<role>`\nView all commands a role can use', inline: false },
+            { name: '🧹 Clear Permissions', value: '`/cmdpermissions clear role:<role>`\nRemove all command permissions from a role', inline: false },
+            { name: '⚙️ Available Commands', value: RESTRICTABLE_COMMANDS.slice(0, 20).join(', ') + '...', inline: false }
+          )
+          .setFooter({ text: 'Owner/Admin only • Permissions are checked before command execution' });
+
+        return interaction.reply({ embeds: [embed], ephemeral: true });
+      }
+
+      if (subcommand === "add") {
+        const role = interaction.options.getRole('role', true);
+        const command = interaction.options.getString('command', true).toLowerCase();
+
+        if (!RESTRICTABLE_COMMANDS.includes(command)) {
+          return interaction.reply({ 
+            content: `❌ Invalid command. Available: ${RESTRICTABLE_COMMANDS.join(', ')}`, 
+            ephemeral: true 
+          });
+        }
+
+        const success = addCommandPermission(interaction.guild.id, role.id, command);
+        if (success) {
+          return interaction.reply({ 
+            content: `✅ Added \`${command}\` permission to role <@&${role.id}>`, 
+            ephemeral: true 
+          });
+        } else {
+          return interaction.reply({ content: '❌ Failed to add permission.', ephemeral: true });
+        }
+      }
+
+      if (subcommand === "remove") {
+        const role = interaction.options.getRole('role', true);
+        const command = interaction.options.getString('command', true).toLowerCase();
+
+        const success = removeCommandPermission(interaction.guild.id, role.id, command);
+        if (success) {
+          return interaction.reply({ 
+            content: `✅ Removed \`${command}\` permission from role <@&${role.id}>`, 
+            ephemeral: true 
+          });
+        } else {
+          return interaction.reply({ content: '❌ Failed to remove permission.', ephemeral: true });
+        }
+      }
+
+      if (subcommand === "preset") {
+        const role = interaction.options.getRole('role', true);
+        const preset = interaction.options.getString('preset', true).toLowerCase();
+
+        if (!(preset in COMMAND_PRESETS)) {
+          return interaction.reply({ 
+            content: `❌ Invalid preset. Available: ${Object.keys(COMMAND_PRESETS).join(', ')}`, 
+            ephemeral: true 
+          });
+        }
+
+        // Clear existing permissions first
+        clearRoleCommandPermissions(interaction.guild.id, role.id);
+
+        // Add all commands from preset
+        const commands = COMMAND_PRESETS[preset as keyof typeof COMMAND_PRESETS];
+        for (const cmd of commands) {
+          addCommandPermission(interaction.guild.id, role.id, cmd);
+        }
+
+        return interaction.reply({ 
+          content: `✅ Applied \`${preset}\` preset to <@&${role.id}> (${commands.length} commands)`, 
+          ephemeral: true 
+        });
+      }
+
+      if (subcommand === "clear") {
+        const role = interaction.options.getRole('role', true);
+
+        const success = clearRoleCommandPermissions(interaction.guild.id, role.id);
+        if (success) {
+          return interaction.reply({ 
+            content: `✅ Cleared all command permissions from <@&${role.id}>`, 
+            ephemeral: true 
+          });
+        } else {
+          return interaction.reply({ content: '❌ Failed to clear permissions.', ephemeral: true });
+        }
+      }
+
+      if (subcommand === "list") {
+        const role = interaction.options.getRole('role', true);
+
+        const commands = getRoleCommands(interaction.guild.id, role.id);
+        if (commands.length === 0) {
+          return interaction.reply({ 
+            content: `<@&${role.id}> has no command permissions configured.`, 
+            ephemeral: true 
+          });
+        }
+
+        const embed = new EmbedBuilder()
+          .setTitle(`🔐 Command Permissions for ${role.name}`)
+          .setColor(0x3498db)
+          .setDescription(`**Allowed Commands (${commands.length}):**\n\`\`\`${commands.join(', ')}\`\`\``)
+          .setFooter({ text: 'Use /cmdpermissions to modify permissions' });
+
+        return interaction.reply({ embeds: [embed], ephemeral: true });
+      }
+    }
   }
 
     // helper to check admin or bypass
@@ -525,6 +679,25 @@ client.on("interactionCreate", async (interaction) => {
       } catch (err) { /* ignore */ }
       return false;
     };
+
+  // Helper to check command permissions (admin/bypass OR custom command permissions)
+  const hasCommandAccess = async (memberMaybe: any, commandName: string, guildId: string | null): Promise<boolean> => {
+    // First check if they're admin or bypassed
+    if (adminOrBypass(memberMaybe)) return true;
+    
+    // Then check command permissions system
+    if (guildId) {
+      try {
+        const { hasCommandPermission } = await import('./services/commandPermissions');
+        const userRoles = memberMaybe?.roles?.cache ? Array.from(memberMaybe.roles.cache.keys()) : (memberMaybe?.roles || []);
+        return hasCommandPermission(guildId, userRoles, commandName);
+      } catch (err) {
+        console.error('Command permission check failed:', err);
+      }
+    }
+    
+    return false;
+  };
 
   // Try enhanced feature commands first
   const enhancedHandled = await handleEnhancedCommands(interaction as any);
@@ -1962,7 +2135,9 @@ client.on("interactionCreate", async (interaction) => {
   }
 
   if (name === 'purge') {
-    if (!adminOrBypass(interaction.member)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
+    if (!(await hasCommandAccess(interaction.member, 'purge', interaction.guild?.id || null))) {
+      return interaction.reply({ content: '❌ You don\'t have permission to use this command.', ephemeral: true });
+    }
     const count = interaction.options.getInteger('count', true) ?? 0;
     if (count < 1 || count > 1000) return interaction.reply({ content: 'Count must be between 1 and 1000.', ephemeral: true });
     
@@ -2032,9 +2207,22 @@ client.on("interactionCreate", async (interaction) => {
 
     // Moderation interactions
     if (name === "kick" || name === "ban" || name === "mute" || name === "addrole" || name === "removerole") {
-      // Admin or bypass permission check
-      if (!adminOrBypass(interaction.member)) {
-        return interaction.reply({ content: "You are not authorized to use this feature.", ephemeral: true });
+      // Check command permissions system first
+      let hasPermission = adminOrBypass(interaction.member);
+      
+      if (!hasPermission && interaction.guild) {
+        try {
+          const { hasCommandPermission } = await import('./services/commandPermissions');
+          const member = interaction.member as any;
+          const userRoles = member.roles?.cache ? Array.from(member.roles.cache.keys()) : (member.roles || []);
+          hasPermission = hasCommandPermission(interaction.guild.id, userRoles, name);
+        } catch (err) {
+          console.error('Command permission check failed:', err);
+        }
+      }
+
+      if (!hasPermission) {
+        return interaction.reply({ content: "❌ You don't have permission to use this command. Contact an administrator if you believe this is an error.", ephemeral: true });
       }
 
       const target = interaction.options.getMember("user") as any;
@@ -2584,9 +2772,22 @@ client.on("messageCreate", async (message: Message) => {
 
     // Moderation commands: expect mentions for user and role
     if (["kick", "ban", "mute", "addrole", "removerole"].includes(command)) {
-      // Admin or bypass permission check
-      if (!isAdminOrBypassForMessage(message.member)) {
-        return message.reply("You are not authorized to use this feature.");
+      // Check command permissions system first
+      let hasPermission = isAdminOrBypassForMessage(message.member);
+      
+      if (!hasPermission && message.guild) {
+        try {
+          const { hasCommandPermission } = await import('./services/commandPermissions');
+          const member = message.member;
+          const userRoles = member?.roles?.cache ? Array.from(member.roles.cache.keys()) : [];
+          hasPermission = hasCommandPermission(message.guild.id, userRoles, command);
+        } catch (err) {
+          console.error('Command permission check failed:', err);
+        }
+      }
+
+      if (!hasPermission) {
+        return message.reply("❌ You don't have permission to use this command.");
       }
       
       const mentioned = message.mentions.members?.first() ?? null;
