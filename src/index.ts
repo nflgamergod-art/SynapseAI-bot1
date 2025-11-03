@@ -259,10 +259,10 @@ client.once("clientReady", async () => {
   { name: "listopentickets", description: "List all open support tickets" },
     { name: "perks", description: "✨ View your unlocked perks and special abilities" },
   { name: "perkspanel", description: "Owner: post a perks claim panel in this channel" },
-  { name: "claimperk", description: "Claim an unlocked perk", options: [ { name: "perk", description: "custom_color | priority_support | custom_emoji | channel_suggest | voice_priority | exclusive_role", type: 3, required: true } ] },
+  { name: "claimperk", description: "Claim an unlocked perk", options: [ { name: "perk", description: "custom_color|priority_support|custom_emoji|channel_suggest|voice_priority|exclusive_role", type: 3, required: true } ] },
   { name: "setcolor", description: "Set your custom role color (requires custom_color perk)", options: [ { name: "hex", description: "Hex color like #FF8800", type: 3, required: true } ] },
   { name: "requestemoji", description: "Create a custom emoji (requires custom_emoji perk)", options: [ { name: "name", description: "Emoji name (letters, numbers, _)", type: 3, required: true }, { name: "image", description: "Emoji image (PNG/GIF)", type: 11, required: true } ] },
-  { name: "setperkrole", description: "Owner: bind a server role to a perk so claims use it", options: [ { name: "perk", description: "custom_color|priority_support|custom_emoji|channel_suggest|voice_priority|exclusive_role", type: 3, required: true }, { name: "role", description: "Role to bind", type: 8, required: true } ] },
+  { name: "setperkrole", description: "Owner: bind a server role to a perk so claims use it", options: [ { name: "perk", description: "Perk name (see /claimperk for options)", type: 3, required: true }, { name: "role", description: "Role to bind", type: 8, required: true } ] },
     { name: "patterns", description: "📈 Admin: View detected user behavior patterns" },
     { name: "insights", description: "🔮 Admin: Get AI predictions for best posting times" },
     { name: "checkins", description: "📋 Admin: View scheduled proactive user follow-ups" },
@@ -369,7 +369,7 @@ client.once("clientReady", async () => {
       { name: "set", description: "Set a stats channel", type: 1, options: [
         { name: "type", description: "member_count | online_count | bot_count | role_count | channel_count", type: 3, required: true },
         { name: "channel", description: "Voice channel to use", type: 7, required: true },
-        { name: "format", description: "Format (use {count} placeholder, e.g., 'Members: {count}')", type: 3, required: true }
+        { name: "format", description: "Format with {count} placeholder (e.g., 'Members: {count}')", type: 3, required: true }
       ] },
       { name: "list", description: "List configured stats channels", type: 1 },
       { name: "remove", description: "Remove a stats channel", type: 1, options: [
