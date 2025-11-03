@@ -1926,8 +1926,8 @@ client.on("interactionCreate", async (interaction) => {
   }
   
   if (name === "setquestiontimeout") {
-    if (!adminOrBypass(interaction.member)) {
-      return interaction.reply({ content: "You are not authorized to use this feature.", ephemeral: true });
+    if (!(await hasCommandAccess(interaction.member, 'setquestiontimeout', interaction.guild?.id || null))) {
+      return interaction.reply({ content: '❌ You don\'t have permission to use this command.', ephemeral: true });
     }
     const seconds = interaction.options.getInteger("seconds", true);
     if (seconds < 1) {
@@ -2000,8 +2000,8 @@ client.on("interactionCreate", async (interaction) => {
   }
 
   if (name === 'setresponserule') {
-    if (!adminOrBypass(interaction.member)) {
-      return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
+    if (!(await hasCommandAccess(interaction.member, 'setresponserule', interaction.guild?.id || null))) {
+      return interaction.reply({ content: '❌ You don\'t have permission to use this command.', ephemeral: true });
     }
     const type = (interaction.options.getString('type', true) as string).toLowerCase();
     const trigger = interaction.options.getString('trigger', true)!;
@@ -2035,8 +2035,8 @@ client.on("interactionCreate", async (interaction) => {
   }
 
   if (name === 'listresponserules') {
-    if (!adminOrBypass(interaction.member)) {
-      return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
+    if (!(await hasCommandAccess(interaction.member, 'listresponserules', interaction.guild?.id || null))) {
+      return interaction.reply({ content: '❌ You don\'t have permission to use this command.', ephemeral: true });
     }
     const rules = responseRules.listRules();
     if (!rules.length) return interaction.reply({ content: 'No response rules configured.', ephemeral: true });
@@ -2047,8 +2047,8 @@ client.on("interactionCreate", async (interaction) => {
   }
 
   if (name === 'delresponserule') {
-    if (!adminOrBypass(interaction.member)) {
-      return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
+    if (!(await hasCommandAccess(interaction.member, 'delresponserule', interaction.guild?.id || null))) {
+      return interaction.reply({ content: '❌ You don\'t have permission to use this command.', ephemeral: true });
     }
     const id = interaction.options.getString('id', true)!;
     const ok = responseRules.removeRule(id);
@@ -2056,7 +2056,9 @@ client.on("interactionCreate", async (interaction) => {
   }
 
   if (name === 'setmodlog') {
-    if (!adminOrBypass(interaction.member)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
+    if (!(await hasCommandAccess(interaction.member, 'setmodlog', interaction.guild?.id || null))) {
+      return interaction.reply({ content: '❌ You don\'t have permission to use this command.', ephemeral: true });
+    }
     const ch = interaction.options.getChannel('channel');
     if (!ch || !('id' in ch)) return interaction.reply({ content: 'Invalid channel.', ephemeral: true });
     try {
@@ -2069,19 +2071,25 @@ client.on("interactionCreate", async (interaction) => {
   }
 
   if (name === 'getmodlog') {
-    if (!adminOrBypass(interaction.member)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
+    if (!(await hasCommandAccess(interaction.member, 'getmodlog', interaction.guild?.id || null))) {
+      return interaction.reply({ content: '❌ You don\'t have permission to use this command.', ephemeral: true });
+    }
     const id = getModLogChannelId();
     return interaction.reply({ content: id ? `Moderation log channel: <#${id}>` : 'Moderation log channel not set.', ephemeral: true });
   }
 
   if (name === 'clearmodlog') {
-    if (!adminOrBypass(interaction.member)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
+    if (!(await hasCommandAccess(interaction.member, 'clearmodlog', interaction.guild?.id || null))) {
+      return interaction.reply({ content: '❌ You don\'t have permission to use this command.', ephemeral: true });
+    }
     try { clearModLogChannelId(); return interaction.reply({ content: 'Moderation log channel cleared.', ephemeral: true }); } catch (e) { return interaction.reply({ content: 'Failed to clear moderation log channel.', ephemeral: true }); }
   }
 
   // New admin commands: warn / clearwarn / unmute / announce / membercount / purge
   if (name === 'warn') {
-  if (!adminOrBypass(interaction.member)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
+  if (!(await hasCommandAccess(interaction.member, 'warn', interaction.guild?.id || null))) {
+    return interaction.reply({ content: '❌ You don\'t have permission to use this command.', ephemeral: true });
+  }
   const user = interaction.options.getUser('user');
   const reason = interaction.options.getString('reason') ?? 'No reason provided';
   if (!user) return interaction.reply({ content: 'User not found.', ephemeral: true });
@@ -2102,7 +2110,9 @@ client.on("interactionCreate", async (interaction) => {
   }
 
   if (name === 'clearwarn') {
-    if (!adminOrBypass(interaction.member)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
+    if (!(await hasCommandAccess(interaction.member, 'clearwarn', interaction.guild?.id || null))) {
+      return interaction.reply({ content: '❌ You don\'t have permission to use this command.', ephemeral: true });
+    }
     const user = interaction.options.getUser('user');
     const removed = user ? warnings.clearWarningsFor(user.id) : 0;
     
@@ -2126,7 +2136,9 @@ client.on("interactionCreate", async (interaction) => {
   }
 
   if (name === 'unmute') {
-    if (!adminOrBypass(interaction.member)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
+    if (!(await hasCommandAccess(interaction.member, 'unmute', interaction.guild?.id || null))) {
+      return interaction.reply({ content: '❌ You don\'t have permission to use this command.', ephemeral: true });
+    }
     const target = interaction.options.getMember('user') as any;
     if (!target) return interaction.reply({ content: 'Member not found.', ephemeral: true });
     try {
@@ -2139,7 +2151,9 @@ client.on("interactionCreate", async (interaction) => {
   }
 
   if (name === 'announce') {
-    if (!adminOrBypass(interaction.member)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
+    if (!(await hasCommandAccess(interaction.member, 'announce', interaction.guild?.id || null))) {
+      return interaction.reply({ content: '❌ You don\'t have permission to use this command.', ephemeral: true });
+    }
     const ch = interaction.options.getChannel('channel') ?? interaction.channel;
     const msg = interaction.options.getString('message', true)!;
     try {
@@ -2153,7 +2167,9 @@ client.on("interactionCreate", async (interaction) => {
   }
 
   if (name === 'membercount') {
-    if (!adminOrBypass(interaction.member)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
+    if (!(await hasCommandAccess(interaction.member, 'membercount', interaction.guild?.id || null))) {
+      return interaction.reply({ content: '❌ You don\'t have permission to use this command.', ephemeral: true });
+    }
     const role = interaction.options.getRole('role');
     try {
       if (!interaction.guild) return interaction.reply({ content: 'Guild-only command.', ephemeral: true });
@@ -2219,8 +2235,8 @@ client.on("interactionCreate", async (interaction) => {
 
     if (name === "setdefaultmute") {
       // admin-only
-      if (!adminOrBypass(interaction.member)) {
-        return interaction.reply({ content: "You are not authorized to use this feature.", ephemeral: true });
+      if (!(await hasCommandAccess(interaction.member, 'setdefaultmute', interaction.guild?.id || null))) {
+        return interaction.reply({ content: '❌ You don\'t have permission to use this command.', ephemeral: true });
       }
       const durationStr = interaction.options.getString("duration", true);
       // parse duration string using util
