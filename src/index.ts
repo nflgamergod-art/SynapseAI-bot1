@@ -355,8 +355,12 @@ client.once("clientReady", async () => {
       { name: "reason", description: "New reason", type: 3, required: true }
     ] },
     // Appeals
-    { name: "appeal", description: "📨 Submit an appeal (use in DMs with bot)", options: [
-      { name: "type", description: "ban | mute | blacklist", type: 3, required: true },
+    { name: "appeal", description: "📨 Submit an appeal (use in DMs with bot)", dm_permission: true, contexts: [0, 1, 2], integration_types: [0, 1], options: [
+      { name: "type", description: "ban | mute | blacklist", type: 3, required: true, choices: [
+        { name: "Ban Appeal", value: "ban" },
+        { name: "Mute Appeal", value: "mute" },
+        { name: "Blacklist Appeal", value: "blacklist" }
+      ] },
       { name: "reason", description: "Why should your punishment be revoked?", type: 3, required: true }
     ] },
     { name: "appeals", description: "📨 Admin: Review pending appeals", options: [
@@ -3169,7 +3173,7 @@ client.on("interactionCreate", async (interaction) => {
         { name: "cases", description: "📋 View all cases for a user", options: [ { name: "user", description: "User to check cases for", type: 6, required: true } ] },
         { name: "updatecase", description: "📝 Update case reason", options: [ { name: "number", description: "Case number", type: 4, required: true }, { name: "reason", description: "New reason", type: 3, required: true } ] },
         // Appeals
-        { name: "appeal", description: "📨 Submit an appeal", options: [ { name: "type", description: "ban | mute | blacklist", type: 3, required: true }, { name: "reason", description: "Why should your punishment be revoked?", type: 3, required: true } ] },
+        { name: "appeal", description: "📨 Submit an appeal (use in DMs)", dm_permission: true, contexts: [0, 1, 2], integration_types: [0, 1], options: [ { name: "type", description: "ban | mute | blacklist", type: 3, required: true, choices: [ { name: "Ban Appeal", value: "ban" }, { name: "Mute Appeal", value: "mute" }, { name: "Blacklist Appeal", value: "blacklist" } ] }, { name: "reason", description: "Why should your punishment be revoked?", type: 3, required: true } ] },
         { name: "appeals", description: "📨 Admin: Review pending appeals" },
         // Reminders
         { name: "remind", description: "⏰ Set a reminder", options: [ { name: "time", description: "Time (e.g., 2h, 30m, 1d)", type: 3, required: true }, { name: "message", description: "What to remind you about", type: 3, required: true } ] },
