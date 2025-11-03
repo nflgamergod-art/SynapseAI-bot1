@@ -334,6 +334,42 @@ export function initEnhancedSchema() {
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_warnings_user ON user_warnings(user_id, guild_id);
+
+    -- Blacklist (auto-banned users)
+    CREATE TABLE IF NOT EXISTS blacklist (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id TEXT NOT NULL,
+      guild_id TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      banned_by TEXT DEFAULT 'system',
+      created_at TEXT NOT NULL,
+      UNIQUE(user_id, guild_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_blacklist_user ON blacklist(user_id, guild_id);
+
+    -- Whitelist (bypass checks)
+    CREATE TABLE IF NOT EXISTS whitelist (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id TEXT NOT NULL,
+      guild_id TEXT NOT NULL,
+      reason TEXT,
+      added_by TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE(user_id, guild_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_whitelist_user ON whitelist(user_id, guild_id);
+
+    -- User Interactions (for tracking engagement)
+    CREATE TABLE IF NOT EXISTS user_interactions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id TEXT NOT NULL,
+      guild_id TEXT NOT NULL,
+      interaction_type TEXT NOT NULL, -- 'join', 'leave', 'message', 'reaction', 'support'
+      details TEXT, -- JSON data
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_interactions_user ON user_interactions(user_id, guild_id);
+    CREATE INDEX IF NOT EXISTS idx_interactions_type ON user_interactions(interaction_type);
   `);
 }
 
