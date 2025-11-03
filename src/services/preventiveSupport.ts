@@ -40,7 +40,11 @@ export function addKnowledgeEntry(opts: {
 // Search knowledge base
 export function searchKnowledge(guildId: string | null, query: string, limit = 5): any[] {
   const db = getDB();
-  const searchTerms = query.toLowerCase().split(' ').filter(w => w.length > 3);
+  
+  // Strip emojis from query for better matching
+  const cleanQuery = query.replace(/[\u{1F600}-\u{1F64F}]|[\u{1F300}-\u{1F5FF}]|[\u{1F680}-\u{1F6FF}]|[\u{1F1E0}-\u{1F1FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]/gu, '').trim();
+  
+  const searchTerms = cleanQuery.toLowerCase().split(' ').filter(w => w.length > 3);
   
   if (searchTerms.length === 0) return [];
   

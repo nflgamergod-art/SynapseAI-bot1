@@ -12,6 +12,49 @@ export function isWakeWord(message: Message, wakeWord: string) {
   return false;
 }
 
+// Auto-save valuable Q&A to knowledge base
+async function autoSaveToKnowledgeBase(message: Message, reply: string, guildId: string | null) {
+  // Heuristics to determine if Q&A is worth saving to KB:
+  // 1. Question contains "how", "what", "why", "when", "where", "who"
+  // 2. Reply is substantial (> 50 characters)
+  // 3. Not already in KB (check for similar)
+  
+  const question = message.content.toLowerCase();
+  const isQuestion = /\b(how|what|why|when|where|who|can|should|is|are|do|does)\b/i.test(question);
+  const hasQuestionMark = question.includes('?');
+  const isSubstantialReply = reply.length > 50;
+  
+  if ((isQuestion || hasQuestionMark) && isSubstantialReply) {
+    const { findSimilarQuestions, addKnowledgeEntry } = await import('../services/preventiveSupport');
+    const similar = findSimilarQuestions(guildId, message.content, 0.7);
+    
+    // Only save if not too similar to existing entries
+    if (similar.length === 0) {
+      // Categorize based on content
+      let category = 'general';
+      if (/\b(error|crash|bug|broken|fix)\b/i.test(question)) category = 'technical';
+      else if (/\b(how to|tutorial|guide|setup)\b/i.test(question)) category = 'tutorial';
+      else if (/\b(synapse|script|roblox)\b/i.test(question)) category = 'synapse';
+      else if (/\b(perk|point|achievement|reward)\b/i.test(question)) category = 'features';
+      
+      // Extract tags from question
+      const tags = question.match(/\b\w{4,}\b/g)?.slice(0, 5) || [];
+      
+      addKnowledgeEntry({
+        guildId,
+        category,
+        question: message.content,
+        answer: reply,
+        tags,
+        sourceMessageId: message.id,
+        addedBy: 'auto-learner'
+      });
+      
+      console.log(`📚 Auto-saved to KB: "${message.content.slice(0, 50)}..."`);
+    }
+  }
+}
+
 export async function handleConversationalReply(message: Message) {
   const key = `${message.guild?.id ?? 'dm'}:${message.author.id}`;
   const convo = conversations.get(key) ?? [];
@@ -107,6 +150,14 @@ export async function handleConversationalReply(message: Message) {
       assistantMessage: reply
     });
     upsertQAPair(message.author.id, guildId, message.content, reply);
+    
+    // Auto-save to knowledge base if it seems like a valuable Q&A
+    try {
+      await autoSaveToKnowledgeBase(message, reply, guildId);
+    } catch (err) {
+      console.warn('Auto KB save failed:', err);
+    }
+    
     const corrCtx = detectCorrectionContext(message.channel.id, message.createdTimestamp);
     const ack = buildMemoryAck(message.content, events, corrCtx.isCorrectionContext);
     const finalReply = ack ? `${reply}\n\n${ack}` : reply;
@@ -130,6 +181,14 @@ export async function handleConversationalReply(message: Message) {
       assistantMessage: local
     });
     upsertQAPair(message.author.id, guildId, message.content, local);
+    
+    // Auto-save to knowledge base for local responses too
+    try {
+      await autoSaveToKnowledgeBase(message, local, guildId);
+    } catch (err) {
+      console.warn('Auto KB save failed:', err);
+    }
+    
     const corrCtx = detectCorrectionContext(message.channel.id, message.createdTimestamp);
     const ack = buildMemoryAck(message.content, events, corrCtx.isCorrectionContext);
     const finalLocal = ack ? `${local}\n\n${ack}` : local;

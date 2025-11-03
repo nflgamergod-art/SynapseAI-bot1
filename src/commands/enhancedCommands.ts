@@ -75,12 +75,12 @@ export async function handleEnhancedCommands(interaction: ChatInputCommandIntera
         .setTitle(`📊 Support Stats: ${targetUser.tag}`)
         .setColor(0x3498db)
         .addFields(
-          { name: 'Resolution Rate', value: `${(stats.resolutionRate * 100).toFixed(1)}%`, inline: true },
-          { name: 'Avg Response Time', value: `${stats.avgResponseTime?.toFixed(1) || 0} min`, inline: true },
+          { name: 'Resolution Rate', value: `${stats.resolutionRate.toFixed(1)}%`, inline: true },
+          { name: 'Avg Response Time', value: `${Math.round(stats.avgResponseTime / 60)} min`, inline: true },
           { name: 'Rating', value: `${stats.avgRating?.toFixed(1) || 0}/5.0⭐`, inline: true },
-          { name: 'Total Cases', value: stats.totalInteractions.toString(), inline: true },
+          { name: 'Total Cases', value: Math.round(stats.totalInteractions).toString(), inline: true },
           { name: 'Current Streak', value: `${stats.currentStreak} days 🔥`, inline: true },
-          { name: 'Resolved', value: stats.resolvedCount.toString(), inline: true }
+          { name: 'Resolved', value: Math.round(stats.resolvedCount).toString(), inline: true }
         );
 
       if (stats.expertise && stats.expertise.length > 0) {

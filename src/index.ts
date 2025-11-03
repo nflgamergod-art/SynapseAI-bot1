@@ -2188,6 +2188,48 @@ client.on("messageReactionAdd", async (reaction, user) => {
 client.on("messageCreate", async (message: Message) => {
   if (message.author.bot) return;
 
+  // Anti-abuse detection
+  try {
+    const { trackMessage, detectBypassAttempt, autoBlacklist, getWarnings } = await import('./services/antiAbuse');
+    const isSpam = trackMessage(message.author.id);
+    const isBypass = detectBypassAttempt(message.author.id, message.content);
+    
+    if (isSpam || isBypass) {
+      const guildId = message.guild?.id || '';
+      const reason = isSpam ? 'Spam detection (repeated messages)' : 'Permission bypass attempt (@everyone/@here)';
+      
+      // Auto-blacklist
+      const blacklisted = autoBlacklist(message.author.id, guildId, reason);
+      
+      if (blacklisted) {
+        // Log to mod channel
+        try {
+          const logChannel = getModLogChannelId();
+          if (logChannel && message.guild) {
+            const channel = await message.guild.channels.fetch(logChannel);
+            if (channel?.isTextBased()) {
+              await (channel as any).send(`🚨 **Auto-Blacklist**\nUser: <@${message.author.id}> (${message.author.tag})\nReason: ${reason}\nWarnings: ${getWarnings(message.author.id)}`);
+            }
+          }
+        } catch (err) {
+          console.error('Failed to log auto-blacklist:', err);
+        }
+        
+        // Silently ignore future messages
+        return;
+      } else {
+        // Warn user
+        const warnings = getWarnings(message.author.id);
+        if (warnings > 0 && warnings < 3) {
+          await message.reply(`⚠️ Warning: ${reason}. Further abuse will result in automatic blacklist. (${warnings}/3 warnings)`);
+          return;
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Anti-abuse check failed:', err);
+  }
+
   // Blacklist check first (overrides everything except owner)
   const userId = message.author.id;
   
