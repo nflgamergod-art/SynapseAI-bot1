@@ -397,6 +397,7 @@ client.once("clientReady", async () => {
         { name: "log_channel", description: "Channel for ticket logs", type: 7, required: false },
         { name: "support_role", description: "Role to ping for new tickets", type: 8, required: false }
       ] },
+      { name: "panel", description: "Post a ticket panel in this channel", type: 1 },
       { name: "create", description: "Create a new ticket", type: 1, options: [
         { name: "category", description: "Support category", type: 3, required: true },
         { name: "description", description: "Describe your issue", type: 3, required: false }
@@ -1672,6 +1673,27 @@ client.on("interactionCreate", async (interaction) => {
       } catch {}
 
       return interaction.reply({ content: '✅ Ticket system configured! I posted a ticket panel here.', ephemeral: true });
+    }
+
+    if (subCmd === "panel") {
+      if (!(await hasCommandAccess(interaction.member, 'ticket', interaction.guild?.id || null))) {
+        return interaction.reply({ content: '❌ You don\'t have permission to use this command.', ephemeral: true });
+      }
+      if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+      try {
+        const panelEmbed = new EmbedBuilder()
+          .setTitle('🎫 Need Help?')
+          .setDescription('Click the button below to open a private support ticket. A staff member will assist you shortly.')
+          .setColor(0x5865F2);
+        const panelRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder().setCustomId('ticket-open').setLabel('Open Ticket').setStyle(ButtonStyle.Primary)
+        );
+        // @ts-ignore
+        await (interaction.channel as any)?.send({ embeds: [panelEmbed], components: [panelRow] });
+        return interaction.reply({ content: '✅ Posted a ticket panel in this channel.', ephemeral: true });
+      } catch {
+        return interaction.reply({ content: '❌ Failed to post panel here. Check my permissions for Send Messages and Embed Links.', ephemeral: true });
+      }
     }
 
     if (subCmd === "create") {
