@@ -1,6 +1,7 @@
 // src/services/blacklistService.ts
 import fs from 'fs';
 import path from 'path';
+import { getDB } from './db';
 
 export type BlacklistEntry = {
   id: string; // user or role ID
@@ -31,7 +32,23 @@ export function getBlacklist(): BlacklistEntry[] {
 }
 
 export function isBlacklisted(id: string, type: 'user' | 'role'): boolean {
-  return loadBlacklist().some(entry => entry.id === id && entry.type === type);
+  // Check JSON file (old system)
+  const jsonBlacklisted = loadBlacklist().some(entry => entry.id === id && entry.type === type);
+  if (jsonBlacklisted) return true;
+  
+  // Check database (new system - only for users)
+  if (type === 'user') {
+    try {
+      const db = getDB();
+      const result = db.prepare('SELECT * FROM blacklist WHERE user_id = ? LIMIT 1').get(id);
+      return !!result;
+    } catch (err) {
+      // If table doesn't exist or other DB error, fall back to JSON only
+      return false;
+    }
+  }
+  
+  return false;
 }
 
 export function addBlacklistEntry(entry: BlacklistEntry) {
