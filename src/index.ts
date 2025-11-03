@@ -620,6 +620,45 @@ client.on("interactionCreate", async (interaction) => {
         }
       }
       
+      // Ticket panel open button
+      if (btn === 'ticket-open') {
+        try {
+          if (!interaction.guild) return interaction.reply({ content: 'This can only be used in a server.', ephemeral: true });
+          const { getTicketConfig, createTicket, getUserTickets } = await import('./services/tickets');
+          const config = getTicketConfig(interaction.guild.id);
+          if (!config || !config.enabled) {
+            return interaction.reply({ content: '❌ Ticket system is not configured. Please notify an admin.', ephemeral: true });
+          }
+          // Check user has no open ticket
+          const userTickets = getUserTickets(interaction.guild.id, interaction.user.id);
+          const openTicket = userTickets.find((t:any) => t.status !== 'closed');
+          if (openTicket) {
+            return interaction.reply({ content: `❌ You already have an open ticket: <#${openTicket.channel_id}>`, ephemeral: true });
+          }
+          // Create ticket channel
+          const ticketChannel = await interaction.guild.channels.create({
+            name: `ticket-${interaction.user.username}`,
+            type: 0,
+            parent: config.category_id,
+            permissionOverwrites: [
+              { id: interaction.guild.id, deny: ['ViewChannel'] },
+              { id: interaction.user.id, allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory'] },
+              { id: interaction.client.user!.id, allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory', 'ManageChannels'] }
+            ]
+          });
+          const ticketId = createTicket(interaction.guild.id, (ticketChannel as any).id, interaction.user.id, 'general');
+          const ticketEmbed = new EmbedBuilder()
+            .setTitle(`🎫 Ticket #${ticketId}`)
+            .setColor(0x00AE86)
+            .setDescription(`Thanks for opening a ticket. Please describe your issue and any details that can help us assist you.`)
+            .setFooter({ text: 'Use /ticket close to close this ticket' });
+          await (ticketChannel as any).send({ content: config.support_role_id ? `<@&${config.support_role_id}>` : 'New ticket!', embeds: [ticketEmbed] });
+          return interaction.reply({ content: `✅ Ticket created: <#${(ticketChannel as any).id}>`, ephemeral: true });
+        } catch (e) {
+          return interaction.reply({ content: '❌ Failed to create ticket. Please try again or contact staff.', ephemeral: true });
+        }
+      }
+
       // Bulk action confirmations
       if (btn.startsWith('bulk-confirm-')) {
         const data = (client as any).bulkActionData?.[interaction.user.id];
@@ -1616,7 +1655,23 @@ client.on("interactionCreate", async (interaction) => {
         enabled: true
       });
 
-      return interaction.reply({ content: '✅ Ticket system configured!', ephemeral: true });
+      // Try to post a ticket panel in the current channel
+      try {
+        // @ts-ignore union types for channel
+        const ch: any = interaction.channel;
+        if (ch && ch.send) {
+          const panelEmbed = new EmbedBuilder()
+            .setTitle('🎫 Need Help?')
+            .setDescription('Click the button below to open a private support ticket. A staff member will assist you shortly.')
+            .setColor(0x5865F2);
+          const panelRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder().setCustomId('ticket-open').setLabel('Open Ticket').setStyle(ButtonStyle.Primary)
+          );
+          await ch.send({ embeds: [panelEmbed], components: [panelRow] });
+        }
+      } catch {}
+
+      return interaction.reply({ content: '✅ Ticket system configured! I posted a ticket panel here.', ephemeral: true });
     }
 
     if (subCmd === "create") {
