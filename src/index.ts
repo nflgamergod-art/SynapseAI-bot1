@@ -203,7 +203,11 @@ client.once("clientReady", async () => {
   { name: "setmodlog", description: "Set the moderation log channel (admin)", options: [{ name: 'channel', type: 7, description: 'Channel to receive moderation logs', required: true }] },
   { name: "getmodlog", description: "Show the current moderation log channel (admin)" },
   { name: "clearmodlog", description: "Clear the moderation log channel (admin)" },
-    { name: "warn", description: "Warn a user (DM and record)", options: [{ name: 'user', type: 6, description: 'User to warn', required: true }, { name: 'reason', type: 3, description: 'Reason', required: false }] },
+  { name: "warn", description: "Warn a user (DM and record)", options: [{ name: 'user', type: 6, description: 'User to warn', required: true }, { name: 'reason', type: 3, description: 'Reason', required: false }] },
+  { name: "warns", description: "Check user warnings", options: [{ name: 'user', type: 6, description: 'User to check', required: true }] },
+  { name: "checkwarn", description: "Check warnings for a user", options: [{ name: 'user', type: 6, description: 'User to check', required: true }] },
+  { name: "warnings", description: "Alias: check warnings for a user", options: [{ name: 'user', type: 6, description: 'User to check', required: true }] },
+  { name: "checkwarnings", description: "Alias: check warnings for a user", options: [{ name: 'user', type: 6, description: 'User to check', required: true }] },
     { name: "clearwarn", description: "Clear warnings for a user", options: [{ name: 'user', type: 6, description: 'User', required: true }] },
     { name: "unmute", description: "Remove timeout from a member", options: [{ name: 'user', type: 6, description: 'Member to unmute', required: true }] },
   { name: "announce", description: "Send an announcement as the bot", options: [{ name: 'message', type: 3, description: 'Message content', required: true }, { name: 'channel', type: 7, description: 'Channel to announce in', required: false }] },
@@ -401,13 +405,14 @@ client.on("interactionCreate", async (interaction) => {
     // Blacklist check first (overrides everything except owner)
     const userId = interaction.user.id;
     const member = interaction.member as any;
+    const guildId = interaction.guild?.id;
     
     if (!isOwnerId(userId)) {
-      let blacklisted = isBlacklisted(userId, 'user');
+      let blacklisted = isBlacklisted(userId, 'user', guildId);
       if (!blacklisted && member?.roles) {
         const roles = member.roles.cache ? Array.from(member.roles.cache.keys()) : (member.roles || []);
         for (const r of roles) {
-          if (isBlacklisted(String(r), 'role')) {
+          if (isBlacklisted(String(r), 'role', guildId)) {
             blacklisted = true;
             break;
           }
@@ -520,7 +525,7 @@ client.on("interactionCreate", async (interaction) => {
       idRaw = idRaw.replace(/[<@&!>]/g, '');
       if (!['user','role'].includes(type)) return interaction.reply({ content: 'Type must be user or role.', ephemeral: true });
       try {
-        removeBlacklistEntry(idRaw, type as any);
+        removeBlacklistEntry(idRaw, type as any, interaction.guild?.id);
         return interaction.reply({ content: `Removed blacklist ${type} ${idRaw}.`, ephemeral: true });
       } catch (err) {
         console.error('Failed to remove blacklist', err);
@@ -529,9 +534,15 @@ client.on("interactionCreate", async (interaction) => {
     }
     if (interaction.commandName === "listblacklist") {
       try {
-        const items = getBlacklist();
-        if (!items.length) return interaction.reply({ content: 'No blacklist entries configured.', ephemeral: true });
-        const out = items.map(i => `${i.type}:${i.id} reason=${i.reason ?? 'none'}`).join('\n').slice(0, 1900);
+        let list: any[] = [];
+        if (interaction.guild) {
+          const { getGuildBlacklist } = await import('./services/blacklistService');
+          list = getGuildBlacklist(interaction.guild.id);
+        } else {
+          list = getBlacklist();
+        }
+        if (!list.length) return interaction.reply({ content: 'No blacklist entries configured.', ephemeral: true });
+        const out = list.map((i: any) => `${i.type}:${i.id} reason=${i.reason ?? 'none'}`).join('\n').slice(0, 1900);
         return interaction.reply({ content: `Blacklist entries:\n${out}`, ephemeral: true });
       } catch (err) {
         console.error('Failed to list blacklist', err);
@@ -1609,8 +1620,12 @@ client.on("interactionCreate", async (interaction) => {
         { name: "setmodlog", description: "Set the moderation log channel (admin)", options: [{ name: 'channel', type: 7, description: 'Channel to receive moderation logs', required: true }] },
         { name: "getmodlog", description: "Show the current moderation log channel (admin)" },
         { name: "clearmodlog", description: "Clear the moderation log channel (admin)" },
-        { name: "warn", description: "Warn a user (DM and record)", options: [{ name: 'user', type: 6, description: 'User to warn', required: true }, { name: 'reason', type: 3, description: 'Reason', required: false }] },
-        { name: "clearwarn", description: "Clear warnings for a user", options: [{ name: 'user', type: 6, description: 'User', required: true }] },
+    { name: "warn", description: "Warn a user (DM and record)", options: [{ name: 'user', type: 6, description: 'User to warn', required: true }, { name: 'reason', type: 3, description: 'Reason', required: false }] },
+  { name: "warns", description: "Check user warnings", options: [{ name: 'user', type: 6, description: 'User to check', required: true }] },
+  { name: "checkwarn", description: "Check warnings for a user", options: [{ name: 'user', type: 6, description: 'User to check', required: true }] },
+  { name: "warnings", description: "Alias: check warnings for a user", options: [{ name: 'user', type: 6, description: 'User to check', required: true }] },
+  { name: "checkwarnings", description: "Alias: check warnings for a user", options: [{ name: 'user', type: 6, description: 'User to check', required: true }] },
+  { name: "clearwarn", description: "Clear warnings for a user", options: [{ name: 'user', type: 6, description: 'User', required: true }] },
         { name: "unmute", description: "Remove timeout from a member", options: [{ name: 'user', type: 6, description: 'Member to unmute', required: true }] },
         { name: "announce", description: "Send an announcement as the bot", options: [{ name: 'message', type: 3, description: 'Message content', required: true }, { name: 'channel', type: 7, description: 'Channel to announce in', required: false }] },
         { name: "membercount", description: "Show member count (optionally for a role)", options: [{ name: 'role', type: 8, description: 'Role to count', required: false }] },
@@ -1651,8 +1666,12 @@ client.on("interactionCreate", async (interaction) => {
         { name: "supportaddhelper", description: "Support: add a co-helper to a ticket", options: [ { name: "id", description: "Interaction ID", type: 4, required: true }, { name: "member", description: "Helper to add", type: 6, required: true } ] },
         { name: "listopentickets", description: "List all open support tickets" }
       ];
-      await client.application!.commands.set(cmds as any, interaction.guild.id);
-      return interaction.reply({ content: `Re-registered ${cmds.length} slash commands for this server (${interaction.guild.name}).`, ephemeral: true });
+      const registered = await client.application!.commands.set(cmds as any, interaction.guild.id);
+      const names = (Array.isArray(cmds) ? cmds : []).map((c:any) => c?.name).filter(Boolean);
+      const hasCheckwarn = names.includes('checkwarn');
+      const aliasList = ['warnings', 'checkwarnings'].filter(n => names.includes(n));
+      const aliasText = aliasList.length ? aliasList.join(', ') : 'none';
+      return interaction.reply({ content: `Re-registered ${(registered as any)?.size ?? names.length} slash commands for this server (${interaction.guild.name}).\ncheckwarn: ${hasCheckwarn ? 'present' : 'missing'} | aliases: ${aliasText}.`, ephemeral: true });
     } catch (err: any) {
       console.error('registercommands failed:', err);
       return interaction.reply({ content: `Failed to register commands: ${err?.message ?? err}`, ephemeral: true });
@@ -2150,7 +2169,7 @@ client.on("interactionCreate", async (interaction) => {
     try { clearModLogChannelId(); return interaction.reply({ content: 'Moderation log channel cleared.', ephemeral: true }); } catch (e) { return interaction.reply({ content: 'Failed to clear moderation log channel.', ephemeral: true }); }
   }
 
-  // New admin commands: warn / clearwarn / unmute / announce / membercount / purge
+  // New admin commands: warn / checkwarn / clearwarn / unmute / announce / membercount / purge
   if (name === 'warn') {
   if (!(await hasCommandAccess(interaction.member, 'warn', interaction.guild?.id || null))) {
     return interaction.reply({ content: '❌ You don\'t have permission to use this command.', ephemeral: true });
@@ -2172,6 +2191,72 @@ client.on("interactionCreate", async (interaction) => {
     await sendToModLog(interaction.guild!, embed, `<@${user.id}>`);
     warnings.addWarning(user.id, interaction.user.id, reason);
     return interaction.reply({ content: `Warned ${user.tag}`, ephemeral: true });
+  }
+
+  if (name === 'checkwarn' || name === 'warnings' || name === 'checkwarnings' || name === 'warns') {
+    if (!(await hasCommandAccess(interaction.member, 'checkwarn', interaction.guild?.id || null))) {
+      return interaction.reply({ content: '❌ You don\'t have permission to use this command.', ephemeral: true });
+    }
+    const user = interaction.options.getUser('user');
+    if (!user || !interaction.guild) {
+      return interaction.reply({ content: 'User not found.', ephemeral: true });
+    }
+
+    try {
+      const { getWarningDetails } = await import('./services/antiAbuse');
+      const details = getWarningDetails(user.id, interaction.guild.id);
+      
+      // Build warning embed
+      const warningEmbed = new EmbedBuilder()
+        .setTitle(`⚠️ Warnings for ${user.tag}`)
+        .setColor(details.total === 0 ? 0x00FF00 : details.total >= 3 ? 0xFF0000 : 0xFFAA00)
+        .addFields(
+          { name: 'Total Warnings', value: `${details.total}`, inline: true },
+          { name: 'Spam Warnings', value: `${details.spam}`, inline: true },
+          { name: 'Bypass Warnings', value: `${details.bypass}`, inline: true },
+          { name: 'Inappropriate Content', value: `${details.inappropriate}`, inline: true }
+        );
+
+      if (details.lastWarning) {
+        const lastWarnDate = new Date(details.lastWarning);
+        warningEmbed.addFields({ 
+          name: 'Last Warning', 
+          value: `<t:${Math.floor(lastWarnDate.getTime() / 1000)}:R>`, 
+          inline: false 
+        });
+      }
+
+      // Add next action info
+      if (details.inappropriate >= 3) {
+        const muteAfter = details.inappropriate - 2; // 3rd = 1st mute, 4th = 2nd mute, etc.
+        const muteDuration = muteAfter === 1 ? '10 minutes' : 
+                            muteAfter === 2 ? '30 minutes' : 
+                            muteAfter === 3 ? '1 hour' : 
+                            '24 hours';
+        warningEmbed.addFields({
+          name: '⏰ Next Action',
+          value: `Next inappropriate content will result in **${muteDuration} mute**`,
+          inline: false
+        });
+      } else if (details.spam >= 3 || details.bypass >= 3) {
+        warningEmbed.addFields({
+          name: '🚫 Status',
+          value: 'User should be blacklisted (3+ warnings)',
+          inline: false
+        });
+      } else if (details.total > 0) {
+        warningEmbed.addFields({
+          name: '📋 Status',
+          value: `${3 - details.total} more warning(s) until action taken`,
+          inline: false
+        });
+      }
+
+      return interaction.reply({ embeds: [warningEmbed], ephemeral: true });
+    } catch (err) {
+      console.error('Failed to check warnings:', err);
+      return interaction.reply({ content: 'Failed to retrieve warning information.', ephemeral: true });
+    }
   }
 
   if (name === 'clearwarn') {
@@ -2471,9 +2556,11 @@ client.on("messageReactionAdd", async (reaction, user) => {
     
     if (!giveaway || giveaway.status !== 'active') return;
     
+    const guildId = reaction.message.guild?.id;
+    
     // Check whitelist/blacklist
     if (!isOwnerId(user.id)) {
-      if (isBlacklisted(user.id, 'user')) {
+      if (isBlacklisted(user.id, 'user', guildId)) {
         try {
           await user.send("You are blacklisted and cannot enter giveaways.");
         } catch { /* ignore */ }
@@ -2485,7 +2572,7 @@ client.on("messageReactionAdd", async (reaction, user) => {
       if (member) {
         const roles = member.roles.cache ? Array.from(member.roles.cache.keys()) : [];
         for (const r of roles) {
-          if (isBlacklisted(String(r), 'role')) {
+          if (isBlacklisted(String(r), 'role', guildId)) {
             try {
               await user.send("You are blacklisted and cannot enter giveaways.");
             } catch { /* ignore */ }
@@ -2681,9 +2768,10 @@ client.on("messageCreate", async (message: Message) => {
 
   // Blacklist check first (overrides everything except owner)
   const userId = message.author.id;
+  const guildId = message.guild?.id;
   
   if (!isOwnerId(userId)) {
-    let blacklisted = isBlacklisted(userId, 'user');
+    let blacklisted = isBlacklisted(userId, 'user', guildId);
     if (!blacklisted && message.member?.roles) {
       let roles: string[] = [];
       if (message.member.roles.cache) {
@@ -2692,7 +2780,7 @@ client.on("messageCreate", async (message: Message) => {
         roles = message.member.roles.map((r: any) => typeof r === 'string' ? r : r.id);
       }
       for (const r of roles) {
-        if (isBlacklisted(String(r), 'role')) {
+        if (isBlacklisted(String(r), 'role', guildId)) {
           blacklisted = true;
           break;
         }
@@ -3042,7 +3130,7 @@ client.on("messageCreate", async (message: Message) => {
       }
     }
 
-    // Prefix alias: warn / clearwarn
+    // Prefix alias: warn / checkwarn / clearwarn
     if (command === 'warn') {
       if (!isAdminOrBypassForMessage(message.member)) return message.reply('You are not authorized to use this feature.');
       const target = message.mentions.users?.first();
@@ -3061,6 +3149,66 @@ client.on("messageCreate", async (message: Message) => {
       await sendToModLog(message.guild!, embed, `<@${target.id}>`);
       warnings.addWarning(target.id, message.author.id, reason);
       return message.reply(`Warned ${target.tag}`);
+    }
+
+    if (command === 'checkwarn' || command === 'warnings' || command === 'checkwarnings' || command === 'warns') {
+      if (!isAdminOrBypassForMessage(message.member)) return message.reply('You are not authorized to use this feature.');
+      const target = message.mentions.users?.first();
+      if (!target || !message.guild) return message.reply('Please mention a user to check warnings for.');
+      
+      try {
+        const { getWarningDetails } = await import('./services/antiAbuse');
+        const details = getWarningDetails(target.id, message.guild.id);
+        
+        const warningEmbed = new EmbedBuilder()
+          .setTitle(`⚠️ Warnings for ${target.tag}`)
+          .setColor(details.total === 0 ? 0x00FF00 : details.total >= 3 ? 0xFF0000 : 0xFFAA00)
+          .addFields(
+            { name: 'Total Warnings', value: `${details.total}`, inline: true },
+            { name: 'Spam Warnings', value: `${details.spam}`, inline: true },
+            { name: 'Bypass Warnings', value: `${details.bypass}`, inline: true },
+            { name: 'Inappropriate Content', value: `${details.inappropriate}`, inline: true }
+          );
+
+        if (details.lastWarning) {
+          const lastWarnDate = new Date(details.lastWarning);
+          warningEmbed.addFields({ 
+            name: 'Last Warning', 
+            value: `<t:${Math.floor(lastWarnDate.getTime() / 1000)}:R>`, 
+            inline: false 
+          });
+        }
+
+        if (details.inappropriate >= 3) {
+          const muteAfter = details.inappropriate - 2;
+          const muteDuration = muteAfter === 1 ? '10 minutes' : 
+                              muteAfter === 2 ? '30 minutes' : 
+                              muteAfter === 3 ? '1 hour' : 
+                              '24 hours';
+          warningEmbed.addFields({
+            name: '⏰ Next Action',
+            value: `Next inappropriate content will result in **${muteDuration} mute**`,
+            inline: false
+          });
+        } else if (details.spam >= 3 || details.bypass >= 3) {
+          warningEmbed.addFields({
+            name: '🚫 Status',
+            value: 'User should be blacklisted (3+ warnings)',
+            inline: false
+          });
+        } else if (details.total > 0) {
+          warningEmbed.addFields({
+            name: '📋 Status',
+            value: `${3 - details.total} more warning(s) until action taken`,
+            inline: false
+          });
+        }
+
+        return message.reply({ embeds: [warningEmbed] });
+      } catch (err) {
+        console.error('Failed to check warnings:', err);
+        return message.reply('Failed to retrieve warning information.');
+      }
     }
 
     if (command === 'clearwarn') {

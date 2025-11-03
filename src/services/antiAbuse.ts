@@ -69,6 +69,47 @@ export function getWarnings(userId: string, guildId: string): number {
   return total;
 }
 
+// Get detailed warning breakdown
+export function getWarningDetails(userId: string, guildId: string): {
+  total: number;
+  spam: number;
+  bypass: number;
+  inappropriate: number;
+  lastWarning: string | null;
+} {
+  const db = getDB();
+  
+  const rows = db.prepare(`
+    SELECT warning_type, warning_count, last_warning_at 
+    FROM user_warnings 
+    WHERE user_id = ? AND guild_id = ?
+  `).all(userId, guildId) as Array<{ warning_type: string; warning_count: number; last_warning_at: string }>;
+  
+  let spam = 0;
+  let bypass = 0;
+  let inappropriate = 0;
+  let lastWarning: string | null = null;
+  
+  for (const row of rows) {
+    if (row.warning_type === 'spam') spam = row.warning_count;
+    else if (row.warning_type === 'bypass') bypass = row.warning_count;
+    else inappropriate = row.warning_count;
+    
+    // Track most recent warning
+    if (!lastWarning || row.last_warning_at > lastWarning) {
+      lastWarning = row.last_warning_at;
+    }
+  }
+  
+  return {
+    total: spam + bypass + inappropriate,
+    spam,
+    bypass,
+    inappropriate,
+    lastWarning
+  };
+}
+
 // Save/update warning in database
 function saveWarning(userId: string, guildId: string, warningType: 'spam' | 'bypass' | 'other', reason: string): number {
   const db = getDB();

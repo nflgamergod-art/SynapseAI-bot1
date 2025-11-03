@@ -151,7 +151,7 @@ export function getAllGuildCommandPermissions(guildId: string): CommandPermissio
 // Available commands that can be restricted
 export const RESTRICTABLE_COMMANDS = [
   // Moderation
-  'kick', 'ban', 'mute', 'unmute', 'warn', 'clearwarn',
+  'kick', 'ban', 'mute', 'unmute', 'warn', 'checkwarn', 'clearwarn',
   // Role management
   'addrole', 'removerole',
   // Channel management
@@ -169,10 +169,10 @@ export const RESTRICTABLE_COMMANDS = [
 
 // Command categories for easier setup
 export const COMMAND_PRESETS = {
-  'head_support': ['kick', 'ban', 'mute', 'unmute', 'warn', 'clearwarn', 'addrole', 'removerole', 'purge', 'supportstart', 'supportend', 'supportaddhelper', 'listopentickets'],
-  'support': ['mute', 'unmute', 'warn', 'supportstart', 'supportend', 'supportaddhelper', 'listopentickets'],
-  'trial_support': ['mute', 'unmute', 'warn', 'supportstart', 'supportend', 'listopentickets'],
-  'moderator': ['kick', 'ban', 'mute', 'unmute', 'warn', 'clearwarn', 'purge'],
+  'head_support': ['kick', 'ban', 'mute', 'unmute', 'warn', 'checkwarn', 'clearwarn', 'addrole', 'removerole', 'purge', 'supportstart', 'supportend', 'supportaddhelper', 'listopentickets'],
+  'support': ['mute', 'unmute', 'warn', 'checkwarn', 'supportstart', 'supportend', 'supportaddhelper', 'listopentickets'],
+  'trial_support': ['mute', 'unmute', 'warn', 'checkwarn', 'supportstart', 'supportend', 'listopentickets'],
+  'moderator': ['kick', 'ban', 'mute', 'unmute', 'warn', 'checkwarn', 'clearwarn', 'purge'],
   'admin': RESTRICTABLE_COMMANDS // All commands
 };
 
