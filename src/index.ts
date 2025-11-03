@@ -421,11 +421,45 @@ client.once("clientReady", async () => {
     ] }
   ];
 
+  // Sanitize commands to meet Discord length limits
+  const clamp = (s: any, max: number) => {
+    if (typeof s !== 'string') return s;
+    return s.length > max ? s.slice(0, max) : s;
+  };
+  const sanitizeOption = (opt: any): any => {
+    if (!opt || typeof opt !== 'object') return opt;
+    if (opt.name) opt.name = clamp(opt.name, 32);
+    if (opt.description) opt.description = clamp(opt.description, 100);
+    if (Array.isArray(opt.choices)) {
+      opt.choices = opt.choices.map((ch: any) => {
+        if (ch && typeof ch === 'object') {
+          if (ch.name) ch.name = clamp(ch.name, 100);
+          if (typeof ch.value === 'string') ch.value = clamp(ch.value, 100);
+        }
+        return ch;
+      });
+    }
+    if (Array.isArray(opt.options)) {
+      opt.options = opt.options.map((sub: any) => sanitizeOption(sub));
+    }
+    return opt;
+  };
+  const sanitizeCommand = (cmd: any): any => {
+    if (!cmd || typeof cmd !== 'object') return cmd;
+    if (cmd.name) cmd.name = clamp(cmd.name, 32);
+    if (cmd.description) cmd.description = clamp(cmd.description, 100);
+    if (Array.isArray(cmd.options)) {
+      cmd.options = cmd.options.map((opt: any) => sanitizeOption(opt));
+    }
+    return cmd;
+  };
+  const sanitizedCommands = commands.map((c) => sanitizeCommand({ ...c }));
+
   (async () => {
     try {
       if (!client.application) return;
       if (guildId) {
-        const setRes = await client.application.commands.set(commands, guildId);
+        const setRes = await client.application.commands.set(sanitizedCommands, guildId);
         console.log(`Registered ${commands.length} slash commands for guild ${guildId}`);
         try {
           const names = Array.from(setRes.values()).map(c => c.name).sort();
@@ -439,7 +473,7 @@ client.once("clientReady", async () => {
           console.warn('Failed to clear global commands:', e);
         }
       } else {
-        const setRes = await client.application.commands.set(commands as any);
+        const setRes = await client.application.commands.set(sanitizedCommands as any);
         console.log(`Registered ${commands.length} global slash commands`);
         try {
           const names = Array.from((setRes as any).values?.() ?? []).map((c: any) => c.name).sort();
