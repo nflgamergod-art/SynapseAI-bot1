@@ -133,19 +133,20 @@ export function detectBypassAttempt(userId: string, content: string): boolean {
 // Auto-blacklist user
 export function autoBlacklist(userId: string, guildId: string, reason: string): boolean {
   const db = getDB();
+  const now = nowISO();
   
   // Check if already blacklisted
   const existing = db.prepare(
-    'SELECT * FROM blacklist WHERE guild_id = ? AND type = ? AND id = ?'
-  ).get(guildId, 'user', userId);
+    'SELECT * FROM blacklist WHERE user_id = ? AND guild_id = ?'
+  ).get(userId, guildId);
   
   if (existing) return false; // Already blacklisted
   
   // Add to blacklist
   db.prepare(`
-    INSERT INTO blacklist (guild_id, type, id, reason)
-    VALUES (?, ?, ?, ?)
-  `).run(guildId, 'user', userId, `[AUTO] ${reason}`);
+    INSERT INTO blacklist (user_id, guild_id, reason, banned_by, created_at)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(userId, guildId, `[AUTO] ${reason}`, 'system', now);
   
   return true;
 }
