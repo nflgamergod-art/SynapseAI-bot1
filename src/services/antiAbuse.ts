@@ -99,16 +99,17 @@ export function incrementWarning(userId: string, guildId: string, warningType: '
 
 // Check if user is trying to bypass permissions
 export function detectBypassAttempt(userId: string, content: string): boolean {
+  // Only flag if the message contains patterns that suggest they're ASKING the bot to ping everyone
+  // Not just mentioning the words @everyone or @here in conversation
   const lowerContent = content.toLowerCase();
   
-  // Patterns that indicate bypass attempts
+  // Patterns that indicate they want the BOT to ping everyone/here
   const bypassPatterns = [
-    /@everyone/i,
-    /@here/i,
-    /can you @everyone/i,
-    /ping everyone/i,
-    /mention everyone/i,
-    /tag everyone/i
+    /can you (ping|tag|mention|@)\s*(everyone|here)/i,
+    /ping (everyone|here) (for me|please)/i,
+    /mention (everyone|here)/i,
+    /tag (everyone|here)/i,
+    /(say|tell|announce).*(everyone|here)/i
   ];
   
   return bypassPatterns.some(pattern => pattern.test(content));
