@@ -23,6 +23,16 @@ export function initShiftsSchema() {
     );
     CREATE INDEX IF NOT EXISTS idx_shifts_guild_user ON shifts(guild_id, user_id);
     CREATE INDEX IF NOT EXISTS idx_shifts_active ON shifts(guild_id, user_id, clock_out);
+    
+    CREATE TABLE IF NOT EXISTS shift_panels (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      guild_id TEXT NOT NULL,
+      channel_id TEXT NOT NULL,
+      message_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE(guild_id, channel_id, message_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_shift_panels_guild ON shift_panels(guild_id);
   `);
 }
 
@@ -162,6 +172,28 @@ export function getActiveStaff(guildId: string): Shift[] {
     clock_out: row.clock_out,
     duration_minutes: row.duration_minutes
   }));
+}
+
+// Panel management
+export function registerShiftPanel(guildId: string, channelId: string, messageId: string): void {
+  const db = getDB();
+  db.prepare(`
+    INSERT OR IGNORE INTO shift_panels (guild_id, channel_id, message_id, created_at)
+    VALUES (?, ?, ?, ?)
+  `).run(guildId, channelId, messageId, new Date().toISOString());
+}
+
+export function getShiftPanels(guildId: string): Array<{ channel_id: string; message_id: string }> {
+  const db = getDB();
+  const rows = db.prepare(`
+    SELECT channel_id, message_id FROM shift_panels WHERE guild_id = ?
+  `).all(guildId) as any[];
+  return rows;
+}
+
+export function removeShiftPanel(guildId: string, messageId: string): void {
+  const db = getDB();
+  db.prepare(`DELETE FROM shift_panels WHERE guild_id = ? AND message_id = ?`).run(guildId, messageId);
 }
 
 // Initialize schema on import

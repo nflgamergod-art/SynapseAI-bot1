@@ -46,6 +46,33 @@ function parseDuration(durationStr: string): number {
   }
 }
 
+// Helper to build shift panel embed
+async function buildShiftPanelEmbed(guildId: string, client: Client): Promise<EmbedBuilder> {
+  const { getActiveStaff } = await import('./services/shifts');
+  const activeStaff = getActiveStaff(guildId);
+  
+  const embed = new EmbedBuilder()
+    .setTitle('🕒 Staff Clock-In Status')
+    .setColor(activeStaff.length > 0 ? 0x00FF00 : 0x808080)
+    .setTimestamp();
+  
+  if (activeStaff.length === 0) {
+    embed.setDescription('No staff currently clocked in.');
+  } else {
+    const staffLines = activeStaff.map(shift => {
+      const clockIn = new Date(shift.clock_in);
+      const duration = Math.floor((Date.now() - clockIn.getTime()) / 60000);
+      const hours = Math.floor(duration / 60);
+      const mins = duration % 60;
+      return `✅ <@${shift.user_id}> — ${hours}h ${mins}m (since <t:${Math.floor(clockIn.getTime() / 1000)}:t>)`;
+    });
+    embed.setDescription(staffLines.join('\n'));
+    embed.setFooter({ text: `${activeStaff.length} staff member${activeStaff.length === 1 ? '' : 's'} on duty` });
+  }
+  
+  return embed;
+}
+
 if (!token) {
   console.error("DISCORD_TOKEN not set in .env — cannot start bot");
   process.exit(1);
@@ -355,9 +382,12 @@ client.once("clientReady", async () => {
     // Staff Shifts
     { name: "clockin", description: "🕒 Clock in for your shift" },
     { name: "clockout", description: "🕒 Clock out from your shift" },
-    { name: "shifts", description: "🕒 View shift history", options: [
-      { name: "user", description: "User to check (defaults to you)", type: 6, required: false },
-      { name: "limit", description: "Number of shifts to show (default 10)", type: 4, required: false }
+    { name: "shifts", description: "🕒 Shift management system", options: [
+      { name: "history", description: "View shift history", type: 1, options: [
+        { name: "user", description: "User to check (defaults to you)", type: 6, required: false },
+        { name: "limit", description: "Number of shifts to show (default 10)", type: 4, required: false }
+      ] },
+      { name: "panel", description: "Post a live shift tracker panel in this channel", type: 1 }
     ] },
     { name: "shiftstats", description: "📊 View shift statistics", options: [
       { name: "user", description: "User to check (defaults to you)", type: 6, required: false },
@@ -657,6 +687,24 @@ client.on("interactionCreate", async (interaction) => {
           return interaction.reply({ content: `✅ Ticket created: <#${(ticketChannel as any).id}>`, ephemeral: true });
         } catch (e) {
           return interaction.reply({ content: '❌ Failed to create ticket. Please try again or contact staff.', ephemeral: true });
+        }
+      }
+
+      // Shift panel refresh button
+      if (btn === 'shifts-refresh') {
+        try {
+          if (!interaction.guild || !interaction.message) {
+            return interaction.reply({ content: '❌ Invalid context.', ephemeral: true });
+          }
+          const embed = await buildShiftPanelEmbed(interaction.guild.id, interaction.client);
+          const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder().setCustomId('shifts-refresh').setLabel('🔄 Refresh').setStyle(ButtonStyle.Secondary)
+          );
+          await interaction.message.edit({ embeds: [embed], components: [row] });
+          return interaction.reply({ content: '✅ Panel refreshed!', ephemeral: true });
+        } catch (e) {
+          console.error('Failed to refresh shift panel:', e);
+          return interaction.reply({ content: '❌ Failed to refresh panel.', ephemeral: true });
         }
       }
 
@@ -1414,8 +1462,29 @@ client.on("interactionCreate", async (interaction) => {
   if (name === "clockin") {
     if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
 
-    const { clockIn } = await import('./services/shifts');
+    const { clockIn, getShiftPanels } = await import('./services/shifts');
     const result = clockIn(interaction.guild.id, interaction.user.id);
+
+    // Auto-update all shift panels
+    if (result.success) {
+      const panels = getShiftPanels(interaction.guild.id);
+      const embed = await buildShiftPanelEmbed(interaction.guild.id, interaction.client);
+      const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId('shifts-refresh').setLabel('🔄 Refresh').setStyle(ButtonStyle.Secondary)
+      );
+
+      for (const panel of panels) {
+        try {
+          const channel = await interaction.guild.channels.fetch(panel.channel_id);
+          if (channel?.isTextBased()) {
+            const message = await (channel as any).messages.fetch(panel.message_id);
+            await message.edit({ embeds: [embed], components: [row] });
+          }
+        } catch (e) {
+          // Panel message may have been deleted
+        }
+      }
+    }
 
     return interaction.reply({ content: result.message, ephemeral: true });
   }
@@ -1423,8 +1492,29 @@ client.on("interactionCreate", async (interaction) => {
   if (name === "clockout") {
     if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
 
-    const { clockOut } = await import('./services/shifts');
+    const { clockOut, getShiftPanels } = await import('./services/shifts');
     const result = clockOut(interaction.guild.id, interaction.user.id);
+
+    // Auto-update all shift panels
+    if (result.success) {
+      const panels = getShiftPanels(interaction.guild.id);
+      const embed = await buildShiftPanelEmbed(interaction.guild.id, interaction.client);
+      const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId('shifts-refresh').setLabel('🔄 Refresh').setStyle(ButtonStyle.Secondary)
+      );
+
+      for (const panel of panels) {
+        try {
+          const channel = await interaction.guild.channels.fetch(panel.channel_id);
+          if (channel?.isTextBased()) {
+            const message = await (channel as any).messages.fetch(panel.message_id);
+            await message.edit({ embeds: [embed], components: [row] });
+          }
+        } catch (e) {
+          // Panel message may have been deleted
+        }
+      }
+    }
 
     if (result.success && result.duration) {
       const hours = Math.floor(result.duration / 60);
@@ -1438,34 +1528,58 @@ client.on("interactionCreate", async (interaction) => {
   if (name === "shifts") {
     if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
 
-    const user = interaction.options.getUser('user') || interaction.user;
-    const limit = interaction.options.getInteger('limit') || 10;
+    const subCmd = interaction.options.getSubcommand();
+    
+    if (subCmd === "history") {
+      const user = interaction.options.getUser('user') || interaction.user;
+      const limit = interaction.options.getInteger('limit') || 10;
 
-    const { getUserShifts } = await import('./services/shifts');
-    const shifts = getUserShifts(interaction.guild.id, user.id, limit);
+      const { getUserShifts } = await import('./services/shifts');
+      const shifts = getUserShifts(interaction.guild.id, user.id, limit);
 
-    if (shifts.length === 0) {
-      return interaction.reply({ content: `${user.id === interaction.user.id ? 'You have' : user.tag + ' has'} no recorded shifts.`, ephemeral: true });
+      if (shifts.length === 0) {
+        return interaction.reply({ content: `${user.id === interaction.user.id ? 'You have' : user.tag + ' has'} no recorded shifts.`, ephemeral: true });
+      }
+
+      const embed = new EmbedBuilder()
+        .setTitle(`🕒 Shift History - ${user.tag}`)
+        .setColor(0x5865F2);
+
+      for (const shift of shifts) {
+        const clockIn = new Date(shift.clock_in);
+        const status = shift.clock_out ? 
+          `**Duration:** ${Math.floor(shift.duration_minutes! / 60)}h ${shift.duration_minutes! % 60}m\n**Ended:** ${new Date(shift.clock_out).toLocaleString()}` :
+          '**Status:** Currently clocked in';
+        
+        embed.addFields({
+          name: `Shift #${shift.id}`,
+          value: `**Started:** ${clockIn.toLocaleString()}\n${status}`,
+          inline: false
+        });
+      }
+
+      return interaction.reply({ embeds: [embed], ephemeral: true });
     }
 
-    const embed = new EmbedBuilder()
-      .setTitle(`🕒 Shift History - ${user.tag}`)
-      .setColor(0x5865F2);
+    if (subCmd === "panel") {
+      const member = interaction.member as any;
+      if (!member.permissions.has('ManageChannels')) {
+        return interaction.reply({ content: '❌ You need Manage Channels permission to post shift panels.', ephemeral: true });
+      }
 
-    for (const shift of shifts) {
-      const clockIn = new Date(shift.clock_in);
-      const status = shift.clock_out ? 
-        `**Duration:** ${Math.floor(shift.duration_minutes! / 60)}h ${shift.duration_minutes! % 60}m\n**Ended:** ${new Date(shift.clock_out).toLocaleString()}` :
-        '**Status:** Currently clocked in';
-      
-      embed.addFields({
-        name: `Shift #${shift.id}`,
-        value: `**Started:** ${clockIn.toLocaleString()}\n${status}`,
-        inline: false
-      });
+      const { registerShiftPanel } = await import('./services/shifts');
+      const embed = await buildShiftPanelEmbed(interaction.guild.id, interaction.client);
+      const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId('shifts-refresh').setLabel('🔄 Refresh').setStyle(ButtonStyle.Secondary)
+      );
+
+      if (interaction.channel && 'send' in interaction.channel) {
+        const message = await interaction.channel.send({ embeds: [embed], components: [row] });
+        registerShiftPanel(interaction.guild.id, interaction.channel.id, message.id);
+      }
+
+      return interaction.reply({ content: '✅ Posted shift tracker panel in this channel!', ephemeral: true });
     }
-
-    return interaction.reply({ embeds: [embed], ephemeral: true });
   }
 
   if (name === "shiftstats") {
