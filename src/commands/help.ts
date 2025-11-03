@@ -1,63 +1,45 @@
-import { Message } from "discord.js";
+import { Message, EmbedBuilder } from "discord.js";
 
 export function helpCommand(message: Message, prefix: string) {
-  const helpText = `**📖 SynapseAI Bot Commands Help**
-*Prefixes: You can use either \`${prefix}\` or \`.\` before any command*
+  const embed = new EmbedBuilder()
+    .setTitle('📖 SynapseAI Bot Commands')
+    .setColor(0x3498db)
+    .setDescription(`*You can use either \`${prefix}\` or \`.\` as prefix*`)
+    .addFields(
+      {
+        name: '🎮 General',
+        value: `\`${prefix}help\` - Show this help
+\`${prefix}ping\` - Check latency
+\`${prefix}joke\` - Random joke
+\`${prefix}dadjoke\` - Dad joke`,
+        inline: false
+      },
+      {
+        name: '🔨 Moderation (Admin)',
+        value: `\`${prefix}kick @user [reason]\`
+\`${prefix}ban @user [reason]\`
+\`${prefix}mute @user [duration]\`
+\`${prefix}addrole @user @role\`
+\`${prefix}removerole @user @role\``,
+        inline: false
+      },
+      {
+        name: '🎯 Popular Slash Commands',
+        value: '`/supportstats` - View support stats\n`/kb search` - Search knowledge base\n`/achievements` - View achievements\n`/perks` - Unlock special abilities\n`/remember` - Save preferences\n`/rpsai` `/blackjack` - Play games',
+        inline: false
+      },
+      {
+        name: '💬 AI Interaction',
+        value: '• Mention @SynapseAI for AI replies\n• Say "SynapseAI" in messages\n• Bot learns from conversations!',
+        inline: false
+      },
+      {
+        name: '🔒 Security',
+        value: '• Anti-spam (3 warnings = blacklist)\n• Content filtering\n• No @everyone/@here abuse',
+        inline: false
+      }
+    )
+    .setFooter({ text: 'Type /kb search to find more answers • Bot auto-saves helpful Q&A' });
 
-**🎮 General Commands:**
-${prefix}help - Show this help message
-${prefix}ping / ${prefix}pong - Check bot response latency
-${prefix}joke - Tell a random joke
-${prefix}dadjoke - Tell a dad joke
-
-**🔨 Moderation Commands (Admin):**
-${prefix}kick @user [reason] - Kick a member (requires Kick Members permission)
-${prefix}ban @user [reason] - Ban a member (requires Ban Members permission)
-${prefix}mute @user [duration] [reason] - Timeout a member (e.g., 20s, 10m, 1h; requires Moderate Members)
-${prefix}addrole @user @role - Add a role to a member (requires Manage Roles)
-${prefix}removerole @user @role - Remove a role from a member (requires Manage Roles)
-${prefix}setdefaultmute <duration> - Set default mute duration (e.g., 10m, 1h)
-${prefix}getdefaultmute - Show current default mute duration
-
-**⚙️ Configuration Commands (Admin):**
-${prefix}setquestiontimeout <seconds> - Set how long before same question can be asked again
-${prefix}getquestiontimeout - Check current question repeat timeout
-
-**💬 AI Interaction:**
-• Mention the bot (@SynapseAI) to get natural AI-powered replies
-• Say the wake-word (e.g., "SynapseAI") in your message
-• Ask questions naturally - the bot learns and remembers!
-
-**🎯 Slash Commands:**
-Use \`/\` for these commands:
-• \`/supportstats\` - View support member performance
-• \`/leaderboard\` - Support & achievement rankings
-• \`/kb search\` - Search knowledge base for answers
-• \`/achievements\` - View earned achievements
-• \`/perks\` - See your unlocked special abilities
-• \`/supportstart\` - Start tracking a support ticket
-• \`/supportend\` - End a support ticket
-• \`/listopentickets\` - List all open tickets
-• \`/remember\` - Save personal preferences for better AI replies
-• \`/memories\` - List your saved memories
-• \`/forget\` - Delete a saved memory
-• \`/rpsai\` - Play Rock-Paper-Scissors vs AI
-• \`/blackjack\` - Play Blackjack vs AI
-• \`/purge\` - Delete recent messages (1-1000)
-• \`/warn\` - Warn a user
-• \`/clearwarn\` - Clear user warnings
-• \`/unmute\` - Remove timeout from member
-• \`/announce\` - Send announcement as bot
-• \`/membercount\` - Show member count
-
-**📚 More Info:**
-Type \`/kb search\` to find answers to common questions
-The bot auto-learns from conversations and saves helpful Q&A!
-
-**🔒 Security Features:**
-• Anti-spam protection (3 warnings = auto-blacklist)
-• Inappropriate content filtering
-• @everyone/@here mention blocking`;
-
-  message.reply(helpText);
+  message.reply({ embeds: [embed] });
 }
