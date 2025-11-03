@@ -448,6 +448,26 @@ client.once("clientReady", async () => {
       }
     } catch (err) {
       console.error("Failed to register slash commands:", err);
+      // Validate command descriptions to find the issue
+      commands.forEach((cmd: any, idx: number) => {
+        if (cmd.description && cmd.description.length > 100) {
+          console.error(`Command ${idx} "${cmd.name}" description too long: ${cmd.description.length} chars - "${cmd.description}"`);
+        }
+        if (cmd.options) {
+          cmd.options.forEach((opt: any, optIdx: number) => {
+            if (opt.description && opt.description.length > 100) {
+              console.error(`Command ${idx} "${cmd.name}" option ${optIdx} "${opt.name}" description too long: ${opt.description.length} chars - "${opt.description}"`);
+            }
+            if (opt.options) {
+              opt.options.forEach((subOpt: any, subIdx: number) => {
+                if (subOpt.description && subOpt.description.length > 100) {
+                  console.error(`Command ${idx} "${cmd.name}" option ${optIdx} "${opt.name}" sub-option ${subIdx} "${subOpt.name}" description too long: ${subOpt.description.length} chars - "${subOpt.description}"`);
+                }
+              });
+            }
+          });
+        }
+      });
     }
   })();
 });
