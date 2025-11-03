@@ -2268,7 +2268,7 @@ client.on("messageCreate", async (message: Message) => {
       }
       
       // Warn and ignore message (don't respond)
-      if (newWarnings === 1) {
+      if (newWarnings < 3) {
         await message.reply(`⚠️ Warning: Spam detection (too many messages too quickly). Slow down or you will be automatically blacklisted. (${newWarnings}/3 warnings)`);
       }
       return; // Don't process spam messages
