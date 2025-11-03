@@ -2064,6 +2064,42 @@ client.on("interactionCreate", async (interaction) => {
         return interaction.reply({ content: `❌ This ticket is already claimed by <@${ticket.claimed_by}>.`, ephemeral: true });
       }
 
+      // Check if staff is clocked in, auto-clock-in if not
+      const { getActiveShift, clockIn } = await import('./services/shifts');
+      const activeShift = getActiveShift(interaction.guild!.id, interaction.user.id);
+      
+      if (!activeShift) {
+        // Auto-clock-in the staff member
+        const clockInResult = clockIn(interaction.guild!.id, interaction.user.id);
+        if (clockInResult.success) {
+          await interaction.channel.send(`⏰ <@${interaction.user.id}> was automatically clocked in when claiming this ticket.`);
+          
+          // Update shift panels
+          try {
+            const { getShiftPanels } = await import('./services/shifts');
+            const panels = getShiftPanels(interaction.guild!.id);
+            const embed = await buildShiftPanelEmbed(interaction.guild!.id, interaction.client);
+            const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+              new ButtonBuilder().setCustomId('shifts-refresh').setLabel('🔄 Refresh').setStyle(ButtonStyle.Secondary)
+            );
+
+            for (const panel of panels) {
+              try {
+                const channel = await interaction.guild!.channels.fetch(panel.channel_id);
+                if (channel?.isTextBased()) {
+                  const message = await (channel as any).messages.fetch(panel.message_id);
+                  await message.edit({ embeds: [embed], components: [row] });
+                }
+              } catch (e) {
+                // Panel message may have been deleted
+              }
+            }
+          } catch (e) {
+            console.error('Failed to update shift panels:', e);
+          }
+        }
+      }
+
       claimTicket(interaction.channel.id, interaction.user.id);
 
       // Auto-start support interaction
@@ -2102,6 +2138,17 @@ client.on("interactionCreate", async (interaction) => {
       }
 
       const helper = interaction.options.getUser('user', true);
+
+      // Check if helper is clocked in
+      const { getActiveShift } = await import('./services/shifts');
+      const activeShift = getActiveShift(interaction.guild!.id, helper.id);
+      
+      if (!activeShift) {
+        return interaction.reply({ 
+          content: `❌ <@${helper.id}> must be clocked in to be added as a helper. They can use \`/clockin\` first.`,
+          ephemeral: true 
+        });
+      }
 
       if (!ticket.support_interaction_id) {
         return interaction.reply({ content: '❌ This ticket doesn\'t have a support interaction. Claim it first with `/ticket claim`.', ephemeral: true });
