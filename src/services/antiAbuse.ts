@@ -40,14 +40,23 @@ export function trackMessage(userId: string): boolean {
   // Check if spamming
   if (tracker.messages.length >= SPAM_MESSAGE_THRESHOLD) {
     tracker.warnings++;
-    
-    // Auto-blacklist after threshold
-    if (tracker.warnings >= WARNING_THRESHOLD) {
-      return true; // Indicates should blacklist
-    }
+    return true; // Indicates spam detected
   }
   
   return false;
+}
+
+// Increment warning count for bypass attempts
+export function incrementWarning(userId: string): number {
+  let tracker = spamTrackers.get(userId);
+  
+  if (!tracker) {
+    tracker = { userId, messages: [], warnings: 0 };
+    spamTrackers.set(userId, tracker);
+  }
+  
+  tracker.warnings++;
+  return tracker.warnings;
 }
 
 // Check if user is trying to bypass permissions

@@ -2190,41 +2190,71 @@ client.on("messageCreate", async (message: Message) => {
 
   // Anti-abuse detection
   try {
-    const { trackMessage, detectBypassAttempt, autoBlacklist, getWarnings } = await import('./services/antiAbuse');
-    const isSpam = trackMessage(message.author.id);
+    const { trackMessage, detectBypassAttempt, autoBlacklist, getWarnings, incrementWarning } = await import('./services/antiAbuse');
     const isBypass = detectBypassAttempt(message.author.id, message.content);
     
-    if (isSpam || isBypass) {
+    // Check for bypass attempts first (immediate warning)
+    if (isBypass) {
       const guildId = message.guild?.id || '';
-      const reason = isSpam ? 'Spam detection (repeated messages)' : 'Permission bypass attempt (@everyone/@here)';
+      const reason = 'Permission bypass attempt (@everyone/@here)';
       
-      // Auto-blacklist
-      const blacklisted = autoBlacklist(message.author.id, guildId, reason);
+      const newWarnings = incrementWarning(message.author.id);
       
-      if (blacklisted) {
+      if (newWarnings >= 3) {
+        // Auto-blacklist on 3rd bypass attempt
+        autoBlacklist(message.author.id, guildId, reason);
+        
         // Log to mod channel
         try {
           const logChannel = getModLogChannelId();
           if (logChannel && message.guild) {
             const channel = await message.guild.channels.fetch(logChannel);
             if (channel?.isTextBased()) {
-              await (channel as any).send(`🚨 **Auto-Blacklist**\nUser: <@${message.author.id}> (${message.author.tag})\nReason: ${reason}\nWarnings: ${getWarnings(message.author.id)}`);
+              await (channel as any).send(`🚨 **Auto-Blacklist**\nUser: <@${message.author.id}> (${message.author.tag})\nReason: ${reason}\nWarnings: ${newWarnings}/3`);
             }
           }
         } catch (err) {
           console.error('Failed to log auto-blacklist:', err);
         }
-        
-        // Silently ignore future messages
         return;
-      } else {
-        // Warn user
-        const warnings = getWarnings(message.author.id);
-        if (warnings > 0 && warnings < 3) {
-          await message.reply(`⚠️ Warning: ${reason}. Further abuse will result in automatic blacklist. (${warnings}/3 warnings)`);
-          return;
-        }
       }
+      
+      await message.reply(`⚠️ Warning: ${reason}. Further abuse will result in automatic blacklist. (${newWarnings}/3 warnings)`);
+      return;
+    }
+    
+    // Track message and check for spam
+    const isSpam = trackMessage(message.author.id);
+    
+    if (isSpam) {
+      const guildId = message.guild?.id || '';
+      const warnings = getWarnings(message.author.id);
+      
+      // Immediately stop responding if spamming (don't let them continue)
+      if (warnings >= 3) {
+        // Auto-blacklist
+        autoBlacklist(message.author.id, guildId, 'Spam detection (repeated messages)');
+        
+        // Log to mod channel
+        try {
+          const logChannel = getModLogChannelId();
+          if (logChannel && message.guild) {
+            const channel = await message.guild.channels.fetch(logChannel);
+            if (channel?.isTextBased()) {
+              await (channel as any).send(`🚨 **Auto-Blacklist**\nUser: <@${message.author.id}> (${message.author.tag})\nReason: Spam detection (repeated messages)\nWarnings: ${warnings}/3`);
+            }
+          }
+        } catch (err) {
+          console.error('Failed to log auto-blacklist:', err);
+        }
+        return;
+      }
+      
+      // Warn and ignore message (don't respond)
+      if (warnings === 1) {
+        await message.reply(`⚠️ Warning: Spam detection (too many messages too quickly). Slow down or you will be automatically blacklisted. (${warnings}/3 warnings)`);
+      }
+      return; // Don't process spam messages
     }
   } catch (err) {
     console.error('Anti-abuse check failed:', err);
