@@ -227,6 +227,7 @@ client.once("clientReady", async () => {
   { name: "supportend", description: "End a tracked support interaction (ticket)", options: [ { name: "id", description: "Interaction ID from /supportstart", type: 4, required: true }, { name: "resolved", description: "Was it resolved?", type: 5, required: true }, { name: "rating", description: "Satisfaction rating (1-5)", type: 4, required: false }, { name: "feedback", description: "Optional feedback text", type: 3, required: false } ] },
   { name: "supportrate", description: "Ticket requester: rate your support interaction", options: [ { name: "id", description: "Interaction ID", type: 4, required: true }, { name: "rating", description: "Satisfaction rating (1-5)", type: 4, required: true }, { name: "feedback", description: "Optional feedback text", type: 3, required: false } ] },
   { name: "supportaddhelper", description: "Support: add a co-helper to a ticket", options: [ { name: "id", description: "Interaction ID", type: 4, required: true }, { name: "member", description: "Helper to add", type: 6, required: true } ] },
+  { name: "listopentickets", description: "List all open support tickets" },
     { name: "perks", description: "✨ View your unlocked perks and special abilities" },
   { name: "perkspanel", description: "Owner: post a perks claim panel in this channel" },
   { name: "claimperk", description: "Claim an unlocked perk", options: [ { name: "perk", description: "custom_color | priority_support | custom_emoji | channel_suggest | voice_priority | exclusive_role", type: 3, required: true } ] },
@@ -626,6 +627,35 @@ client.on("interactionCreate", async (interaction) => {
         } catch (e:any) {
           console.error('supportaddhelper failed:', e);
           return interaction.reply({ content: `Failed to add helper: ${e?.message ?? e}`, ephemeral: true });
+        }
+      }
+      if (name === "listopentickets") {
+        if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+        // Allow admins/bypass or users in support roles
+        let allowed = adminOrBypass(interaction.member);
+        if (!allowed) {
+          try {
+            const { listSupportMembers } = await import('./services/supportRoles');
+            const lists = await listSupportMembers(interaction.guild);
+            const all = ([] as any[]).concat(lists.head, lists.support, lists.trial);
+            allowed = all.some((m:any) => m.id === interaction.user.id);
+          } catch {}
+        }
+        if (!allowed) return interaction.reply({ content: 'Only support staff or admins can use this.', ephemeral: true });
+        try {
+          const { getOpenSupportTickets } = await import('./services/smartSupport');
+          const tickets = getOpenSupportTickets(interaction.guild.id);
+          if (!tickets.length) return interaction.reply({ content: 'No open support tickets.', ephemeral: true });
+          const lines = tickets.slice(0, 25).map(t => {
+            const helpers = t.helpers.length > 0 ? ` (+${t.helpers.length} helper${t.helpers.length > 1 ? 's' : ''})` : '';
+            const time = new Date(t.started_at).toLocaleString();
+            return `**#${t.id}** • <@${t.user_id}> helped by <@${t.support_member_id}>${helpers}\n  ${t.question_category || 'general'} • ${time}\n  ${(t.question || 'No description').slice(0, 80)}`;
+          });
+          const out = lines.join('\n\n').slice(0, 1900);
+          return interaction.reply({ content: `**Open Support Tickets (${tickets.length})**\n\n${out}`, ephemeral: true });
+        } catch (e:any) {
+          console.error('listopentickets failed:', e);
+          return interaction.reply({ content: `Failed to list tickets: ${e?.message ?? e}`, ephemeral: true });
         }
       }
   if (name === "rpsai") {
@@ -1341,7 +1371,8 @@ client.on("interactionCreate", async (interaction) => {
         { name: "supportstart", description: "Start tracking a support interaction (ticket)", options: [ { name: "user", description: "User being helped", type: 6, required: true }, { name: "question", description: "What they need help with", type: 3, required: true } ] },
         { name: "supportend", description: "End a tracked support interaction (ticket)", options: [ { name: "id", description: "Interaction ID from /supportstart", type: 4, required: true }, { name: "resolved", description: "Was it resolved?", type: 5, required: true }, { name: "rating", description: "Satisfaction rating (1-5)", type: 4, required: false }, { name: "feedback", description: "Optional feedback text", type: 3, required: false } ] },
         { name: "supportrate", description: "Ticket requester: rate your support interaction", options: [ { name: "id", description: "Interaction ID", type: 4, required: true }, { name: "rating", description: "Satisfaction rating (1-5)", type: 4, required: true }, { name: "feedback", description: "Optional feedback text", type: 3, required: false } ] },
-        { name: "supportaddhelper", description: "Support: add a co-helper to a ticket", options: [ { name: "id", description: "Interaction ID", type: 4, required: true }, { name: "member", description: "Helper to add", type: 6, required: true } ] }
+        { name: "supportaddhelper", description: "Support: add a co-helper to a ticket", options: [ { name: "id", description: "Interaction ID", type: 4, required: true }, { name: "member", description: "Helper to add", type: 6, required: true } ] },
+        { name: "listopentickets", description: "List all open support tickets" }
       ];
       await client.application!.commands.set(cmds as any, interaction.guild.id);
       return interaction.reply({ content: `Re-registered ${cmds.length} slash commands for this server (${interaction.guild.name}).`, ephemeral: true });

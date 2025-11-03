@@ -77,7 +77,7 @@ export function endSupportInteraction(opts: {
     SET ended_at = ?, resolution_time_seconds = ?, was_resolved = ?,
         satisfaction_rating = ?, feedback_text = ?
     WHERE id = ?
-  `).run(now, durationSeconds, wasResolved, satisfactionRating, feedbackText, interactionId);
+  `).run(now, durationSeconds, wasResolved ? 1 : 0, satisfactionRating ?? null, feedbackText ?? null, interactionId);
   
   // Update expertise stats
   const full = db.prepare(`SELECT * FROM support_interactions WHERE id = ?`).get(interactionId) as SupportInteraction;
@@ -111,6 +111,34 @@ export function rateSupportInteraction(opts: {
   if (row.user_id !== byUserId) return { ok: false, reason: 'Only the requester can rate this ticket' };
   db.prepare(`UPDATE support_interactions SET satisfaction_rating = ?, feedback_text = COALESCE(?, feedback_text) WHERE id = ?`).run(rating, feedbackText ?? null, interactionId);
   return { ok: true };
+}
+
+// List open support tickets (not yet ended)
+export function getOpenSupportTickets(guildId?: string): Array<{
+  id: number;
+  user_id: string;
+  support_member_id: string;
+  question: string | null;
+  question_category: string | null;
+  started_at: string;
+  helpers: string[];
+}> {
+  const db = getDB();
+  let query = `SELECT id, user_id, support_member_id, question, question_category, started_at, helpers FROM support_interactions WHERE ended_at IS NULL`;
+  const params: any[] = [];
+  
+  if (guildId) {
+    query += ` AND guild_id = ?`;
+    params.push(guildId);
+  }
+  
+  query += ` ORDER BY started_at DESC`;
+  
+  const rows = db.prepare(query).all(...params) as any[];
+  return rows.map(r => ({
+    ...r,
+    helpers: r.helpers ? JSON.parse(r.helpers) : []
+  }));
 }
 
 // Update support member expertise
