@@ -247,13 +247,13 @@ client.once("clientReady", async () => {
     // Command Permissions Management
     { name: "cmdpermissions", description: "🔐 Owner: Manage command permissions panel", options: [
       { name: "panel", description: "Show interactive command permissions panel", type: 1 },
-      { name: "add", description: "Add command permission to a role", type: 1, options: [
+      { name: "add", description: "Add command permission(s) to a role", type: 1, options: [
         { name: "role", description: "Role to grant permission", type: 8, required: true },
-        { name: "command", description: "Command name (e.g., kick, ban, mute)", type: 3, required: true }
+        { name: "commands", description: "Command name(s) - comma-separated (e.g., kick,ban,mute)", type: 3, required: true }
       ] },
-      { name: "remove", description: "Remove command permission from a role", type: 1, options: [
+      { name: "remove", description: "Remove command permission(s) from a role", type: 1, options: [
         { name: "role", description: "Role to remove permission from", type: 8, required: true },
-        { name: "command", description: "Command name", type: 3, required: true }
+        { name: "commands", description: "Command name(s) - comma-separated", type: 3, required: true }
       ] },
       { name: "preset", description: "Apply command preset to a role", type: 1, options: [
         { name: "role", description: "Role to configure", type: 8, required: true },
@@ -550,8 +550,8 @@ client.on("interactionCreate", async (interaction) => {
           .setColor(0xe74c3c)
           .setDescription('Configure which roles can use specific commands. Use the subcommands below:')
           .addFields(
-            { name: '📝 Add Permission', value: '`/cmdpermissions add role:<role> command:<command>`\nGrant a command to a role', inline: false },
-            { name: '🗑️ Remove Permission', value: '`/cmdpermissions remove role:<role> command:<command>`\nRevoke a command from a role', inline: false },
+            { name: '📝 Add Permission(s)', value: '`/cmdpermissions add role:<role> commands:<cmd1,cmd2,...>`\nGrant one or more commands to a role (comma-separated)', inline: false },
+            { name: '🗑️ Remove Permission(s)', value: '`/cmdpermissions remove role:<role> commands:<cmd1,cmd2,...>`\nRevoke one or more commands from a role', inline: false },
             { name: '📦 Apply Preset', value: '`/cmdpermissions preset role:<role> preset:<preset>`\nPresets: `head_support`, `support`, `trial_support`, `moderator`, `admin`', inline: false },
             { name: '📋 List Permissions', value: '`/cmdpermissions list role:<role>`\nView all commands a role can use', inline: false },
             { name: '🧹 Clear Permissions', value: '`/cmdpermissions clear role:<role>`\nRemove all command permissions from a role', inline: false },
@@ -564,39 +564,74 @@ client.on("interactionCreate", async (interaction) => {
 
       if (subcommand === "add") {
         const role = interaction.options.getRole('role', true);
-        const command = interaction.options.getString('command', true).toLowerCase();
-
-        if (!RESTRICTABLE_COMMANDS.includes(command)) {
+        const commandsInput = interaction.options.getString('commands', true).toLowerCase();
+        
+        // Split by comma and trim whitespace
+        const commandList = commandsInput.split(',').map(cmd => cmd.trim()).filter(cmd => cmd.length > 0);
+        
+        if (commandList.length === 0) {
           return interaction.reply({ 
-            content: `❌ Invalid command. Available: ${RESTRICTABLE_COMMANDS.join(', ')}`, 
+            content: '❌ No valid commands provided.', 
             ephemeral: true 
           });
         }
 
-        const success = addCommandPermission(interaction.guild.id, role.id, command);
-        if (success) {
+        // Check all commands are valid
+        const invalidCommands = commandList.filter(cmd => !RESTRICTABLE_COMMANDS.includes(cmd));
+        if (invalidCommands.length > 0) {
           return interaction.reply({ 
-            content: `✅ Added \`${command}\` permission to role <@&${role.id}>`, 
+            content: `❌ Invalid command(s): ${invalidCommands.join(', ')}\n\nAvailable: ${RESTRICTABLE_COMMANDS.join(', ')}`, 
+            ephemeral: true 
+          });
+        }
+
+        // Add all commands
+        let successCount = 0;
+        for (const command of commandList) {
+          if (addCommandPermission(interaction.guild.id, role.id, command)) {
+            successCount++;
+          }
+        }
+
+        if (successCount === commandList.length) {
+          return interaction.reply({ 
+            content: `✅ Added ${successCount} permission(s) to <@&${role.id}>: \`${commandList.join(', ')}\``, 
             ephemeral: true 
           });
         } else {
-          return interaction.reply({ content: '❌ Failed to add permission.', ephemeral: true });
+          return interaction.reply({ 
+            content: `⚠️ Added ${successCount}/${commandList.length} permissions. Some may already exist.`, 
+            ephemeral: true 
+          });
         }
       }
 
       if (subcommand === "remove") {
         const role = interaction.options.getRole('role', true);
-        const command = interaction.options.getString('command', true).toLowerCase();
-
-        const success = removeCommandPermission(interaction.guild.id, role.id, command);
-        if (success) {
+        const commandsInput = interaction.options.getString('commands', true).toLowerCase();
+        
+        // Split by comma and trim whitespace
+        const commandList = commandsInput.split(',').map(cmd => cmd.trim()).filter(cmd => cmd.length > 0);
+        
+        if (commandList.length === 0) {
           return interaction.reply({ 
-            content: `✅ Removed \`${command}\` permission from role <@&${role.id}>`, 
+            content: '❌ No valid commands provided.', 
             ephemeral: true 
           });
-        } else {
-          return interaction.reply({ content: '❌ Failed to remove permission.', ephemeral: true });
         }
+
+        // Remove all commands
+        let successCount = 0;
+        for (const command of commandList) {
+          if (removeCommandPermission(interaction.guild.id, role.id, command)) {
+            successCount++;
+          }
+        }
+
+        return interaction.reply({ 
+          content: `✅ Removed ${successCount} permission(s) from <@&${role.id}>: \`${commandList.join(', ')}\``, 
+          ephemeral: true 
+        });
       }
 
       if (subcommand === "preset") {
