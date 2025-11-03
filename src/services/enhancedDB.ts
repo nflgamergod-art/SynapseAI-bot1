@@ -321,6 +321,19 @@ export function initEnhancedSchema() {
       decided_at TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_emoji_req_guild ON emoji_requests(guild_id, status);
+
+    -- User Warnings (spam/abuse tracking)
+    CREATE TABLE IF NOT EXISTS user_warnings (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id TEXT NOT NULL,
+      guild_id TEXT NOT NULL,
+      warning_type TEXT NOT NULL, -- 'spam', 'bypass', 'other'
+      reason TEXT NOT NULL,
+      warning_count INTEGER NOT NULL DEFAULT 1,
+      last_warning_at TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_warnings_user ON user_warnings(user_id, guild_id);
   `);
 }
 

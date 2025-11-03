@@ -1892,8 +1892,25 @@ client.on("interactionCreate", async (interaction) => {
   if (name === 'clearwarn') {
     if (!adminOrBypass(interaction.member)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
     const user = interaction.options.getUser('user');
-  const removed = user ? warnings.clearWarningsFor(user.id) : 0;
-  return interaction.reply({ content: `Cleared ${removed} warnings for ${user?.tag ?? 'unknown user'}`, ephemeral: true });
+    const removed = user ? warnings.clearWarningsFor(user.id) : 0;
+    
+    // Also clear anti-abuse warnings from database
+    let abuseWarningsCleared = 0;
+    if (user && interaction.guild) {
+      try {
+        const { clearWarnings } = await import('./services/antiAbuse');
+        const cleared = clearWarnings(user.id, interaction.guild.id);
+        if (cleared) abuseWarningsCleared = 1;
+      } catch (err) {
+        console.error('Failed to clear anti-abuse warnings:', err);
+      }
+    }
+    
+    const totalCleared = removed + abuseWarningsCleared;
+    return interaction.reply({ 
+      content: `Cleared ${totalCleared} warning${totalCleared !== 1 ? 's' : ''} for ${user?.tag ?? 'unknown user'}`, 
+      ephemeral: true 
+    });
   }
 
   if (name === 'unmute') {
@@ -2191,14 +2208,14 @@ client.on("messageCreate", async (message: Message) => {
   // Anti-abuse detection
   try {
     const { trackMessage, detectBypassAttempt, autoBlacklist, getWarnings, incrementWarning } = await import('./services/antiAbuse');
+    const guildId = message.guild?.id || '';
     const isBypass = detectBypassAttempt(message.author.id, message.content);
     
     // Check for bypass attempts first (immediate warning)
     if (isBypass) {
-      const guildId = message.guild?.id || '';
       const reason = 'Permission bypass attempt (@everyone/@here)';
       
-      const newWarnings = incrementWarning(message.author.id);
+      const newWarnings = incrementWarning(message.author.id, guildId, 'bypass', reason);
       
       if (newWarnings >= 3) {
         // Auto-blacklist on 3rd bypass attempt
@@ -2227,11 +2244,11 @@ client.on("messageCreate", async (message: Message) => {
     const isSpam = trackMessage(message.author.id);
     
     if (isSpam) {
-      const guildId = message.guild?.id || '';
-      const warnings = getWarnings(message.author.id);
+      const warnings = getWarnings(message.author.id, guildId);
+      const newWarnings = incrementWarning(message.author.id, guildId, 'spam', 'Spam detection (repeated messages)');
       
       // Immediately stop responding if spamming (don't let them continue)
-      if (warnings >= 3) {
+      if (newWarnings >= 3) {
         // Auto-blacklist
         autoBlacklist(message.author.id, guildId, 'Spam detection (repeated messages)');
         
@@ -2241,7 +2258,7 @@ client.on("messageCreate", async (message: Message) => {
           if (logChannel && message.guild) {
             const channel = await message.guild.channels.fetch(logChannel);
             if (channel?.isTextBased()) {
-              await (channel as any).send(`🚨 **Auto-Blacklist**\nUser: <@${message.author.id}> (${message.author.tag})\nReason: Spam detection (repeated messages)\nWarnings: ${warnings}/3`);
+              await (channel as any).send(`🚨 **Auto-Blacklist**\nUser: <@${message.author.id}> (${message.author.tag})\nReason: Spam detection (repeated messages)\nWarnings: ${newWarnings}/3`);
             }
           }
         } catch (err) {
@@ -2251,8 +2268,8 @@ client.on("messageCreate", async (message: Message) => {
       }
       
       // Warn and ignore message (don't respond)
-      if (warnings === 1) {
-        await message.reply(`⚠️ Warning: Spam detection (too many messages too quickly). Slow down or you will be automatically blacklisted. (${warnings}/3 warnings)`);
+      if (newWarnings === 1) {
+        await message.reply(`⚠️ Warning: Spam detection (too many messages too quickly). Slow down or you will be automatically blacklisted. (${newWarnings}/3 warnings)`);
       }
       return; // Don't process spam messages
     }
