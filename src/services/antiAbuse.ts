@@ -34,13 +34,17 @@ export function getWarnings(userId: string, guildId: string): number {
     WHERE user_id = ? AND guild_id = ?
   `).get(userId, guildId) as { total: number | null } | undefined;
   
-  return row?.total || 0;
+  const total = row?.total || 0;
+  console.log(`[AntiAbuse] getWarnings for user ${userId} in guild ${guildId}: ${total}`);
+  return total;
 }
 
 // Save/update warning in database
 function saveWarning(userId: string, guildId: string, warningType: 'spam' | 'bypass' | 'other', reason: string): number {
   const db = getDB();
   const now = nowISO();
+  
+  console.log(`[AntiAbuse] Saving warning for user ${userId} in guild ${guildId}, type: ${warningType}`);
   
   // Check if warning record exists
   const existing = db.prepare(`
@@ -51,6 +55,7 @@ function saveWarning(userId: string, guildId: string, warningType: 'spam' | 'byp
   if (existing) {
     // Update existing warning
     const newCount = existing.warning_count + 1;
+    console.log(`[AntiAbuse] Updating existing warning: ${existing.warning_count} -> ${newCount}`);
     db.prepare(`
       UPDATE user_warnings 
       SET warning_count = ?, reason = ?, last_warning_at = ?
@@ -59,6 +64,7 @@ function saveWarning(userId: string, guildId: string, warningType: 'spam' | 'byp
     return newCount;
   } else {
     // Create new warning record
+    console.log(`[AntiAbuse] Creating new warning record`);
     db.prepare(`
       INSERT INTO user_warnings (user_id, guild_id, warning_type, reason, warning_count, last_warning_at, created_at)
       VALUES (?, ?, ?, ?, 1, ?, ?)
