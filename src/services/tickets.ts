@@ -185,6 +185,18 @@ export function claimTicket(channelId: string, claimerId: string): boolean {
   return result.changes > 0;
 }
 
+// Unclaim ticket
+export function unclaimTicket(channelId: string, claimerId: string): boolean {
+  const db = getDB();
+  const result = db.prepare(`
+    UPDATE tickets
+    SET claimed_by = NULL, status = 'open', support_interaction_id = NULL
+    WHERE channel_id = ? AND claimed_by = ? AND status = 'claimed'
+  `).run(channelId, claimerId);
+  
+  return result.changes > 0;
+}
+
 // Close ticket
 export function closeTicket(channelId: string, transcript?: string): boolean {
   const db = getDB();

@@ -435,6 +435,7 @@ client.once("clientReady", async () => {
       ] },
       { name: "close", description: "Close a ticket", type: 1 },
       { name: "claim", description: "Claim a ticket", type: 1 },
+      { name: "unclaim", description: "Unclaim a ticket you've claimed", type: 1 },
       { name: "addhelper", description: "Add a helper to current ticket", type: 1, options: [
         { name: "user", description: "User who is helping", type: 6, required: true }
       ] },
@@ -2107,7 +2108,11 @@ client.on("interactionCreate", async (interaction) => {
       }
 
       // Add to ticket helpers
-      addTicketHelper(interaction.channel.id, helper.id);
+      const added = addTicketHelper(interaction.channel.id, helper.id);
+      
+      if (!added) {
+        return interaction.reply({ content: `❌ <@${helper.id}> is already a helper on this ticket.`, ephemeral: true });
+      }
 
       // Add to support interaction
       try {
@@ -2118,6 +2123,55 @@ client.on("interactionCreate", async (interaction) => {
       }
 
       return interaction.reply({ content: `✅ Added <@${helper.id}> as a helper to this ticket.`, ephemeral: true });
+    }
+
+    if (subCmd === "unclaim") {
+      if (!interaction.channel || !('guild' in interaction.channel)) {
+        return interaction.reply({ content: 'This command must be used in a ticket channel.', ephemeral: true });
+      }
+
+      const { getTicket, unclaimTicket } = await import('./services/tickets');
+      const ticket = getTicket(interaction.channel.id);
+
+      if (!ticket) {
+        return interaction.reply({ content: '❌ This is not a ticket channel.', ephemeral: true });
+      }
+
+      if (!ticket.claimed_by) {
+        return interaction.reply({ content: '❌ This ticket is not claimed.', ephemeral: true });
+      }
+
+      if (ticket.claimed_by !== interaction.user.id) {
+        return interaction.reply({ content: `❌ This ticket is claimed by <@${ticket.claimed_by}>. Only they can unclaim it.`, ephemeral: true });
+      }
+
+      const unclaimed = unclaimTicket(interaction.channel.id, interaction.user.id);
+
+      if (!unclaimed) {
+        return interaction.reply({ content: '❌ Failed to unclaim ticket.', ephemeral: true });
+      }
+
+      // End the support interaction if it exists
+      if (ticket.support_interaction_id) {
+        try {
+          const { endSupportInteraction } = await import('./services/smartSupport');
+          endSupportInteraction({
+            interactionId: ticket.support_interaction_id,
+            wasResolved: false,
+            satisfactionRating: undefined,
+            feedbackText: 'Ticket unclaimed by staff'
+          });
+        } catch (e) {
+          console.error('Failed to end support interaction:', e);
+        }
+      }
+
+      const unclaimEmbed = new EmbedBuilder()
+        .setTitle('🎫 Ticket Unclaimed')
+        .setColor(0xFFA500)
+        .setDescription(`<@${interaction.user.id}> has unclaimed this ticket. It's now available for other staff to claim.`);
+
+      return interaction.reply({ embeds: [unclaimEmbed] });
     }
 
     if (subCmd === "list") {
