@@ -425,7 +425,8 @@ client.once("clientReady", async () => {
       { name: "setup", description: "Setup ticket system (Admin)", type: 1, options: [
         { name: "category", description: "Category for ticket channels", type: 7, required: true },
         { name: "log_channel", description: "Channel for ticket logs", type: 7, required: false },
-        { name: "support_role", description: "Role to ping for new tickets", type: 8, required: false }
+        { name: "support_role", description: "Role to ping for new tickets", type: 8, required: false },
+        { name: "vouch_channel", description: "Channel to post positive ratings as vouches", type: 7, required: false }
       ] },
       { name: "panel", description: "Post a ticket panel in this channel", type: 1 },
       { name: "create", description: "Create a new ticket", type: 1, options: [
@@ -434,6 +435,9 @@ client.once("clientReady", async () => {
       ] },
       { name: "close", description: "Close a ticket", type: 1 },
       { name: "claim", description: "Claim a ticket", type: 1 },
+      { name: "addhelper", description: "Add a helper to current ticket", type: 1, options: [
+        { name: "user", description: "User who is helping", type: 6, required: true }
+      ] },
       { name: "list", description: "List open tickets", type: 1 }
     ] },
     // Temporary Channels
@@ -706,6 +710,115 @@ client.on("interactionCreate", async (interaction) => {
           console.error('Failed to refresh shift panel:', e);
           return interaction.reply({ content: '❌ Failed to refresh panel.', ephemeral: true });
         }
+      }
+
+      // Ticket rating system
+      if (btn.startsWith('ticket-rate:')) {
+        const [, ticketIdStr, ratingStr] = btn.split(':');
+        const ticketId = parseInt(ticketIdStr);
+        const rating = parseInt(ratingStr);
+
+        const { getTicketById, getTicketConfig, closeTicket, getTicketHelpers } = await import('./services/tickets');
+        const ticket = getTicketById(ticketId);
+
+        if (!ticket) {
+          return interaction.reply({ content: '❌ Ticket not found.', ephemeral: true });
+        }
+
+        // Only ticket owner can rate
+        if (ticket.user_id !== interaction.user.id) {
+          return interaction.reply({ content: '❌ Only the ticket owner can rate the support.', ephemeral: true });
+        }
+
+        if (ticket.status === 'closed') {
+          return interaction.reply({ content: '❌ This ticket is already closed.', ephemeral: true });
+        }
+
+        // End support interaction with rating
+        if (ticket.support_interaction_id) {
+          try {
+            const { endSupportInteraction } = await import('./services/smartSupport');
+            endSupportInteraction({
+              interactionId: ticket.support_interaction_id,
+              wasResolved: rating >= 3, // 3+ stars = resolved
+              satisfactionRating: rating,
+              feedbackText: undefined
+            });
+          } catch (e) {
+            console.error('Failed to end support interaction:', e);
+          }
+        }
+
+        // Generate transcript
+        const channel = await interaction.guild?.channels.fetch(ticket.channel_id);
+        let transcript = '';
+        if (channel && 'messages' in channel) {
+          const messages = await (channel as any).messages.fetch({ limit: 100 });
+          transcript = messages.reverse().map((m: any) => 
+            `[${m.createdAt.toLocaleString()}] ${m.author.tag}: ${m.content}`
+          ).join('\n');
+        }
+
+        closeTicket(ticket.channel_id, transcript);
+
+        // Post vouch if 4-5 stars and vouch channel configured
+        const config = getTicketConfig(ticket.guild_id);
+        if (config?.vouch_channel_id && rating >= 4) {
+          try {
+            const vouchChannel = await interaction.guild?.channels.fetch(config.vouch_channel_id) as any;
+            const helpers = getTicketHelpers(ticket.channel_id);
+            const allStaff = [...new Set([ticket.claimed_by, ...helpers].filter(Boolean))];
+
+            const vouchEmbed = new EmbedBuilder()
+              .setTitle('⭐ Positive Support Vouch')
+              .setColor(rating === 5 ? 0xFFD700 : 0x00AE86)
+              .setDescription(`**Rating:** ${'⭐'.repeat(rating)}\n**Ticket:** #${ticket.id} - ${ticket.category}`)
+              .addFields(
+                { name: 'User', value: `<@${ticket.user_id}>`, inline: true },
+                { name: 'Support Staff', value: allStaff.map(id => `<@${id}>`).join(', ') || 'Unknown', inline: true }
+              )
+              .setTimestamp();
+
+            await vouchChannel.send({ embeds: [vouchEmbed] });
+          } catch (e) {
+            console.error('Failed to post vouch:', e);
+          }
+        }
+
+        // Log to log channel
+        if (config?.log_channel_id) {
+          try {
+            const logChannel = await interaction.guild?.channels.fetch(config.log_channel_id) as any;
+            const logEmbed = new EmbedBuilder()
+              .setTitle(`🎫 Ticket #${ticket.id} Closed`)
+              .setColor(0xFF0000)
+              .addFields(
+                { name: 'User', value: `<@${ticket.user_id}>`, inline: true },
+                { name: 'Claimed By', value: ticket.claimed_by ? `<@${ticket.claimed_by}>` : 'Unclaimed', inline: true },
+                { name: 'Rating', value: `${'⭐'.repeat(rating)} (${rating}/5)`, inline: true }
+              )
+              .setTimestamp();
+
+            await logChannel.send({ embeds: [logEmbed], files: transcript ? [{ attachment: Buffer.from(transcript), name: `ticket-${ticket.id}-transcript.txt` }] : [] });
+          } catch (e) {
+            console.error('Failed to log ticket:', e);
+          }
+        }
+
+        const closeEmbed = new EmbedBuilder()
+          .setTitle('✅ Thank You for Your Feedback!')
+          .setColor(0x00AE86)
+          .setDescription(`You rated this support ${'⭐'.repeat(rating)}\n\nThis ticket is now closed and will be deleted in 10 seconds.`);
+
+        await interaction.update({ embeds: [closeEmbed], components: [] });
+
+        setTimeout(async () => {
+          try {
+            if (channel) await (channel as any).delete();
+          } catch {}
+        }, 10000);
+
+        return;
       }
 
       // Bulk action confirmations
@@ -1760,6 +1873,7 @@ client.on("interactionCreate", async (interaction) => {
       const category = interaction.options.getChannel('category', true);
       const logChannel = interaction.options.getChannel('log_channel');
       const supportRole = interaction.options.getRole('support_role');
+      const vouchChannel = interaction.options.getChannel('vouch_channel');
 
       const { setTicketConfig } = await import('./services/tickets');
       setTicketConfig({
@@ -1767,6 +1881,7 @@ client.on("interactionCreate", async (interaction) => {
         category_id: category.id,
         log_channel_id: logChannel?.id,
         support_role_id: supportRole?.id,
+        vouch_channel_id: vouchChannel?.id,
         enabled: true
       });
 
@@ -1869,7 +1984,7 @@ client.on("interactionCreate", async (interaction) => {
         return interaction.reply({ content: 'This command must be used in a ticket channel.', ephemeral: true });
       }
 
-      const { getTicket, closeTicket, getTicketConfig } = await import('./services/tickets');
+      const { getTicket, getTicketConfig } = await import('./services/tickets');
       const ticket = getTicket(interaction.channel.id);
 
       if (!ticket) {
@@ -1880,7 +1995,37 @@ client.on("interactionCreate", async (interaction) => {
         return interaction.reply({ content: '❌ This ticket is already closed.', ephemeral: true });
       }
 
-      // Generate transcript (simplified - just last 100 messages)
+      // Only the ticket owner or staff who claimed it can initiate close
+      const isOwner = ticket.user_id === interaction.user.id;
+      const isClaimer = ticket.claimed_by === interaction.user.id;
+      
+      if (!isOwner && !isClaimer && !(interaction.member as any)?.permissions?.has('ManageChannels')) {
+        return interaction.reply({ content: '❌ Only the ticket owner, assigned staff, or administrators can close this ticket.', ephemeral: true });
+      }
+
+      // If ticket has support interaction, ask user to rate before closing
+      if (ticket.support_interaction_id) {
+        const ratingEmbed = new EmbedBuilder()
+          .setTitle('📊 Rate Your Support Experience')
+          .setDescription(`<@${ticket.user_id}>, please rate the support you received before we close this ticket.`)
+          .setColor(0x5865F2)
+          .addFields(
+            { name: 'How would you rate your experience?', value: 'Click a star rating below (1-5 stars)' }
+          );
+
+        const ratingRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:1`).setLabel('⭐').setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:2`).setLabel('⭐⭐').setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:3`).setLabel('⭐⭐⭐').setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:4`).setLabel('⭐⭐⭐⭐').setStyle(ButtonStyle.Primary),
+          new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:5`).setLabel('⭐⭐⭐⭐⭐').setStyle(ButtonStyle.Success)
+        );
+
+        return interaction.reply({ embeds: [ratingEmbed], components: [ratingRow] });
+      }
+
+      // If no support interaction, close directly (shouldn't happen with new system)
+      const { closeTicket } = await import('./services/tickets');
       const messages = await interaction.channel.messages.fetch({ limit: 100 });
       const transcript = messages.reverse().map(m => 
         `[${m.createdAt.toLocaleString()}] ${m.author.tag}: ${m.content}`
@@ -1895,25 +2040,6 @@ client.on("interactionCreate", async (interaction) => {
 
       await interaction.reply({ embeds: [closeEmbed] });
 
-      // Log transcript to log channel if configured
-      const config = getTicketConfig(ticket.guild_id);
-      if (config?.log_channel_id) {
-        try {
-          const logChannel = await interaction.guild!.channels.fetch(config.log_channel_id) as any;
-          const logEmbed = new EmbedBuilder()
-            .setTitle(`🎫 Ticket #${ticket.id} Closed`)
-            .setColor(0xFF0000)
-            .addFields(
-              { name: 'User', value: `<@${ticket.user_id}>`, inline: true },
-              { name: 'Claimed By', value: ticket.claimed_by ? `<@${ticket.claimed_by}>` : 'Unclaimed', inline: true },
-              { name: 'Category', value: ticket.category, inline: true }
-            )
-            .setTimestamp();
-
-          await logChannel.send({ embeds: [logEmbed], files: [{ attachment: Buffer.from(transcript), name: `ticket-${ticket.id}-transcript.txt` }] });
-        } catch {}
-      }
-
       setTimeout(async () => {
         try {
           await (interaction.channel as any).delete();
@@ -1926,7 +2052,7 @@ client.on("interactionCreate", async (interaction) => {
         return interaction.reply({ content: 'This command must be used in a ticket channel.', ephemeral: true });
       }
 
-      const { getTicket, claimTicket } = await import('./services/tickets');
+      const { getTicket, claimTicket, linkTicketToSupport } = await import('./services/tickets');
       const ticket = getTicket(interaction.channel.id);
 
       if (!ticket) {
@@ -1939,12 +2065,59 @@ client.on("interactionCreate", async (interaction) => {
 
       claimTicket(interaction.channel.id, interaction.user.id);
 
+      // Auto-start support interaction
+      try {
+        const { startSupportInteraction } = await import('./services/smartSupport');
+        const supportId = startSupportInteraction({
+          userId: ticket.user_id,
+          supportMemberId: interaction.user.id,
+          guildId: interaction.guild!.id,
+          channelId: interaction.channel.id,
+          questionText: `Ticket #${ticket.id}: ${ticket.category}`
+        });
+        linkTicketToSupport(interaction.channel.id, supportId);
+      } catch (e) {
+        console.error('Failed to start support interaction for ticket:', e);
+      }
+
       const claimEmbed = new EmbedBuilder()
         .setTitle('🎫 Ticket Claimed')
         .setColor(0x00AE86)
         .setDescription(`<@${interaction.user.id}> is now handling this ticket.`);
 
       return interaction.reply({ embeds: [claimEmbed] });
+    }
+
+    if (subCmd === "addhelper") {
+      if (!interaction.channel || !('guild' in interaction.channel)) {
+        return interaction.reply({ content: 'This command must be used in a ticket channel.', ephemeral: true });
+      }
+
+      const { getTicket, addTicketHelper } = await import('./services/tickets');
+      const ticket = getTicket(interaction.channel.id);
+
+      if (!ticket) {
+        return interaction.reply({ content: '❌ This is not a ticket channel.', ephemeral: true });
+      }
+
+      const helper = interaction.options.getUser('user', true);
+
+      if (!ticket.support_interaction_id) {
+        return interaction.reply({ content: '❌ This ticket doesn\'t have a support interaction. Claim it first with `/ticket claim`.', ephemeral: true });
+      }
+
+      // Add to ticket helpers
+      addTicketHelper(interaction.channel.id, helper.id);
+
+      // Add to support interaction
+      try {
+        const { addSupportHelper } = await import('./services/smartSupport');
+        addSupportHelper(ticket.support_interaction_id, helper.id);
+      } catch (e) {
+        console.error('Failed to add helper to support interaction:', e);
+      }
+
+      return interaction.reply({ content: `✅ Added <@${helper.id}> as a helper to this ticket.`, ephemeral: true });
     }
 
     if (subCmd === "list") {

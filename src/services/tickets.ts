@@ -11,6 +11,8 @@ export interface Ticket {
   created_at: string;
   closed_at?: string;
   transcript?: string;
+  support_interaction_id?: number;
+  helpers?: string; // JSON array of user IDs who helped
 }
 
 export interface TicketConfig {
@@ -18,6 +20,7 @@ export interface TicketConfig {
   category_id: string;
   log_channel_id?: string;
   support_role_id?: string;
+  vouch_channel_id?: string;
   enabled: boolean;
 }
 
@@ -30,6 +33,7 @@ export function initTicketsSchema() {
       category_id TEXT NOT NULL,
       log_channel_id TEXT,
       support_role_id TEXT,
+      vouch_channel_id TEXT,
       enabled INTEGER NOT NULL DEFAULT 1
     );
     
@@ -43,7 +47,9 @@ export function initTicketsSchema() {
       category TEXT NOT NULL,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       closed_at TEXT,
-      transcript TEXT
+      transcript TEXT,
+      support_interaction_id INTEGER,
+      helpers TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_tickets_guild ON tickets(guild_id);
     CREATE INDEX IF NOT EXISTS idx_tickets_user ON tickets(user_id);
@@ -56,18 +62,20 @@ export function setTicketConfig(config: TicketConfig): void {
   const db = getDB();
   
   db.prepare(`
-    INSERT INTO ticket_configs (guild_id, category_id, log_channel_id, support_role_id, enabled)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO ticket_configs (guild_id, category_id, log_channel_id, support_role_id, vouch_channel_id, enabled)
+    VALUES (?, ?, ?, ?, ?, ?)
     ON CONFLICT(guild_id) DO UPDATE SET
       category_id = excluded.category_id,
       log_channel_id = excluded.log_channel_id,
       support_role_id = excluded.support_role_id,
+      vouch_channel_id = excluded.vouch_channel_id,
       enabled = excluded.enabled
   `).run(
     config.guild_id,
     config.category_id,
     config.log_channel_id || null,
     config.support_role_id || null,
+    config.vouch_channel_id || null,
     config.enabled ? 1 : 0
   );
 }
@@ -76,7 +84,7 @@ export function setTicketConfig(config: TicketConfig): void {
 export function getTicketConfig(guildId: string): TicketConfig | null {
   const db = getDB();
   const row = db.prepare(`
-    SELECT guild_id, category_id, log_channel_id, support_role_id, enabled
+    SELECT guild_id, category_id, log_channel_id, support_role_id, vouch_channel_id, enabled
     FROM ticket_configs
     WHERE guild_id = ?
   `).get(guildId) as any;
@@ -88,6 +96,7 @@ export function getTicketConfig(guildId: string): TicketConfig | null {
     category_id: row.category_id,
     log_channel_id: row.log_channel_id,
     support_role_id: row.support_role_id,
+    vouch_channel_id: row.vouch_channel_id,
     enabled: row.enabled === 1
   };
 }
@@ -114,7 +123,7 @@ export function createTicket(
 export function getTicket(channelId: string): Ticket | null {
   const db = getDB();
   const row = db.prepare(`
-    SELECT id, guild_id, channel_id, user_id, claimed_by, status, category, created_at, closed_at, transcript
+    SELECT id, guild_id, channel_id, user_id, claimed_by, status, category, created_at, closed_at, transcript, support_interaction_id, helpers
     FROM tickets
     WHERE channel_id = ?
   `).get(channelId) as any;
@@ -131,7 +140,9 @@ export function getTicket(channelId: string): Ticket | null {
     category: row.category,
     created_at: row.created_at,
     closed_at: row.closed_at,
-    transcript: row.transcript
+    transcript: row.transcript,
+    support_interaction_id: row.support_interaction_id,
+    helpers: row.helpers
   };
 }
 
@@ -139,7 +150,7 @@ export function getTicket(channelId: string): Ticket | null {
 export function getTicketById(ticketId: number): Ticket | null {
   const db = getDB();
   const row = db.prepare(`
-    SELECT id, guild_id, channel_id, user_id, claimed_by, status, category, created_at, closed_at, transcript
+    SELECT id, guild_id, channel_id, user_id, claimed_by, status, category, created_at, closed_at, transcript, support_interaction_id, helpers
     FROM tickets
     WHERE id = ?
   `).get(ticketId) as any;
@@ -156,7 +167,9 @@ export function getTicketById(ticketId: number): Ticket | null {
     category: row.category,
     created_at: row.created_at,
     closed_at: row.closed_at,
-    transcript: row.transcript
+    transcript: row.transcript,
+    support_interaction_id: row.support_interaction_id,
+    helpers: row.helpers
   };
 }
 
@@ -186,11 +199,55 @@ export function closeTicket(channelId: string, transcript?: string): boolean {
   return result.changes > 0;
 }
 
+// Link ticket to support interaction
+export function linkTicketToSupport(channelId: string, supportInteractionId: number): boolean {
+  const db = getDB();
+  const result = db.prepare(`
+    UPDATE tickets
+    SET support_interaction_id = ?
+    WHERE channel_id = ?
+  `).run(supportInteractionId, channelId);
+  
+  return result.changes > 0;
+}
+
+// Add helper to ticket
+export function addTicketHelper(channelId: string, userId: string): boolean {
+  const db = getDB();
+  const ticket = getTicket(channelId);
+  if (!ticket) return false;
+  
+  const helpers: string[] = ticket.helpers ? JSON.parse(ticket.helpers) : [];
+  if (helpers.includes(userId)) return false; // Already added
+  
+  helpers.push(userId);
+  
+  const result = db.prepare(`
+    UPDATE tickets
+    SET helpers = ?
+    WHERE channel_id = ?
+  `).run(JSON.stringify(helpers), channelId);
+  
+  return result.changes > 0;
+}
+
+// Get ticket helpers
+export function getTicketHelpers(channelId: string): string[] {
+  const ticket = getTicket(channelId);
+  if (!ticket || !ticket.helpers) return [];
+  
+  try {
+    return JSON.parse(ticket.helpers);
+  } catch {
+    return [];
+  }
+}
+
 // Get open tickets for a guild
 export function getOpenTickets(guildId: string): Ticket[] {
   const db = getDB();
   const rows = db.prepare(`
-    SELECT id, guild_id, channel_id, user_id, claimed_by, status, category, created_at, closed_at, transcript
+    SELECT id, guild_id, channel_id, user_id, claimed_by, status, category, created_at, closed_at, transcript, support_interaction_id, helpers
     FROM tickets
     WHERE guild_id = ? AND status IN ('open', 'claimed')
     ORDER BY created_at ASC
@@ -206,7 +263,9 @@ export function getOpenTickets(guildId: string): Ticket[] {
     category: row.category,
     created_at: row.created_at,
     closed_at: row.closed_at,
-    transcript: row.transcript
+    transcript: row.transcript,
+    support_interaction_id: row.support_interaction_id,
+    helpers: row.helpers
   }));
 }
 
@@ -214,7 +273,7 @@ export function getOpenTickets(guildId: string): Ticket[] {
 export function getUserTickets(guildId: string, userId: string): Ticket[] {
   const db = getDB();
   const rows = db.prepare(`
-    SELECT id, guild_id, channel_id, user_id, claimed_by, status, category, created_at, closed_at, transcript
+    SELECT id, guild_id, channel_id, user_id, claimed_by, status, category, created_at, closed_at, transcript, support_interaction_id, helpers
     FROM tickets
     WHERE guild_id = ? AND user_id = ?
     ORDER BY created_at DESC
@@ -230,7 +289,9 @@ export function getUserTickets(guildId: string, userId: string): Ticket[] {
     category: row.category,
     created_at: row.created_at,
     closed_at: row.closed_at,
-    transcript: row.transcript
+    transcript: row.transcript,
+    support_interaction_id: row.support_interaction_id,
+    helpers: row.helpers
   }));
 }
 
