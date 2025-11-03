@@ -1960,16 +1960,46 @@ client.on("interactionCreate", async (interaction) => {
   if (name === 'purge') {
     if (!adminOrBypass(interaction.member)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
     const count = interaction.options.getInteger('count', true) ?? 0;
-    if (count < 1 || count > 100) return interaction.reply({ content: 'Count must be between 1 and 100.', ephemeral: true });
+    if (count < 1 || count > 1000) return interaction.reply({ content: 'Count must be between 1 and 1000.', ephemeral: true });
+    
+    await interaction.deferReply({ ephemeral: true });
+    
     try {
       const ch = interaction.channel;
-      if (!ch || !('bulkDelete' in ch)) return interaction.reply({ content: 'This command must be used in a text channel.', ephemeral: true });
-      // @ts-ignore
-      const deleted = await (ch as any).bulkDelete(count, true);
-      return interaction.reply({ content: `Deleted ${deleted.size ?? deleted} messages.`, ephemeral: true });
+      if (!ch || !('bulkDelete' in ch)) return interaction.editReply({ content: 'This command must be used in a text channel.' });
+      
+      let totalDeleted = 0;
+      let remaining = count;
+      
+      // Discord limits bulkDelete to 100 messages per call and messages must be < 14 days old
+      while (remaining > 0) {
+        const batchSize = Math.min(remaining, 100);
+        try {
+          // @ts-ignore
+          const deleted = await (ch as any).bulkDelete(batchSize, true);
+          const deletedCount = deleted.size ?? deleted;
+          totalDeleted += deletedCount;
+          remaining -= batchSize;
+          
+          // If we deleted fewer than requested, we've hit old messages or run out
+          if (deletedCount < batchSize) {
+            break;
+          }
+          
+          // Small delay to avoid rate limits
+          if (remaining > 0) {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          }
+        } catch (err) {
+          console.error('Purge batch failed', err);
+          break;
+        }
+      }
+      
+      return interaction.editReply({ content: `Deleted ${totalDeleted} messages.` });
     } catch (err) {
       console.error('Purge failed', err);
-      return interaction.reply({ content: 'Failed to purge messages. Messages older than 14 days cannot be bulk-deleted.', ephemeral: true });
+      return interaction.editReply({ content: 'Failed to purge messages. Messages older than 14 days cannot be bulk-deleted.' });
     }
   }
 
