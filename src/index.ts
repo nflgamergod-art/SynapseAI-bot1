@@ -2403,7 +2403,9 @@ client.on("messageCreate", async (message: Message) => {
     }
   }
   // Decide if the message is trying to interact with the bot (prefix, wake word, or direct mention)
+  // Accept both ! and . as command prefixes
   const tryingToUse = message.content.startsWith(prefix)
+    || message.content.startsWith('.')
     || isWakeWord(message, wakeWord)
     || (!!message.mentions && !!message.mentions.users?.has(client.user?.id || ''));
   
@@ -2533,8 +2535,10 @@ client.on("messageCreate", async (message: Message) => {
   };
 
   // Prefix commands
-  if (message.content.startsWith(prefix)) {
-    const args = message.content.slice(prefix.length).trim().split(/\s+/);
+  // Accept both ! and . as command prefixes
+  if (message.content.startsWith(prefix) || message.content.startsWith('.')) {
+    const usedPrefix = message.content.startsWith('.') ? '.' : prefix;
+    const args = message.content.slice(usedPrefix.length).trim().split(/\s+/);
     const command = args.shift()?.toLowerCase();
 
     if (!command) return;
