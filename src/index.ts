@@ -2946,8 +2946,8 @@ client.on("messageCreate", async (message: Message) => {
     const args = message.content.slice(usedPrefix.length).trim().split(/\s+/);
     const command = args.shift()?.toLowerCase();
 
-    // Ignore if just the prefix alone or multiple dots with no command
-    if (!command || command === '') return;
+    // Ignore if just the prefix alone or multiple dots/punctuation with no actual command
+    if (!command || command === '' || /^[.\s!]+$/.test(command)) return;
 
     if (command === "help") return helpCommand(message, prefix);
     if (command === "ping") return message.reply(`Pong! ${Date.now() - message.createdTimestamp}ms`);
