@@ -2241,11 +2241,57 @@ client.on("messageCreate", async (message: Message) => {
     if (isOwnerId(message.author.id)) {
       // Owners bypass anti-abuse system
     } else {
-      const { trackMessage, detectBypassAttempt, autoBlacklist, getWarnings, incrementWarning } = await import('./services/antiAbuse');
+      const { trackMessage, detectBypassAttempt, detectInappropriateContent, autoBlacklist, getWarnings, incrementWarning } = await import('./services/antiAbuse');
       const guildId = message.guild?.id || '';
+      
+      // Check for inappropriate content first
+      const isInappropriate = detectInappropriateContent(message.content);
+      if (isInappropriate) {
+        const reason = 'Inappropriate content detected';
+        
+        const newWarnings = incrementWarning(message.author.id, guildId, 'other', reason);
+        
+        if (newWarnings >= 3) {
+          // Auto-blacklist on 3rd warning
+          autoBlacklist(message.author.id, guildId, reason);
+          
+          // Log to mod channel
+          try {
+            const logChannel = getModLogChannelId();
+            if (logChannel && message.guild) {
+              const channel = await message.guild.channels.fetch(logChannel);
+              if (channel?.isTextBased()) {
+                await (channel as any).send(`🚨 **Auto-Blacklist**\nUser: <@${message.author.id}> (${message.author.tag})\nReason: ${reason}\nWarnings: ${newWarnings}/3\nMessage: "${message.content.slice(0, 100)}"`);
+              }
+            }
+          } catch (err) {
+            console.error('Failed to log auto-blacklist:', err);
+          }
+          
+          // Delete the inappropriate message
+          try {
+            await message.delete();
+          } catch (err) {
+            console.error('Failed to delete inappropriate message:', err);
+          }
+          return;
+        }
+        
+        // Warn user
+        await message.reply(`⚠️ Warning: ${reason}. Please keep conversations appropriate. Further violations will result in automatic blacklist. (${newWarnings}/3 warnings)`);
+        
+        // Delete the inappropriate message
+        try {
+          await message.delete();
+        } catch (err) {
+          console.error('Failed to delete inappropriate message:', err);
+        }
+        return;
+      }
+      
       const isBypass = detectBypassAttempt(message.author.id, message.content);
       
-      // Check for bypass attempts first (immediate warning)
+      // Check for bypass attempts (immediate warning)
       if (isBypass) {
         const reason = 'Permission bypass attempt (@everyone/@here)';
         

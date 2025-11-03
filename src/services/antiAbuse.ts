@@ -114,6 +114,62 @@ export function detectBypassAttempt(userId: string, content: string): boolean {
   return bypassPatterns.some(pattern => pattern.test(content));
 }
 
+// Detect inappropriate content
+export function detectInappropriateContent(content: string): boolean {
+  const lowerContent = content.toLowerCase();
+  
+  // Sexual content patterns
+  const sexualPatterns = [
+    /\bsex\b/i,
+    /\bporn\b/i,
+    /\bxxx\b/i,
+    /\bnude\b/i,
+    /\bnudes\b/i,
+    /\bnaked\b/i,
+    /\bhentai\b/i,
+    /\bnsfw\b/i,
+    /sexual/i,
+    /\bdick\b/i,
+    /\bcock\b/i,
+    /\bpussy\b/i,
+    /\bass\b/i,
+    /\btits\b/i,
+    /\bboobs\b/i,
+    /masturbat/i,
+    /\bf+u+c+k/i,
+    /\bs+h+i+t/i,
+    /\bb+i+t+c+h/i,
+    /\bc+u+n+t/i,
+    /rape/i,
+    /molest/i
+  ];
+  
+  // Harmful content patterns
+  const harmfulPatterns = [
+    /kill yourself/i,
+    /kys\b/i,
+    /suicide/i,
+    /self harm/i,
+    /self-harm/i,
+    /cut yourself/i,
+    /\bdie\b.*\bplease\b/i,
+    /go die/i
+  ];
+  
+  // Hate speech patterns
+  const hatePatterns = [
+    /\bn+i+g+g+/i,
+    /\bf+a+g+/i,
+    /\br+e+t+a+r+d/i,
+    /racial slur/i,
+    /hate speech/i
+  ];
+  
+  // Check all patterns
+  const allPatterns = [...sexualPatterns, ...harmfulPatterns, ...hatePatterns];
+  return allPatterns.some(pattern => pattern.test(content));
+}
+
 // Auto-blacklist user
 export function autoBlacklist(userId: string, guildId: string, reason: string): boolean {
   const db = getDB();
