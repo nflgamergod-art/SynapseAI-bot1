@@ -43,7 +43,7 @@ const client = new Client({
 
 
 
-client.once("ready", async () => {
+client.once("clientReady", async () => {
   console.log(`Logged in as ${client.user?.tag}`);
   
   // Initialize enhanced features
@@ -57,6 +57,8 @@ client.once("ready", async () => {
   const guildId = process.env.GUILD_ID;
 
   const commands = [
+    // Diagnostics
+    { name: "diagcommands", description: "Owner: list registered slash commands in this guild" },
     { name: "help", description: "Show help for bot commands" },
     { name: "ping", description: "Check bot latency" },
     { name: "pong", description: "Alias for ping" },
@@ -220,7 +222,11 @@ client.once("ready", async () => {
       { name: "suggest", description: "💡 AI suggestions for missing FAQ entries (Admin)", type: 1, options: [ { name: "days", description: "Days to analyze support questions (default 7)", type: 4, required: false } ] },
       { name: "stats", description: "📊 Knowledge base analytics (Admin)", type: 1 }
     ] },
-    { name: "achievements", description: "🏆 View earned achievements and rewards", options: [ { name: "user", description: "User to view (defaults to you)", type: 6, required: false } ] },
+  { name: "achievements", description: "🏆 View earned achievements and rewards", options: [ { name: "user", description: "User to view (defaults to you)", type: 6, required: false } ] },
+  { name: "supportstart", description: "Start tracking a support interaction (ticket)", options: [ { name: "user", description: "User being helped", type: 6, required: true }, { name: "question", description: "What they need help with", type: 3, required: true } ] },
+  { name: "supportend", description: "End a tracked support interaction (ticket)", options: [ { name: "id", description: "Interaction ID from /supportstart", type: 4, required: true }, { name: "resolved", description: "Was it resolved?", type: 5, required: true }, { name: "rating", description: "Satisfaction rating (1-5)", type: 4, required: false }, { name: "feedback", description: "Optional feedback text", type: 3, required: false } ] },
+  { name: "supportrate", description: "Ticket requester: rate your support interaction", options: [ { name: "id", description: "Interaction ID", type: 4, required: true }, { name: "rating", description: "Satisfaction rating (1-5)", type: 4, required: true }, { name: "feedback", description: "Optional feedback text", type: 3, required: false } ] },
+  { name: "supportaddhelper", description: "Support: add a co-helper to a ticket", options: [ { name: "id", description: "Interaction ID", type: 4, required: true }, { name: "member", description: "Helper to add", type: 6, required: true } ] },
     { name: "perks", description: "✨ View your unlocked perks and special abilities" },
   { name: "perkspanel", description: "Owner: post a perks claim panel in this channel" },
   { name: "claimperk", description: "Claim an unlocked perk", options: [ { name: "perk", description: "custom_color | priority_support | custom_emoji | channel_suggest | voice_priority | exclusive_role", type: 3, required: true } ] },
@@ -239,8 +245,12 @@ client.once("ready", async () => {
     try {
       if (!client.application) return;
       if (guildId) {
-        await client.application.commands.set(commands, guildId);
+        const setRes = await client.application.commands.set(commands, guildId);
         console.log(`Registered ${commands.length} slash commands for guild ${guildId}`);
+        try {
+          const names = Array.from(setRes.values()).map(c => c.name).sort();
+          console.log(`Guild command names (${names.length}): ${names.join(', ')}`);
+        } catch {}
         // Also clear global commands to avoid duplicates when switching from global to guild registration
         try {
           await client.application.commands.set([] as any);
@@ -249,8 +259,12 @@ client.once("ready", async () => {
           console.warn('Failed to clear global commands:', e);
         }
       } else {
-        await client.application.commands.set(commands as any);
+        const setRes = await client.application.commands.set(commands as any);
         console.log(`Registered ${commands.length} global slash commands`);
+        try {
+          const names = Array.from((setRes as any).values?.() ?? []).map((c: any) => c.name).sort();
+          if (names.length) console.log(`Global command names (${names.length}): ${names.join(', ')}`);
+        } catch {}
       }
     } catch (err) {
       console.error("Failed to register slash commands:", err);
@@ -382,6 +396,25 @@ client.on("interactionCreate", async (interaction) => {
     }
   // Whitelist admin commands (owner only)
   if (isOwnerId(interaction.user.id)) {
+    if (interaction.commandName === "diagcommands") {
+      try {
+        if (interaction.guild) {
+          const list = await interaction.guild.commands.fetch();
+          const names = Array.from(list.values()).map(c => c.name).sort();
+          const out = names.join(', ');
+          return interaction.reply({ content: `Guild commands (${names.length}): ${out}`.slice(0, 1900), ephemeral: true });
+        } else {
+          const list = await client.application!.commands.fetch();
+          // @ts-ignore
+          const names = Array.from(list.values()).map((c:any) => c.name).sort();
+          const out = names.join(', ');
+          return interaction.reply({ content: `Global commands (${names.length}): ${out}`.slice(0, 1900), ephemeral: true });
+        }
+      } catch (e:any) {
+        console.error('diagcommands failed:', e);
+        return interaction.reply({ content: `Failed to fetch commands: ${e?.message ?? e}`, ephemeral: true });
+      }
+    }
     if (interaction.commandName === "addwhitelist") {
       const type = (interaction.options.getString('type', true) as string).toLowerCase();
       let idRaw = interaction.options.getString('id', true)!.trim();
@@ -492,7 +525,109 @@ client.on("interactionCreate", async (interaction) => {
   const enhancedHandled = await handleEnhancedCommands(interaction as any);
   if (enhancedHandled) return;
 
-  if (name === "help") return interaction.reply({ content: `Use ${prefix}help or mention me to get conversational replies. Use moderation commands with appropriate permissions.`, ephemeral: true });
+      if (name === "help") return interaction.reply({ content: `Use ${prefix}help or mention me to get conversational replies. Use moderation commands with appropriate permissions.`, ephemeral: true });
+
+      // Support ticket tracking commands
+      if (name === "supportstart") {
+        if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+        // Allow admins/bypass or users in support roles
+        let allowed = adminOrBypass(interaction.member);
+        if (!allowed) {
+          try {
+            const { listSupportMembers } = await import('./services/supportRoles');
+            const lists = await listSupportMembers(interaction.guild);
+            const all = ([] as any[]).concat(lists.head, lists.support, lists.trial);
+            allowed = all.some((m:any) => m.id === interaction.user.id);
+          } catch {}
+        }
+        if (!allowed) return interaction.reply({ content: 'Only support staff or admins can use this.', ephemeral: true });
+        const target = interaction.options.getUser('user', true);
+        const question = interaction.options.getString('question', true);
+        try {
+          const { startSupportInteraction } = await import('./services/smartSupport');
+          const id = startSupportInteraction({
+            userId: target.id,
+            supportMemberId: interaction.user.id,
+            guildId: interaction.guild.id,
+            channelId: interaction.channelId,
+            questionText: question
+          });
+          return interaction.reply({ content: `Started support interaction #${id} for <@${target.id}>`, ephemeral: true });
+        } catch (e:any) {
+          console.error('supportstart failed:', e);
+          return interaction.reply({ content: `Failed to start interaction: ${e?.message ?? e}`, ephemeral: true });
+        }
+      }
+      if (name === "supportend") {
+        if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+        let allowed = adminOrBypass(interaction.member);
+        if (!allowed) {
+          try {
+            const { listSupportMembers } = await import('./services/supportRoles');
+            const lists = await listSupportMembers(interaction.guild);
+            const all = ([] as any[]).concat(lists.head, lists.support, lists.trial);
+            allowed = all.some((m:any) => m.id === interaction.user.id);
+          } catch {}
+        }
+        if (!allowed) return interaction.reply({ content: 'Only support staff or admins can use this.', ephemeral: true });
+        const id = interaction.options.getInteger('id', true)!;
+        const resolved = interaction.options.getBoolean('resolved', true)!;
+        const rating = interaction.options.getInteger('rating') ?? undefined;
+        const feedback = interaction.options.getString('feedback') ?? undefined;
+        try {
+          const { endSupportInteraction } = await import('./services/smartSupport');
+          endSupportInteraction({ interactionId: id, wasResolved: resolved, satisfactionRating: rating, feedbackText: feedback });
+          return interaction.reply({ content: `Ended support interaction #${id} (${resolved ? 'resolved' : 'unresolved'})` + (rating ? ` • rating ${rating}/5` : ''), ephemeral: true });
+        } catch (e:any) {
+          console.error('supportend failed:', e);
+          return interaction.reply({ content: `Failed to end interaction: ${e?.message ?? e}`, ephemeral: true });
+        }
+      }
+      if (name === "supportrate") {
+        if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+        const id = interaction.options.getInteger('id', true)!;
+        const rating = interaction.options.getInteger('rating', true)!;
+        const feedback = interaction.options.getString('feedback') ?? undefined;
+        try {
+          const db = await import('./services/db').then(m => m.getDB());
+          const row = db.prepare('SELECT user_id FROM support_interactions WHERE id = ?').get(id) as any;
+          if (!row) return interaction.reply({ content: `Interaction #${id} not found.`, ephemeral: true });
+          if (row.user_id !== interaction.user.id && !isOwnerId(interaction.user.id)) {
+            return interaction.reply({ content: 'Only the ticket requester can rate this interaction.', ephemeral: true });
+          }
+          const { rateSupportInteraction } = await import('./services/smartSupport');
+          const res = rateSupportInteraction({ interactionId: id, byUserId: interaction.user.id, rating, feedbackText: feedback });
+          if (!res.ok) return interaction.reply({ content: `Could not record rating: ${res.reason}`, ephemeral: true });
+          return interaction.reply({ content: `Thanks! Recorded your rating ${rating}/5 for #${id}.`, ephemeral: true });
+        } catch (e:any) {
+          console.error('supportrate failed:', e);
+          return interaction.reply({ content: `Failed to record rating: ${e?.message ?? e}`, ephemeral: true });
+        }
+      }
+      if (name === "supportaddhelper") {
+        if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+        // Allow admins/bypass or users in support roles
+        let allowed = adminOrBypass(interaction.member);
+        if (!allowed) {
+          try {
+            const { listSupportMembers } = await import('./services/supportRoles');
+            const lists = await listSupportMembers(interaction.guild);
+            const all = ([] as any[]).concat(lists.head, lists.support, lists.trial);
+            allowed = all.some((m:any) => m.id === interaction.user.id);
+          } catch {}
+        }
+        if (!allowed) return interaction.reply({ content: 'Only support staff or admins can use this.', ephemeral: true });
+        const id = interaction.options.getInteger('id', true)!;
+        const member = interaction.options.getUser('member', true);
+        try {
+          const { addSupportHelper } = await import('./services/smartSupport');
+          const helpers = addSupportHelper(id, member.id);
+          return interaction.reply({ content: `Added <@${member.id}> as helper on #${id}. Helpers now: ${helpers.map(h=>`<@${h}>`).join(', ')}`, ephemeral: true });
+        } catch (e:any) {
+          console.error('supportaddhelper failed:', e);
+          return interaction.reply({ content: `Failed to add helper: ${e?.message ?? e}`, ephemeral: true });
+        }
+      }
   if (name === "rpsai") {
     // Whitelist already enforced above
     const difficultyRaw = (interaction.options.getString('difficulty') || 'normal').toLowerCase();
@@ -1202,7 +1337,11 @@ client.on("interactionCreate", async (interaction) => {
         { name: "checkins", description: "📋 Admin: View scheduled proactive user follow-ups" },
         { name: "sentiment", description: "💭 Admin: Real-time emotional analysis of conversations", options: [ { name: "channel", description: "Channel to analyze (defaults to current)", type: 7, required: false } ] },
         { name: "commonissues", description: "🔍 Admin: Detect recurring support issues", options: [ { name: "hours", description: "Hours to analyze (default 24)", type: 4, required: false } ] },
-        { name: "faq", description: "❓ Quick access to frequently asked questions", options: [ { name: "category", description: "Filter by category", type: 3, required: false } ] }
+        { name: "faq", description: "❓ Quick access to frequently asked questions", options: [ { name: "category", description: "Filter by category", type: 3, required: false } ] },
+        { name: "supportstart", description: "Start tracking a support interaction (ticket)", options: [ { name: "user", description: "User being helped", type: 6, required: true }, { name: "question", description: "What they need help with", type: 3, required: true } ] },
+        { name: "supportend", description: "End a tracked support interaction (ticket)", options: [ { name: "id", description: "Interaction ID from /supportstart", type: 4, required: true }, { name: "resolved", description: "Was it resolved?", type: 5, required: true }, { name: "rating", description: "Satisfaction rating (1-5)", type: 4, required: false }, { name: "feedback", description: "Optional feedback text", type: 3, required: false } ] },
+        { name: "supportrate", description: "Ticket requester: rate your support interaction", options: [ { name: "id", description: "Interaction ID", type: 4, required: true }, { name: "rating", description: "Satisfaction rating (1-5)", type: 4, required: true }, { name: "feedback", description: "Optional feedback text", type: 3, required: false } ] },
+        { name: "supportaddhelper", description: "Support: add a co-helper to a ticket", options: [ { name: "id", description: "Interaction ID", type: 4, required: true }, { name: "member", description: "Helper to add", type: 6, required: true } ] }
       ];
       await client.application!.commands.set(cmds as any, interaction.guild.id);
       return interaction.reply({ content: `Re-registered ${cmds.length} slash commands for this server (${interaction.guild.name}).`, ephemeral: true });

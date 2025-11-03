@@ -86,6 +86,33 @@ export function endSupportInteraction(opts: {
   }
 }
 
+// Allow adding a co-support helper to an interaction
+export function addSupportHelper(interactionId: number, helperUserId: string): string[] {
+  const db = getDB();
+  const row = db.prepare(`SELECT helpers FROM support_interactions WHERE id = ?`).get(interactionId) as { helpers?: string | null } | undefined;
+  const current: string[] = row?.helpers ? (JSON.parse(row.helpers) as string[]).filter(Boolean) : [];
+  if (!current.includes(helperUserId)) current.push(helperUserId);
+  db.prepare(`UPDATE support_interactions SET helpers = ? WHERE id = ?`).run(JSON.stringify(current), interactionId);
+  return current;
+}
+
+// Let the requester (helped user) rate the interaction after it ends (or anytime)
+export function rateSupportInteraction(opts: {
+  interactionId: number;
+  byUserId: string;
+  rating: number;
+  feedbackText?: string;
+}): { ok: boolean; reason?: string } {
+  const { interactionId, byUserId, rating, feedbackText } = opts;
+  if (rating < 1 || rating > 5) return { ok: false, reason: 'Rating must be 1-5' };
+  const db = getDB();
+  const row = db.prepare(`SELECT user_id FROM support_interactions WHERE id = ?`).get(interactionId) as { user_id: string } | undefined;
+  if (!row) return { ok: false, reason: 'Interaction not found' };
+  if (row.user_id !== byUserId) return { ok: false, reason: 'Only the requester can rate this ticket' };
+  db.prepare(`UPDATE support_interactions SET satisfaction_rating = ?, feedback_text = COALESCE(?, feedback_text) WHERE id = ?`).run(rating, feedbackText ?? null, interactionId);
+  return { ok: true };
+}
+
 // Update support member expertise
 function updateExpertise(
   supportMemberId: string,
@@ -175,25 +202,46 @@ export function suggestBestSupport(opts: {
 export function getSupportMemberStats(supportMemberId: string, guildId: string) {
   const db = getDB();
   
-  // Overall stats
-  const overall = db.prepare(`
-    SELECT 
-      COUNT(*) as total_interactions,
-      SUM(CASE WHEN was_resolved THEN 1 ELSE 0 END) as resolved_count,
-      AVG(resolution_time_seconds) as avg_time,
-      AVG(satisfaction_rating) as avg_rating
-    FROM support_interactions
-    WHERE support_member_id = ? AND guild_id = ?
-  `).get(supportMemberId, guildId) as any;
+  // Weighted overall stats including helpers (70/30 split)
+  const rows = db.prepare(`
+    SELECT * FROM support_interactions WHERE guild_id = ?
+  `).all(guildId) as SupportInteraction[];
+
+  const agg = { total: 0, resolved: 0, fast: 0, timeSum: 0, timeDen: 0, ratingSum: 0, ratingDen: 0 };
+  for (const r of rows) {
+    const helpers: string[] = (() => { try { return r.helpers ? JSON.parse(r.helpers as any) : []; } catch { return []; } })();
+    const hasHelpers = helpers.length > 0;
+    const weights: Array<{ id: string; w: number }> = [];
+    if (hasHelpers) {
+      const hw = 0.3 / helpers.length;
+      weights.push({ id: r.support_member_id, w: 0.7 });
+      for (const h of helpers) weights.push({ id: h, w: hw });
+    } else {
+      weights.push({ id: r.support_member_id, w: 1.0 });
+    }
+    const mine = weights.find(x => x.id === supportMemberId);
+    if (!mine) continue;
+    const w = mine.w;
+    agg.total += w;
+    if (r.was_resolved) {
+      agg.resolved += w;
+      if ((r.resolution_time_seconds || 0) > 0) {
+        agg.timeSum += w * (r.resolution_time_seconds || 0);
+        agg.timeDen += w;
+        if ((r.resolution_time_seconds || 0) < 300) agg.fast += w;
+      }
+    }
+    if (typeof r.satisfaction_rating === 'number') { agg.ratingSum += w * (r.satisfaction_rating as any); agg.ratingDen += w; }
+  }
   
-  // Category breakdown
+  // Category breakdown (kept from expertise table; still primary-based)
   const categories = db.prepare(`
     SELECT * FROM support_expertise
     WHERE support_member_id = ? AND guild_id = ?
     ORDER BY success_count DESC
   `).all(supportMemberId, guildId) as any[];
   
-  // Recent interactions
+  // Recent interactions (primary only)
   const recent = db.prepare(`
     SELECT * FROM support_interactions
     WHERE support_member_id = ? AND guild_id = ?
@@ -202,16 +250,14 @@ export function getSupportMemberStats(supportMemberId: string, guildId: string) 
   `).all(supportMemberId, guildId) as SupportInteraction[];
   
   // Calculate streak (consecutive days with resolved interactions)
-  const streak = calculateResolveStreak(supportMemberId, guildId);
+  const streak = calculateResolveStreakWeighted(supportMemberId, guildId);
   
   return {
-    totalInteractions: overall.total_interactions || 0,
-    resolvedCount: overall.resolved_count || 0,
-    resolutionRate: overall.total_interactions > 0 
-      ? (overall.resolved_count / overall.total_interactions) * 100 
-      : 0,
-    avgResponseTime: overall.avg_time || 0,
-    avgRating: overall.avg_rating || 0,
+    totalInteractions: agg.total,
+    resolvedCount: agg.resolved,
+    resolutionRate: agg.total > 0 ? (agg.resolved / agg.total) * 100 : 0,
+    avgResponseTime: agg.timeDen > 0 ? Math.round(agg.timeSum / agg.timeDen) : 0,
+    avgRating: agg.ratingDen > 0 ? agg.ratingSum / agg.ratingDen : 0,
     currentStreak: streak,
     expertise: categories.map(c => ({
       category: c.category,
@@ -223,28 +269,34 @@ export function getSupportMemberStats(supportMemberId: string, guildId: string) 
   };
 }
 
-// Calculate consecutive days with successful resolutions
-function calculateResolveStreak(supportMemberId: string, guildId: string): number {
+// Calculate consecutive days with successful resolutions (weighted presence)
+function calculateResolveStreakWeighted(supportMemberId: string, guildId: string): number {
   const db = getDB();
   const rows = db.prepare(`
-    SELECT DATE(started_at) as day, COUNT(*) as count
-    FROM support_interactions
-    WHERE support_member_id = ? AND guild_id = ? AND was_resolved = TRUE
-    GROUP BY DATE(started_at)
-    ORDER BY day DESC
-  `).all(supportMemberId, guildId) as any[];
-  
-  if (rows.length === 0) return 0;
+    SELECT * FROM support_interactions
+    WHERE guild_id = ? AND was_resolved = TRUE
+  `).all(guildId) as SupportInteraction[];
+
+  // Build a set of days where the user contributed any share
+  const days = new Set<string>();
+  for (const r of rows) {
+    const helpers: string[] = (() => { try { return r.helpers ? JSON.parse(r.helpers as any) : []; } catch { return []; } })();
+    const involved = r.support_member_id === supportMemberId || helpers.includes(supportMemberId);
+    if (!involved) continue;
+    const d = new Date(r.started_at);
+    const day = d.toISOString().split('T')[0];
+    days.add(day);
+  }
+  if (days.size === 0) return 0;
   
   let streak = 0;
   let expectedDate = new Date();
   expectedDate.setHours(0, 0, 0, 0);
   
-  for (const row of rows) {
-    const rowDate = new Date(row.day);
-    rowDate.setHours(0, 0, 0, 0);
-    
-    if (rowDate.getTime() === expectedDate.getTime()) {
+  // Count backwards day by day while present
+  for (;;) {
+    const dateStr = expectedDate.toISOString().split('T')[0];
+    if (days.has(dateStr)) {
       streak++;
       expectedDate.setDate(expectedDate.getDate() - 1);
     } else {
@@ -258,66 +310,58 @@ function calculateResolveStreak(supportMemberId: string, guildId: string): numbe
 // Get leaderboard
 export function getSupportLeaderboard(guildId: string, metric: 'resolution' | 'speed' | 'rating' | 'volume' = 'resolution') {
   const db = getDB();
-  
-  let query = '';
+  const rows = db.prepare(`SELECT * FROM support_interactions WHERE guild_id = ?`).all(guildId) as SupportInteraction[];
+  type Agg = { total: number; resolved: number; timeSum: number; timeDen: number; ratingSum: number; ratingDen: number };
+  const map = new Map<string, Agg>();
+
+  for (const r of rows) {
+    const helpers: string[] = (() => { try { return r.helpers ? JSON.parse(r.helpers as any) : []; } catch { return []; } })();
+    const hasHelpers = helpers.length > 0;
+    const weights: Array<{ id: string; w: number }> = [];
+    if (hasHelpers) {
+      const hw = 0.3 / helpers.length;
+      weights.push({ id: r.support_member_id, w: 0.7 });
+      for (const h of helpers) weights.push({ id: h, w: hw });
+    } else {
+      weights.push({ id: r.support_member_id, w: 1.0 });
+    }
+    for (const { id, w } of weights) {
+      const a = map.get(id) || { total: 0, resolved: 0, timeSum: 0, timeDen: 0, ratingSum: 0, ratingDen: 0 };
+      a.total += w;
+      if (r.was_resolved) {
+        a.resolved += w;
+        if ((r.resolution_time_seconds || 0) > 0) {
+          a.timeSum += w * (r.resolution_time_seconds || 0);
+          a.timeDen += w;
+        }
+      }
+      if (typeof r.satisfaction_rating === 'number') { a.ratingSum += w * (r.satisfaction_rating as any); a.ratingDen += w; }
+      map.set(id, a);
+    }
+  }
+
+  const entries = Array.from(map.entries()).map(([id, a]) => {
+    const resolutionScore = a.total > 0 ? (a.resolved / a.total) * 100 : 0;
+    const speedScore = a.timeDen > 0 ? (a.timeSum / a.timeDen) : Number.MAX_SAFE_INTEGER;
+    const ratingScore = a.ratingDen > 0 ? (a.ratingSum / a.ratingDen) : 0;
+    const volumeScore = a.total;
+    return { support_member_id: id, resolution: resolutionScore, speed: speedScore, rating: ratingScore, volume: volumeScore, total: a.total, resolved: a.resolved };
+  });
+
   switch (metric) {
     case 'resolution':
-      query = `
-        SELECT 
-          support_member_id,
-          COUNT(*) as total,
-          SUM(CASE WHEN was_resolved THEN 1 ELSE 0 END) as resolved,
-          CAST(SUM(CASE WHEN was_resolved THEN 1 ELSE 0 END) AS REAL) / COUNT(*) * 100 as score
-        FROM support_interactions
-        WHERE guild_id = ?
-        GROUP BY support_member_id
-        HAVING total >= 5
-        ORDER BY score DESC
-        LIMIT 10
-      `;
-      break;
+      return entries.filter(e => e.total >= 5).sort((a,b) => b.resolution - a.resolution).slice(0, 10)
+        .map(e => ({ support_member_id: e.support_member_id, score: e.resolution, total: e.total, resolved: e.resolved }));
     case 'speed':
-      query = `
-        SELECT 
-          support_member_id,
-          AVG(resolution_time_seconds) as score
-        FROM support_interactions
-        WHERE guild_id = ? AND was_resolved = TRUE
-        GROUP BY support_member_id
-        HAVING COUNT(*) >= 5
-        ORDER BY score ASC
-        LIMIT 10
-      `;
-      break;
+      return entries.filter(e => e.resolved >= 5).sort((a,b) => a.speed - b.speed).slice(0, 10)
+        .map(e => ({ support_member_id: e.support_member_id, score: e.speed }));
     case 'rating':
-      query = `
-        SELECT 
-          support_member_id,
-          AVG(satisfaction_rating) as score,
-          COUNT(*) as total
-        FROM support_interactions
-        WHERE guild_id = ? AND satisfaction_rating IS NOT NULL
-        GROUP BY support_member_id
-        HAVING total >= 3
-        ORDER BY score DESC
-        LIMIT 10
-      `;
-      break;
+      return entries.filter(e => e.total >= 3 && e.rating > 0).sort((a,b) => b.rating - a.rating).slice(0, 10)
+        .map(e => ({ support_member_id: e.support_member_id, score: e.rating }));
     case 'volume':
-      query = `
-        SELECT 
-          support_member_id,
-          COUNT(*) as score
-        FROM support_interactions
-        WHERE guild_id = ?
-        GROUP BY support_member_id
-        ORDER BY score DESC
-        LIMIT 10
-      `;
-      break;
+      return entries.sort((a,b) => b.volume - a.volume).slice(0, 10)
+        .map(e => ({ support_member_id: e.support_member_id, score: e.volume }));
   }
-  
-  return db.prepare(query).all(guildId) as any[];
 }
 
 // Auto-escalate if needed

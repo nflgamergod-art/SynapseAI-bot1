@@ -13,24 +13,36 @@ import { checkAndAwardAchievements } from './rewards';
 export function checkStreakAchievements() {
   const db = getDB();
   
-  // Get all users who have support interactions
-  const users = db.prepare(`
-    SELECT DISTINCT supporter_id as user_id, guild_id
-    FROM support_interactions
-  `).all() as { user_id: string; guild_id: string }[];
+  // Build participant list (primary + helpers)
+  const interactions = db.prepare(`SELECT * FROM support_interactions`).all() as any[];
+  const userGuildPairs = new Set<string>();
+  for (const r of interactions) {
+    userGuildPairs.add(`${r.support_member_id}::${r.guild_id}`);
+    if (r.helpers) {
+      try {
+        const helpers = JSON.parse(r.helpers) as string[];
+        for (const h of helpers) userGuildPairs.add(`${h}::${r.guild_id}`);
+      } catch {}
+    }
+  }
+  const users = Array.from(userGuildPairs).map(k => ({ user_id: k.split('::')[0], guild_id: k.split('::')[1] }));
   
   let awardsGiven = 0;
   
   for (const { user_id, guild_id } of users) {
     try {
       // Calculate current streak
-      const recentDays = db.prepare(`
-        SELECT DISTINCT DATE(created_at) as day
-        FROM support_interactions
-        WHERE supporter_id = ? AND guild_id = ?
-        ORDER BY day DESC
-        LIMIT 30
-      `).all(user_id, guild_id) as { day: string }[];
+      const rows = db.prepare(`
+        SELECT started_at, support_member_id, helpers, was_resolved FROM support_interactions
+        WHERE guild_id = ? AND was_resolved = TRUE
+      `).all(guild_id) as any[];
+      const days = new Set<string>();
+      for (const r of rows) {
+        const involved = r.support_member_id === user_id || (r.helpers && (()=>{ try { return (JSON.parse(r.helpers) as string[]).includes(user_id); } catch { return false; } })());
+        if (!involved) continue;
+        const day = new Date(r.started_at).toISOString().split('T')[0];
+        days.add(day);
+      }
       
       let streak = 0;
       const today = new Date().toISOString().split('T')[0];
@@ -38,7 +50,7 @@ export function checkStreakAchievements() {
       
       for (let i = 0; i < 30; i++) {
         const dateStr = checkDate.toISOString().split('T')[0];
-        if (recentDays.some(d => d.day.startsWith(dateStr))) {
+        if (days.has(dateStr)) {
           streak++;
           checkDate.setDate(checkDate.getDate() - 1);
         } else if (dateStr !== today) {
@@ -67,11 +79,16 @@ export function checkStreakAchievements() {
 export function checkAllAchievements() {
   const db = getDB();
   
-  // Get all active users
-  const users = db.prepare(`
-    SELECT DISTINCT user_id, guild_id
-    FROM user_patterns
-  `).all() as { user_id: string; guild_id: string | null }[];
+  // Build participants from interactions (ensures we cover support contributors)
+  const interactions = db.prepare(`SELECT * FROM support_interactions`).all() as any[];
+  const userGuildPairs = new Set<string>();
+  for (const r of interactions) {
+    userGuildPairs.add(`${r.support_member_id}::${r.guild_id}`);
+    if (r.helpers) {
+      try { for (const h of JSON.parse(r.helpers) as string[]) userGuildPairs.add(`${h}::${r.guild_id}`); } catch {}
+    }
+  }
+  const users = Array.from(userGuildPairs).map(k => ({ user_id: k.split('::')[0], guild_id: k.split('::')[1] as string }));
   
   let totalAwarded = 0;
   
@@ -80,26 +97,27 @@ export function checkAllAchievements() {
       // Gather comprehensive stats
       const stats: any = {};
       
-      // Support stats
+      // Support stats (weighted 70/30)
       try {
-        const supportStats = db.prepare(`
-          SELECT 
-            COUNT(*) as totalAssists,
-            SUM(CASE WHEN status = 'resolved' THEN 1 ELSE 0 END) as resolvedCount,
-            SUM(CASE WHEN response_time_minutes < 5 AND status = 'resolved' THEN 1 ELSE 0 END) as fastResolutions
-          FROM support_interactions
-          WHERE supporter_id = ? AND guild_id = ?
-        `).get(user_id, guild_id) as any;
-        
-        if (supportStats) {
-          stats.totalAssists = supportStats.totalAssists || 0;
-          stats.totalCases = supportStats.totalAssists || 0;
-          stats.fastResolutions = supportStats.fastResolutions || 0;
-          
-          if (stats.totalCases > 0) {
-            stats.resolutionRate = (supportStats.resolvedCount || 0) / stats.totalCases;
+        const rows = db.prepare(`SELECT * FROM support_interactions WHERE guild_id = ?`).all(guild_id) as any[];
+        let total = 0, resolved = 0, fast = 0;
+        for (const r of rows) {
+          const helpers: string[] = (()=>{ try { return r.helpers ? JSON.parse(r.helpers) : []; } catch { return []; } })();
+          const hasHelpers = helpers.length > 0;
+          let w = 0;
+          if (r.support_member_id === user_id) w = hasHelpers ? 0.7 : 1.0;
+          if (helpers.includes(user_id)) w = 0.3 / helpers.length;
+          if (w <= 0) continue;
+          total += w;
+          if (r.was_resolved) {
+            resolved += w;
+            if ((r.resolution_time_seconds || 0) < 300) fast += w;
           }
         }
+        stats.totalAssists = total;
+        stats.totalCases = total;
+        stats.fastResolutions = fast;
+        stats.resolutionRate = total > 0 ? (resolved / total) : 0;
       } catch (e) { /* ignore */ }
       
       // Knowledge contributions

@@ -90,9 +90,14 @@ export function initEnhancedSchema() {
   try {
     const cols = db.prepare("PRAGMA table_info('support_interactions')").all() as Array<{ name: string }>;
     const hasQuestion = cols.some(c => c.name === 'question');
+    const hasHelpers = cols.some(c => c.name === 'helpers');
     if (!hasQuestion) {
       console.log("⚠️  Adding 'question' column to support_interactions...");
       db.exec("ALTER TABLE support_interactions ADD COLUMN question TEXT");
+    }
+    if (!hasHelpers) {
+      console.log("⚠️  Adding 'helpers' column to support_interactions...");
+      db.exec("ALTER TABLE support_interactions ADD COLUMN helpers TEXT");
     }
   } catch (err) {
     // Table may not exist yet; it will be created below
@@ -134,6 +139,7 @@ export function initEnhancedSchema() {
       guild_id TEXT NOT NULL,
       channel_id TEXT NOT NULL,
       question_category TEXT, -- technical, account, feature, other
+      question TEXT,
       started_at TEXT NOT NULL,
       ended_at TEXT,
       resolution_time_seconds INTEGER,
@@ -141,7 +147,8 @@ export function initEnhancedSchema() {
       escalated BOOLEAN DEFAULT FALSE,
       escalated_to TEXT,
       satisfaction_rating INTEGER, -- 1-5 stars
-      feedback_text TEXT
+      feedback_text TEXT,
+      helpers TEXT -- JSON array of co-support member IDs
     );
     CREATE INDEX IF NOT EXISTS idx_support_member ON support_interactions(support_member_id);
     CREATE INDEX IF NOT EXISTS idx_support_user ON support_interactions(user_id);
@@ -348,6 +355,7 @@ export type SupportInteraction = {
   guild_id: string;
   channel_id: string;
   question_category?: string | null;
+  question?: string | null;
   started_at: string;
   ended_at?: string | null;
   resolution_time_seconds?: number | null;
@@ -356,6 +364,7 @@ export type SupportInteraction = {
   escalated_to?: string | null;
   satisfaction_rating?: number | null;
   feedback_text?: string | null;
+  helpers?: string | null; // JSON array of user IDs
 };
 
 export type KnowledgeBaseEntry = {
