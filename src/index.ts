@@ -38,7 +38,11 @@ const client = new Client({
     GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildMessageReactions
   ],
-  partials: [Partials.Channel, Partials.Message, Partials.Reaction]
+  partials: [Partials.Channel, Partials.Message, Partials.Reaction],
+  allowedMentions: {
+    parse: ['users', 'roles'], // Allow user and role mentions, but not @everyone/@here
+    repliedUser: true // Allow mentioning the user being replied to
+  }
 });
 
 
