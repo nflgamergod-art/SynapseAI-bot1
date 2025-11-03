@@ -29,17 +29,12 @@ function nowISO() {
 export function getWarnings(userId: string, guildId: string): number {
   const db = getDB();
   
-  // First check if ANY warnings exist at all
-  const allWarnings = db.prepare(`SELECT * FROM user_warnings WHERE user_id = ? AND guild_id = ?`).all(userId, guildId) as any[];
-  console.log(`[AntiAbuse] Raw warnings for user ${userId}:`, allWarnings.length > 0 ? allWarnings : 'NONE FOUND');
-  
   const row = db.prepare(`
     SELECT SUM(warning_count) as total FROM user_warnings 
     WHERE user_id = ? AND guild_id = ?
   `).get(userId, guildId) as { total: number | null } | undefined;
   
   const total = row?.total || 0;
-  console.log(`[AntiAbuse] getWarnings for user ${userId} in guild ${guildId}: ${total}`);
   return total;
 }
 
@@ -47,8 +42,6 @@ export function getWarnings(userId: string, guildId: string): number {
 function saveWarning(userId: string, guildId: string, warningType: 'spam' | 'bypass' | 'other', reason: string): number {
   const db = getDB();
   const now = nowISO();
-  
-  console.log(`[AntiAbuse] Saving warning for user ${userId} in guild ${guildId}, type: ${warningType}`);
   
   // Check if warning record exists
   const existing = db.prepare(`
@@ -59,27 +52,18 @@ function saveWarning(userId: string, guildId: string, warningType: 'spam' | 'byp
   if (existing) {
     // Update existing warning
     const newCount = existing.warning_count + 1;
-    console.log(`[AntiAbuse] Updating existing warning: ${existing.warning_count} -> ${newCount}`);
-    const result = db.prepare(`
+    db.prepare(`
       UPDATE user_warnings 
       SET warning_count = ?, reason = ?, last_warning_at = ?
       WHERE id = ?
     `).run(newCount, reason, now, existing.id);
-    console.log(`[AntiAbuse] Update result:`, result.changes, 'rows affected');
     return newCount;
   } else {
     // Create new warning record
-    console.log(`[AntiAbuse] Creating new warning record`);
-    const result = db.prepare(`
+    db.prepare(`
       INSERT INTO user_warnings (user_id, guild_id, warning_type, reason, warning_count, last_warning_at, created_at)
       VALUES (?, ?, ?, ?, 1, ?, ?)
     `).run(userId, guildId, warningType, reason, now, now);
-    console.log(`[AntiAbuse] Insert result: rowId=${result.lastInsertRowid}, changes=${result.changes}`);
-    
-    // Verify it was saved
-    const verify = db.prepare(`SELECT * FROM user_warnings WHERE id = ?`).get(result.lastInsertRowid) as any;
-    console.log(`[AntiAbuse] Verification after insert:`, verify ? 'Found record' : 'NOT FOUND!');
-    
     return 1;
   }
 }
