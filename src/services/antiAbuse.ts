@@ -1,4 +1,5 @@
 import { getDB } from './db';
+import './enhancedDB'; // Ensure enhanced schema is initialized
 
 /**
  * Anti-Abuse System
