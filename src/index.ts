@@ -527,6 +527,11 @@ client.once("clientReady", async () => {
   };
   const finalCommands = buildFinalCommands(sanitizedCommands);
 
+  // Define a minimal set of global commands that should be available in DMs (outside guild scope)
+  // Keep this list small to speed up global propagation and avoid clutter.
+  const globalCommandNames = new Set<string>(['appeal']);
+  const globalCommands = finalCommands.filter((c: any) => globalCommandNames.has(c.name));
+
   (async () => {
     try {
       if (!client.application) return;
@@ -537,12 +542,13 @@ client.once("clientReady", async () => {
           const names = Array.from(setRes.values()).map(c => c.name).sort();
           console.log(`Guild command names (${names.length}): ${names.join(', ')}`);
         } catch {}
-        // Also clear global commands to avoid duplicates when switching from global to guild registration
+        // Additionally, ensure DM-usable commands are registered globally (e.g., /appeal)
         try {
-          await client.application.commands.set([] as any);
-          console.log('Cleared global slash commands to prevent duplicates.');
+          const globalSet = await client.application.commands.set(globalCommands as any);
+          const gNames = Array.from((globalSet as any).values?.() ?? []).map((c: any) => c.name).sort();
+          console.log(`Registered ${gNames.length}/${globalCommands.length} global commands: ${gNames.join(', ')}`);
         } catch (e) {
-          console.warn('Failed to clear global commands:', e);
+          console.warn('Failed to register global DM commands:', e);
         }
       } else {
         const setRes = await client.application.commands.set(finalCommands as any);
