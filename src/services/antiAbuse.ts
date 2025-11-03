@@ -5,14 +5,45 @@ import './enhancedDB'; // Ensure enhanced schema is initialized
  * Anti-Abuse System
  * - Detects spam (repeated messages in short time)
  * - Detects permission bypass attempts
- * - Auto-blacklists abusive users
+ * - Detects inappropriate content
+ * - Warns users and mutes on 3rd warning
  * - Logs incidents to mod channel
  * - Persists warnings to database
+ * - Role-based bypass system
  */
 
 interface SpamTracker {
   userId: string;
   messages: number[];
+}
+
+// Store bypassed role IDs
+const bypassedRoleIds = new Set<string>();
+
+// Add a role to bypass list
+export function addBypassRole(roleId: string): boolean {
+  bypassedRoleIds.add(roleId);
+  return true;
+}
+
+// Remove a role from bypass list
+export function removeBypassRole(roleId: string): boolean {
+  return bypassedRoleIds.delete(roleId);
+}
+
+// Check if user has a bypassed role
+export function hasBypassRole(userRoles: string[]): boolean {
+  return userRoles.some(roleId => bypassedRoleIds.has(roleId));
+}
+
+// Get all bypassed roles
+export function getBypassedRoles(): string[] {
+  return Array.from(bypassedRoleIds);
+}
+
+// Clear all bypassed roles
+export function clearBypassedRoles(): void {
+  bypassedRoleIds.clear();
 }
 
 const spamTrackers = new Map<string, SpamTracker>();
@@ -171,7 +202,23 @@ export function detectInappropriateContent(content: string): boolean {
   return allPatterns.some(pattern => pattern.test(content));
 }
 
-// Auto-blacklist user
+// Auto-mute user after 3 warnings (returns mute duration in seconds, or null if not ready to mute)
+export function shouldAutoMute(userId: string, guildId: string): number | null {
+  const totalWarnings = getWarnings(userId, guildId);
+  
+  // Mute on 3rd warning
+  if (totalWarnings >= 3) {
+    // Progressive mute durations: 3rd = 10min, 4th = 30min, 5th = 1hr, 6+ = 24hr
+    if (totalWarnings === 3) return 600; // 10 minutes
+    if (totalWarnings === 4) return 1800; // 30 minutes
+    if (totalWarnings === 5) return 3600; // 1 hour
+    return 86400; // 24 hours for 6+
+  }
+  
+  return null; // Not ready to mute yet
+}
+
+// Auto-blacklist user (kept for spam abuse, not inappropriate content)
 export function autoBlacklist(userId: string, guildId: string, reason: string): boolean {
   const db = getDB();
   const now = nowISO();

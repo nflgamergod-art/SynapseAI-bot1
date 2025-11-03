@@ -265,6 +265,17 @@ client.once("clientReady", async () => {
       { name: "list", description: "List command permissions for a role", type: 1, options: [
         { name: "role", description: "Role to view permissions for", type: 8, required: true }
       ] }
+    ] },
+    // Anti-Abuse Bypass Management
+    { name: "abusebypass", description: "🛡️ Owner: Manage roles that bypass inappropriate content filter", options: [
+      { name: "add", description: "Add a role to bypass list (e.g., staff roles)", type: 1, options: [
+        { name: "role", description: "Role to bypass inappropriate content filter", type: 8, required: true }
+      ] },
+      { name: "remove", description: "Remove a role from bypass list", type: 1, options: [
+        { name: "role", description: "Role to remove from bypass list", type: 8, required: true }
+      ] },
+      { name: "list", description: "List all roles that bypass the filter", type: 1 },
+      { name: "clear", description: "Clear all bypass roles", type: 1 }
     ] }
   ];
 
@@ -692,6 +703,60 @@ client.on("interactionCreate", async (interaction) => {
           .setFooter({ text: 'Use /cmdpermissions to modify permissions' });
 
         return interaction.reply({ embeds: [embed], ephemeral: true });
+      }
+    }
+
+    // Anti-Abuse Bypass Management
+    if (interaction.commandName === "abusebypass") {
+      if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+      
+      const { addBypassRole, removeBypassRole, getBypassedRoles, clearBypassedRoles } = await import('./services/antiAbuse');
+      const subcommand = interaction.options.getSubcommand();
+
+      if (subcommand === "add") {
+        const role = interaction.options.getRole('role', true);
+        addBypassRole(role.id);
+        return interaction.reply({ 
+          content: `✅ Added <@&${role.id}> to inappropriate content filter bypass list. Members with this role will not be warned for inappropriate language.`, 
+          ephemeral: true 
+        });
+      }
+
+      if (subcommand === "remove") {
+        const role = interaction.options.getRole('role', true);
+        const success = removeBypassRole(role.id);
+        if (success) {
+          return interaction.reply({ 
+            content: `✅ Removed <@&${role.id}> from bypass list.`, 
+            ephemeral: true 
+          });
+        } else {
+          return interaction.reply({ content: '❌ Role not found in bypass list.', ephemeral: true });
+        }
+      }
+
+      if (subcommand === "list") {
+        const roleIds = getBypassedRoles();
+        if (roleIds.length === 0) {
+          return interaction.reply({ 
+            content: 'No roles configured to bypass the inappropriate content filter.', 
+            ephemeral: true 
+          });
+        }
+
+        const roleMentions = roleIds.map(id => `<@&${id}>`).join(', ');
+        return interaction.reply({ 
+          content: `**Bypass Roles (${roleIds.length}):**\n${roleMentions}`, 
+          ephemeral: true 
+        });
+      }
+
+      if (subcommand === "clear") {
+        clearBypassedRoles();
+        return interaction.reply({ 
+          content: '✅ Cleared all bypass roles.', 
+          ephemeral: true 
+        });
       }
     }
   }
@@ -2484,32 +2549,56 @@ client.on("messageCreate", async (message: Message) => {
     if (isOwnerId(message.author.id)) {
       // Owners bypass anti-abuse system
     } else {
-      const { trackMessage, detectBypassAttempt, detectInappropriateContent, autoBlacklist, getWarnings, incrementWarning } = await import('./services/antiAbuse');
+      const { trackMessage, detectBypassAttempt, detectInappropriateContent, getWarnings, incrementWarning, shouldAutoMute, hasBypassRole, autoBlacklist } = await import('./services/antiAbuse');
       const guildId = message.guild?.id || '';
       
-      // Check for inappropriate content first
-      const isInappropriate = detectInappropriateContent(message.content);
-      if (isInappropriate) {
-        const reason = 'Inappropriate content detected';
-        
-        const newWarnings = incrementWarning(message.author.id, guildId, 'other', reason);
-        
-        if (newWarnings >= 3) {
-          // Auto-blacklist on 3rd warning
-          autoBlacklist(message.author.id, guildId, reason);
+      // Check if user has bypass role (staff)
+      const userRoles = message.member?.roles?.cache ? Array.from(message.member.roles.cache.keys()) : [];
+      const hasStaffBypass = hasBypassRole(userRoles);
+      
+      // Staff bypass inappropriate content checks
+      if (!hasStaffBypass) {
+        // Check for inappropriate content first
+        const isInappropriate = detectInappropriateContent(message.content);
+        if (isInappropriate) {
+          const reason = 'Inappropriate content detected';
           
-          // Log to mod channel
-          try {
-            const logChannel = getModLogChannelId();
-            if (logChannel && message.guild) {
-              const channel = await message.guild.channels.fetch(logChannel);
-              if (channel?.isTextBased()) {
-                await (channel as any).send(`🚨 **Auto-Blacklist**\nUser: <@${message.author.id}> (${message.author.tag})\nReason: ${reason}\nWarnings: ${newWarnings}/3\nMessage: "${message.content.slice(0, 100)}"`);
+          const newWarnings = incrementWarning(message.author.id, guildId, 'other', reason);
+          const muteDuration = shouldAutoMute(message.author.id, guildId);
+          
+          if (muteDuration) {
+            // Auto-mute user
+            try {
+              await message.member?.timeout(muteDuration * 1000, `Auto-mute: ${reason} (${newWarnings} warnings)`);
+              
+              // Log to mod channel
+              try {
+                const logChannel = getModLogChannelId();
+                if (logChannel && message.guild) {
+                  const channel = await message.guild.channels.fetch(logChannel);
+                  if (channel?.isTextBased()) {
+                    const duration = muteDuration < 60 ? `${muteDuration}s` : muteDuration < 3600 ? `${Math.round(muteDuration / 60)}min` : `${Math.round(muteDuration / 3600)}hr`;
+                    await (channel as any).send(`� **Auto-Mute**\nUser: <@${message.author.id}> (${message.author.tag})\nReason: ${reason}\nWarnings: ${newWarnings}\nDuration: ${duration}\nMessage: "${message.content.slice(0, 100)}"`);
+                  }
+                }
+              } catch (err) {
+                console.error('Failed to log auto-mute:', err);
               }
+            } catch (err) {
+              console.error('Failed to auto-mute user:', err);
             }
-          } catch (err) {
-            console.error('Failed to log auto-blacklist:', err);
+            
+            // Delete the inappropriate message
+            try {
+              await message.delete();
+            } catch (err) {
+              console.error('Failed to delete inappropriate message:', err);
+            }
+            return;
           }
+          
+          // Warn user (not muted yet)
+          await message.reply(`⚠️ Warning: ${reason}. Please keep conversations appropriate. You will be muted after 3 warnings. (${newWarnings}/3 warnings)`);
           
           // Delete the inappropriate message
           try {
@@ -2519,17 +2608,6 @@ client.on("messageCreate", async (message: Message) => {
           }
           return;
         }
-        
-        // Warn user
-        await message.reply(`⚠️ Warning: ${reason}. Please keep conversations appropriate. Further violations will result in automatic blacklist. (${newWarnings}/3 warnings)`);
-        
-        // Delete the inappropriate message
-        try {
-          await message.delete();
-        } catch (err) {
-          console.error('Failed to delete inappropriate message:', err);
-        }
-        return;
       }
       
       const isBypass = detectBypassAttempt(message.author.id, message.content);
