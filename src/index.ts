@@ -455,12 +455,44 @@ client.once("clientReady", async () => {
   };
   const sanitizedCommands = commands.map((c) => sanitizeCommand({ ...c }));
 
+  // Respect Discord's 100-command per scope limit. Ensure priority commands are included.
+  const PRIORITY_NAMES = new Set<string>([
+    'automod','case','cases','updatecase','appeal','appeals',
+    'remind','reminders','cancelreminder',
+    'clockin','clockout','shifts','shiftstats','whosonduty',
+    'statschannels','bulkban','bulkkick','bulkmute',
+    'ticket','tempchannels',
+    // a few maintenance/admin
+    'redeploy','cmdpermissions','abusebypass','help','ping'
+  ]);
+  const buildFinalCommands = (all: any[]) => {
+    const byName = new Map<string, any>();
+    all.forEach(c => byName.set(c.name, c));
+    const prioritized: any[] = [];
+    // Keep original order but pull priorities to the front once
+    all.forEach(c => {
+      if (PRIORITY_NAMES.has(c.name)) prioritized.push(c);
+    });
+    const rest = all.filter(c => !PRIORITY_NAMES.has(c.name));
+    const combined: any[] = [];
+    const seen = new Set<string>();
+    for (const c of [...prioritized, ...rest]) {
+      if (!seen.has(c.name)) { combined.push(c); seen.add(c.name); }
+    }
+    if (combined.length > 100) {
+      console.warn(`Command count (${combined.length}) exceeds Discord limit (100). Truncating to first 100.`);
+      return combined.slice(0, 100);
+    }
+    return combined;
+  };
+  const finalCommands = buildFinalCommands(sanitizedCommands);
+
   (async () => {
     try {
       if (!client.application) return;
       if (guildId) {
-        const setRes = await client.application.commands.set(sanitizedCommands, guildId);
-        console.log(`Registered ${commands.length} slash commands for guild ${guildId}`);
+        const setRes = await client.application.commands.set(finalCommands, guildId);
+        console.log(`Registered ${finalCommands.length}/${commands.length} slash commands for guild ${guildId}`);
         try {
           const names = Array.from(setRes.values()).map(c => c.name).sort();
           console.log(`Guild command names (${names.length}): ${names.join(', ')}`);
@@ -473,8 +505,8 @@ client.once("clientReady", async () => {
           console.warn('Failed to clear global commands:', e);
         }
       } else {
-        const setRes = await client.application.commands.set(sanitizedCommands as any);
-        console.log(`Registered ${commands.length} global slash commands`);
+        const setRes = await client.application.commands.set(finalCommands as any);
+        console.log(`Registered ${finalCommands.length}/${commands.length} global slash commands`);
         try {
           const names = Array.from((setRes as any).values?.() ?? []).map((c: any) => c.name).sort();
           if (names.length) console.log(`Global command names (${names.length}): ${names.join(', ')}`);
