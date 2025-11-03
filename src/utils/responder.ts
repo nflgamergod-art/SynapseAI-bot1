@@ -136,7 +136,7 @@ export async function handleConversationalReply(message: Message) {
 
   // Try AI (Gemini) first. If that fails, fallback to local responder.
   try {
-    const reply = await generateReply(prompt);
+    const reply = await generateReply(prompt, guildId || undefined);
     // add assistant reply to convo
     convo.push(`Assistant: ${reply}`);
     if (convo.length > 10) convo.splice(0, convo.length - 10);

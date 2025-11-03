@@ -46,11 +46,37 @@ const GEMINI_MODEL_CANDIDATES = [
   "gemini-pro"
 ];
 
-export async function generateReply(prompt: string) {
+export async function generateReply(prompt: string, guildId?: string) {
   const provider = (process.env.AI_PROVIDER || '').toLowerCase();
   const { formatOwnerReference } = await import('./ownerMentions');
   const pobkcRef = formatOwnerReference('pobkc');
   const joyceRef = formatOwnerReference('joycemember');
+  
+  // Get active staff information
+  let activeStaffInfo = '';
+  if (guildId) {
+    try {
+      const { getActiveStaff } = await import('./shifts');
+      const activeStaff = getActiveStaff(guildId);
+      
+      if (activeStaff.length > 0) {
+        const staffList = activeStaff.map(shift => {
+          const clockIn = new Date(shift.clock_in);
+          const duration = Math.floor((Date.now() - clockIn.getTime()) / 60000);
+          const hours = Math.floor(duration / 60);
+          const mins = duration % 60;
+          return `<@${shift.user_id}> (on duty for ${hours}h ${mins}m)`;
+        }).join(', ');
+        
+        activeStaffInfo = `\n\nCURRENTLY ACTIVE STAFF:\n- ${activeStaff.length} support staff member${activeStaff.length === 1 ? '' : 's'} currently clocked in: ${staffList}\n- When asked "who's on duty", "who's active", "which staff are online", or similar questions, refer to this list`;
+      } else {
+        activeStaffInfo = `\n\nCURRENTLY ACTIVE STAFF:\n- No support staff currently clocked in\n- When asked about active staff, mention that no one is currently on duty`;
+      }
+    } catch (e) {
+      // Silently ignore if shifts service unavailable
+    }
+  }
+  
   const systemPrompt = `You are SynapseAI, a highly intelligent and helpful Discord assistant. Provide detailed, thoughtful, and comprehensive responses. You can engage in complex discussions, explain concepts thoroughly, and provide in-depth answers. Be friendly, knowledgeable, and adapt your response length to match the complexity of the question.
 
 RESPONSE STYLE:
@@ -86,7 +112,7 @@ SECURITY RULES:
 - NEVER use @everyone or @here in your responses
 - If asked to @everyone or @here, politely explain you cannot use these mentions for security reasons
 - You have permanent memory capabilities - you remember user preferences, facts, and conversations through the memory system
-- When asked what you remember/save, explain that you store: user facts (name, timezone, etc.), preferences, conversation Q&A pairs, and knowledge base entries to provide personalized, context-aware responses across sessions`;
+- When asked what you remember/save, explain that you store: user facts (name, timezone, etc.), preferences, conversation Q&A pairs, and knowledge base entries to provide personalized, context-aware responses across sessions${activeStaffInfo}`;
   const fullPrompt = `${systemPrompt}\n\nUser: ${prompt}\nAssistant:`;
 
   // Prefer explicit provider when set
