@@ -25,6 +25,27 @@ const token = (process.env.DISCORD_TOKEN || '').trim();
 const prefix = process.env.PREFIX ?? "!";
 const wakeWord = process.env.WAKE_WORD ?? "SynapseAI";
 
+// Helper function to parse duration strings
+function parseDuration(durationStr: string): number {
+  const match = durationStr.match(/^(\d+)([smhd])$/);
+  if (!match) {
+    // Try parsing as raw number (seconds)
+    const num = parseInt(durationStr);
+    return isNaN(num) ? 600000 : num * 1000; // Default 10min
+  }
+  
+  const value = parseInt(match[1]);
+  const unit = match[2];
+  
+  switch (unit) {
+    case 's': return value * 1000;
+    case 'm': return value * 60 * 1000;
+    case 'h': return value * 60 * 60 * 1000;
+    case 'd': return value * 24 * 60 * 60 * 1000;
+    default: return 600000; // Default 10min
+  }
+}
+
 if (!token) {
   console.error("DISCORD_TOKEN not set in .env — cannot start bot");
   process.exit(1);
@@ -280,6 +301,123 @@ client.once("clientReady", async () => {
       ] },
       { name: "list", description: "List all roles that bypass the filter", type: 1 },
       { name: "clear", description: "Clear all bypass roles", type: 1 }
+    ] },
+    // Auto-Moderation
+    { name: "automod", description: "🤖 Configure auto-moderation rules", options: [
+      { name: "set", description: "Set an auto-mod rule", type: 1, options: [
+        { name: "rule", description: "spam_links | mass_mentions | caps_spam | invite_links", type: 3, required: true },
+        { name: "enabled", description: "Enable this rule", type: 5, required: true },
+        { name: "action", description: "delete | warn | mute | kick", type: 3, required: true },
+        { name: "threshold", description: "Threshold (links count, mentions count, caps %)", type: 4, required: false },
+        { name: "mute_duration", description: "Mute duration in minutes (if action=mute)", type: 4, required: false }
+      ] },
+      { name: "list", description: "List configured auto-mod rules", type: 1 },
+      { name: "delete", description: "Delete an auto-mod rule", type: 1, options: [
+        { name: "rule", description: "spam_links | mass_mentions | caps_spam | invite_links", type: 3, required: true }
+      ] }
+    ] },
+    // Mod Cases
+    { name: "case", description: "📋 View a moderation case by number", options: [
+      { name: "number", description: "Case number", type: 4, required: true }
+    ] },
+    { name: "cases", description: "📋 View all cases for a user", options: [
+      { name: "user", description: "User to check cases for", type: 6, required: true }
+    ] },
+    { name: "updatecase", description: "📝 Update case reason", options: [
+      { name: "number", description: "Case number", type: 4, required: true },
+      { name: "reason", description: "New reason", type: 3, required: true }
+    ] },
+    // Appeals
+    { name: "appeal", description: "📨 Submit an appeal (use in DMs with bot)", options: [
+      { name: "type", description: "ban | mute | blacklist", type: 3, required: true },
+      { name: "reason", description: "Why should your punishment be revoked?", type: 3, required: true }
+    ] },
+    { name: "appeals", description: "📨 Admin: Review pending appeals", options: [
+      { name: "view", description: "View all pending appeals", type: 1 },
+      { name: "approve", description: "Approve an appeal", type: 1, options: [
+        { name: "id", description: "Appeal ID", type: 4, required: true },
+        { name: "note", description: "Optional note", type: 3, required: false }
+      ] },
+      { name: "deny", description: "Deny an appeal", type: 1, options: [
+        { name: "id", description: "Appeal ID", type: 4, required: true },
+        { name: "note", description: "Reason for denial", type: 3, required: false }
+      ] }
+    ] },
+    // Reminders
+    { name: "remind", description: "⏰ Set a reminder", options: [
+      { name: "time", description: "Time (e.g., 2h, 30m, 1d)", type: 3, required: true },
+      { name: "message", description: "What to remind you about", type: 3, required: true }
+    ] },
+    { name: "reminders", description: "⏰ List your active reminders" },
+    { name: "cancelreminder", description: "⏰ Cancel a reminder", options: [
+      { name: "id", description: "Reminder ID", type: 4, required: true }
+    ] },
+    // Staff Shifts
+    { name: "clockin", description: "🕒 Clock in for your shift" },
+    { name: "clockout", description: "🕒 Clock out from your shift" },
+    { name: "shifts", description: "🕒 View shift history", options: [
+      { name: "user", description: "User to check (defaults to you)", type: 6, required: false },
+      { name: "limit", description: "Number of shifts to show (default 10)", type: 4, required: false }
+    ] },
+    { name: "shiftstats", description: "📊 View shift statistics", options: [
+      { name: "user", description: "User to check (defaults to you)", type: 6, required: false },
+      { name: "days", description: "Days to analyze (default 30)", type: 4, required: false }
+    ] },
+    { name: "whosonduty", description: "👥 View currently clocked-in staff" },
+    // Server Stats Channels
+    { name: "statschannels", description: "📊 Configure auto-updating stats channels", options: [
+      { name: "set", description: "Set a stats channel", type: 1, options: [
+        { name: "type", description: "member_count | online_count | bot_count | role_count | channel_count", type: 3, required: true },
+        { name: "channel", description: "Voice channel to use", type: 7, required: true },
+        { name: "format", description: "Format (use {count} placeholder, e.g., 'Members: {count}')", type: 3, required: true }
+      ] },
+      { name: "list", description: "List configured stats channels", type: 1 },
+      { name: "remove", description: "Remove a stats channel", type: 1, options: [
+        { name: "channel", description: "Channel to remove", type: 7, required: true }
+      ] }
+    ] },
+    // Bulk Actions
+    { name: "bulkban", description: "🔨 Ban multiple users", options: [
+      { name: "users", description: "User IDs (comma or space separated)", type: 3, required: true },
+      { name: "reason", description: "Ban reason", type: 3, required: false }
+    ] },
+    { name: "bulkkick", description: "👢 Kick multiple users", options: [
+      { name: "users", description: "User IDs (comma or space separated)", type: 3, required: true },
+      { name: "reason", description: "Kick reason", type: 3, required: false }
+    ] },
+    { name: "bulkmute", description: "🔇 Mute multiple users", options: [
+      { name: "users", description: "User IDs (comma or space separated)", type: 3, required: true },
+      { name: "duration", description: "Duration (e.g., 10m, 1h)", type: 3, required: false },
+      { name: "reason", description: "Mute reason", type: 3, required: false }
+    ] },
+    // Ticket System
+    { name: "ticket", description: "🎫 Ticket system commands", options: [
+      { name: "setup", description: "Setup ticket system (Admin)", type: 1, options: [
+        { name: "category", description: "Category for ticket channels", type: 7, required: true },
+        { name: "log_channel", description: "Channel for ticket logs", type: 7, required: false },
+        { name: "support_role", description: "Role to ping for new tickets", type: 8, required: false }
+      ] },
+      { name: "create", description: "Create a new ticket", type: 1, options: [
+        { name: "category", description: "Support category", type: 3, required: true },
+        { name: "description", description: "Describe your issue", type: 3, required: false }
+      ] },
+      { name: "close", description: "Close a ticket", type: 1 },
+      { name: "claim", description: "Claim a ticket", type: 1 },
+      { name: "list", description: "List open tickets", type: 1 }
+    ] },
+    // Temporary Channels
+    { name: "tempchannels", description: "🔊 Configure temporary channels", options: [
+      { name: "setup", description: "Setup a temp channel trigger", type: 1, options: [
+        { name: "trigger", description: "Voice channel to trigger creation", type: 7, required: true },
+        { name: "type", description: "voice | text", type: 3, required: true },
+        { name: "template", description: "Name template (use {user} for username)", type: 3, required: true },
+        { name: "category", description: "Category to create channels in", type: 7, required: false },
+        { name: "user_limit", description: "User limit for voice channels", type: 4, required: false }
+      ] },
+      { name: "list", description: "List temp channel configs", type: 1 },
+      { name: "remove", description: "Remove a temp channel config", type: 1, options: [
+        { name: "trigger", description: "Trigger channel to remove", type: 7, required: true }
+      ] }
     ] }
   ];
 
@@ -395,6 +533,60 @@ client.on("interactionCreate", async (interaction) => {
           return interaction.reply({ content: `Failed to create emoji: ${e?.message ?? e}`, ephemeral: true });
         }
       }
+      
+      // Bulk action confirmations
+      if (btn.startsWith('bulk-confirm-')) {
+        const data = (client as any).bulkActionData?.[interaction.user.id];
+        if (!data) {
+          return interaction.update({ content: '❌ Session expired. Please run the command again.', components: [], embeds: [] });
+        }
+
+        const { action, userIds, reason, duration, guildId, moderatorId } = data;
+        if (!interaction.guild || interaction.guild.id !== guildId) {
+          return interaction.update({ content: '❌ Invalid guild.', components: [], embeds: [] });
+        }
+
+        await interaction.update({ content: `Processing ${action}...`, components: [], embeds: [] });
+
+        const { createCase } = await import('./services/cases');
+        const results: string[] = [];
+        let successCount = 0;
+
+        for (const userId of userIds) {
+          try {
+            if (action === 'bulkban') {
+              await interaction.guild.members.ban(userId, { reason });
+              createCase(guildId, userId, moderatorId, 'ban', reason);
+              successCount++;
+            } else if (action === 'bulkkick') {
+              const member = await interaction.guild.members.fetch(userId);
+              await member.kick(reason);
+              createCase(guildId, userId, moderatorId, 'kick', reason);
+              successCount++;
+            } else if (action === 'bulkmute') {
+              const member = await interaction.guild.members.fetch(userId);
+              const durationMs = duration ? parseDuration(duration) : 600000; // Default 10m
+              await member.timeout(durationMs, reason);
+              createCase(guildId, userId, moderatorId, 'mute', reason, Math.floor(durationMs / 60000));
+              successCount++;
+            }
+          } catch (err: any) {
+            results.push(`❌ ${userId}: ${err.message || 'Failed'}`);
+          }
+        }
+
+        results.unshift(`✅ Successfully ${action.replace('bulk', '')}ed ${successCount}/${userIds.length} users.`);
+        
+        await interaction.followUp({ content: results.join('\n').slice(0, 2000), ephemeral: true });
+        delete (client as any).bulkActionData[interaction.user.id];
+        return;
+      }
+
+      if (btn === 'bulk-cancel') {
+        delete (client as any).bulkActionData?.[interaction.user.id];
+        return interaction.update({ content: '❌ Cancelled.', components: [], embeds: [] });
+      }
+
       return; // handled button
     }
 
@@ -813,6 +1005,760 @@ client.on("interactionCreate", async (interaction) => {
   // Try enhanced feature commands first
   const enhancedHandled = await handleEnhancedCommands(interaction as any);
   if (enhancedHandled) return;
+
+  // Auto-Moderation Commands
+  if (name === "automod") {
+    if (!(await hasCommandAccess(interaction.member, 'automod', interaction.guild?.id || null))) {
+      return interaction.reply({ content: '❌ You don\'t have permission to use this command.', ephemeral: true });
+    }
+    if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+
+    const subCmd = interaction.options.getSubcommand();
+    const { getAutoModRules, setAutoModRule, deleteAutoModRule } = await import('./services/automod');
+
+    if (subCmd === "set") {
+      const rule = interaction.options.getString('rule', true) as any;
+      const enabled = interaction.options.getBoolean('enabled', true);
+      const action = interaction.options.getString('action', true) as any;
+      const threshold = interaction.options.getInteger('threshold');
+      const muteDuration = interaction.options.getInteger('mute_duration');
+
+      setAutoModRule({
+        guild_id: interaction.guild.id,
+        rule_type: rule,
+        enabled: enabled,
+        action: action,
+        threshold: threshold || undefined,
+        mute_duration: muteDuration || undefined
+      });
+
+      return interaction.reply({ content: `✅ Auto-mod rule **${rule}** has been ${enabled ? 'enabled' : 'disabled'} with action **${action}**.`, ephemeral: true });
+    }
+
+    if (subCmd === "list") {
+      const rules = getAutoModRules(interaction.guild.id);
+      if (rules.length === 0) {
+        return interaction.reply({ content: 'No auto-mod rules configured.', ephemeral: true });
+      }
+
+      const embed = new EmbedBuilder()
+        .setTitle('🤖 Auto-Moderation Rules')
+        .setColor(0x00AE86);
+
+      for (const rule of rules) {
+        const statusEmoji = rule.enabled ? '✅' : '❌';
+        const thresholdInfo = rule.threshold ? ` (threshold: ${rule.threshold})` : '';
+        const muteInfo = rule.mute_duration ? ` (${rule.mute_duration}m)` : '';
+        embed.addFields({
+          name: `${statusEmoji} ${rule.rule_type}`,
+          value: `Action: **${rule.action}**${thresholdInfo}${muteInfo}`,
+          inline: false
+        });
+      }
+
+      return interaction.reply({ embeds: [embed], ephemeral: true });
+    }
+
+    if (subCmd === "delete") {
+      const rule = interaction.options.getString('rule', true) as any;
+      deleteAutoModRule(interaction.guild.id, rule);
+      return interaction.reply({ content: `✅ Deleted auto-mod rule **${rule}**.`, ephemeral: true });
+    }
+  }
+
+  // Case Management Commands
+  if (name === "case") {
+    if (!(await hasCommandAccess(interaction.member, 'case', interaction.guild?.id || null))) {
+      return interaction.reply({ content: '❌ You don\'t have permission to use this command.', ephemeral: true });
+    }
+
+    const caseNumber = interaction.options.getInteger('number', true);
+    const { getCase } = await import('./services/cases');
+    const caseData = getCase(caseNumber);
+
+    if (!caseData) {
+      return interaction.reply({ content: `❌ Case #${caseNumber} not found.`, ephemeral: true });
+    }
+
+    const embed = new EmbedBuilder()
+      .setTitle(`📋 Case #${caseData.case_number}`)
+      .setColor(0xFF5555)
+      .addFields(
+        { name: 'User', value: `<@${caseData.user_id}>`, inline: true },
+        { name: 'Moderator', value: `<@${caseData.moderator_id}>`, inline: true },
+        { name: 'Action', value: caseData.action_type.toUpperCase(), inline: true },
+        { name: 'Reason', value: caseData.reason, inline: false }
+      )
+      .setTimestamp(new Date(caseData.created_at));
+
+    if (caseData.duration) {
+      embed.addFields({ name: 'Duration', value: `${caseData.duration} minutes`, inline: true });
+    }
+
+    return interaction.reply({ embeds: [embed], ephemeral: true });
+  }
+
+  if (name === "cases") {
+    if (!(await hasCommandAccess(interaction.member, 'cases', interaction.guild?.id || null))) {
+      return interaction.reply({ content: '❌ You don\'t have permission to use this command.', ephemeral: true });
+    }
+    if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+
+    const user = interaction.options.getUser('user', true);
+    const { getUserCases } = await import('./services/cases');
+    const cases = getUserCases(interaction.guild.id, user.id);
+
+    if (cases.length === 0) {
+      return interaction.reply({ content: `${user.tag} has no moderation cases.`, ephemeral: true });
+    }
+
+    const embed = new EmbedBuilder()
+      .setTitle(`📋 Cases for ${user.tag}`)
+      .setColor(0xFF5555)
+      .setDescription(`Total cases: ${cases.length}`);
+
+    const displayCases = cases.slice(0, 10);
+    for (const c of displayCases) {
+      const date = new Date(c.created_at).toLocaleDateString();
+      embed.addFields({
+        name: `Case #${c.case_number} - ${c.action_type.toUpperCase()}`,
+        value: `${c.reason}\n*${date} by <@${c.moderator_id}>*`,
+        inline: false
+      });
+    }
+
+    if (cases.length > 10) {
+      embed.setFooter({ text: `Showing 10 of ${cases.length} cases` });
+    }
+
+    return interaction.reply({ embeds: [embed], ephemeral: true });
+  }
+
+  if (name === "updatecase") {
+    if (!(await hasCommandAccess(interaction.member, 'updatecase', interaction.guild?.id || null))) {
+      return interaction.reply({ content: '❌ You don\'t have permission to use this command.', ephemeral: true });
+    }
+
+    const caseNumber = interaction.options.getInteger('number', true);
+    const reason = interaction.options.getString('reason', true);
+    const { updateCaseReason } = await import('./services/cases');
+
+    const success = updateCaseReason(caseNumber, reason);
+    if (success) {
+      return interaction.reply({ content: `✅ Updated case #${caseNumber} reason.`, ephemeral: true });
+    } else {
+      return interaction.reply({ content: `❌ Case #${caseNumber} not found.`, ephemeral: true });
+    }
+  }
+
+  // Appeals System
+  if (name === "appeal") {
+    const type = interaction.options.getString('type', true) as any;
+    const reason = interaction.options.getString('reason', true);
+
+    // Must be used in DMs with bot or in a guild
+    const { createAppeal } = await import('./services/appeals');
+    const guildId = interaction.guild?.id || process.env.GUILD_ID;
+    if (!guildId) {
+      return interaction.reply({ content: '❌ Could not determine server. Please use this command in the server or ensure the bot is configured.', ephemeral: true });
+    }
+
+    try {
+      const appealId = createAppeal(guildId, interaction.user.id, type, reason);
+      return interaction.reply({ content: `✅ Appeal #${appealId} submitted successfully. Staff will review it soon.`, ephemeral: true });
+    } catch (err: any) {
+      return interaction.reply({ content: `❌ ${err.message || 'Failed to submit appeal.'}`, ephemeral: true });
+    }
+  }
+
+  if (name === "appeals") {
+    if (!(await hasCommandAccess(interaction.member, 'appeals', interaction.guild?.id || null))) {
+      return interaction.reply({ content: '❌ You don\'t have permission to use this command.', ephemeral: true });
+    }
+    if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+
+    const subCmd = interaction.options.getSubcommand();
+    const { getPendingAppeals, getAppeal, reviewAppeal } = await import('./services/appeals');
+
+    if (subCmd === "view") {
+      const appeals = getPendingAppeals(interaction.guild.id);
+      if (appeals.length === 0) {
+        return interaction.reply({ content: 'No pending appeals.', ephemeral: true });
+      }
+
+      const embed = new EmbedBuilder()
+        .setTitle('📨 Pending Appeals')
+        .setColor(0xFFAA00);
+
+      for (const appeal of appeals) {
+        embed.addFields({
+          name: `Appeal #${appeal.id} - ${appeal.appeal_type}`,
+          value: `**User:** <@${appeal.user_id}>\n**Reason:** ${appeal.reason}\n**Submitted:** ${new Date(appeal.created_at).toLocaleString()}`,
+          inline: false
+        });
+      }
+
+      return interaction.reply({ embeds: [embed], ephemeral: true });
+    }
+
+    if (subCmd === "approve" || subCmd === "deny") {
+      const appealId = interaction.options.getInteger('id', true);
+      const note = interaction.options.getString('note');
+
+      const success = reviewAppeal(appealId, interaction.user.id, subCmd === "approve" ? 'approved' : 'denied', note || undefined);
+      if (success) {
+        const appeal = getAppeal(appealId);
+        if (appeal) {
+          // Notify user
+          try {
+            const user = await client.users.fetch(appeal.user_id);
+            const statusMsg = subCmd === "approve" ? '✅ Your appeal has been **approved**!' : '❌ Your appeal has been **denied**.';
+            const noteMsg = note ? `\n\n**Note:** ${note}` : '';
+            await user.send(`${statusMsg} (Appeal #${appealId})${noteMsg}`);
+          } catch {}
+        }
+        return interaction.reply({ content: `✅ Appeal #${appealId} ${subCmd === "approve" ? 'approved' : 'denied'}.`, ephemeral: true });
+      } else {
+        return interaction.reply({ content: `❌ Appeal #${appealId} not found or already reviewed.`, ephemeral: true });
+      }
+    }
+  }
+
+  // Reminders System
+  if (name === "remind") {
+    const timeStr = interaction.options.getString('time', true);
+    const message = interaction.options.getString('message', true);
+
+    const { parseTimeString, createReminder } = await import('./services/reminders');
+    const minutes = parseTimeString(timeStr);
+
+    if (!minutes) {
+      return interaction.reply({ content: '❌ Invalid time format. Use formats like: 2h, 30m, 1d, 45s', ephemeral: true });
+    }
+
+    const reminderId = createReminder(
+      interaction.user.id,
+      message,
+      minutes,
+      interaction.guild?.id,
+      interaction.channelId
+    );
+
+    const reminderTime = new Date(Date.now() + minutes * 60000);
+    return interaction.reply({ content: `✅ Reminder #${reminderId} set for <t:${Math.floor(reminderTime.getTime() / 1000)}:R>!\n**Message:** ${message}`, ephemeral: true });
+  }
+
+  if (name === "reminders") {
+    const { getUserReminders } = await import('./services/reminders');
+    const reminders = getUserReminders(interaction.user.id);
+
+    if (reminders.length === 0) {
+      return interaction.reply({ content: 'You have no active reminders.', ephemeral: true });
+    }
+
+    const embed = new EmbedBuilder()
+      .setTitle('⏰ Your Reminders')
+      .setColor(0x00AE86);
+
+    for (const reminder of reminders) {
+      const remindAt = new Date(reminder.remind_at);
+      embed.addFields({
+        name: `Reminder #${reminder.id}`,
+        value: `**Message:** ${reminder.message}\n**Time:** <t:${Math.floor(remindAt.getTime() / 1000)}:R>`,
+        inline: false
+      });
+    }
+
+    return interaction.reply({ embeds: [embed], ephemeral: true });
+  }
+
+  if (name === "cancelreminder") {
+    const reminderId = interaction.options.getInteger('id', true);
+    const { cancelReminder } = await import('./services/reminders');
+
+    const success = cancelReminder(reminderId, interaction.user.id);
+    if (success) {
+      return interaction.reply({ content: `✅ Cancelled reminder #${reminderId}.`, ephemeral: true });
+    } else {
+      return interaction.reply({ content: `❌ Reminder #${reminderId} not found or doesn't belong to you.`, ephemeral: true });
+    }
+  }
+
+  // Staff Shifts
+  if (name === "clockin") {
+    if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+
+    const { clockIn } = await import('./services/shifts');
+    const result = clockIn(interaction.guild.id, interaction.user.id);
+
+    return interaction.reply({ content: result.message, ephemeral: true });
+  }
+
+  if (name === "clockout") {
+    if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+
+    const { clockOut } = await import('./services/shifts');
+    const result = clockOut(interaction.guild.id, interaction.user.id);
+
+    if (result.success && result.duration) {
+      const hours = Math.floor(result.duration / 60);
+      const mins = result.duration % 60;
+      return interaction.reply({ content: `${result.message} Duration: **${hours}h ${mins}m**`, ephemeral: true });
+    }
+
+    return interaction.reply({ content: result.message, ephemeral: true });
+  }
+
+  if (name === "shifts") {
+    if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+
+    const user = interaction.options.getUser('user') || interaction.user;
+    const limit = interaction.options.getInteger('limit') || 10;
+
+    const { getUserShifts } = await import('./services/shifts');
+    const shifts = getUserShifts(interaction.guild.id, user.id, limit);
+
+    if (shifts.length === 0) {
+      return interaction.reply({ content: `${user.id === interaction.user.id ? 'You have' : user.tag + ' has'} no recorded shifts.`, ephemeral: true });
+    }
+
+    const embed = new EmbedBuilder()
+      .setTitle(`🕒 Shift History - ${user.tag}`)
+      .setColor(0x5865F2);
+
+    for (const shift of shifts) {
+      const clockIn = new Date(shift.clock_in);
+      const status = shift.clock_out ? 
+        `**Duration:** ${Math.floor(shift.duration_minutes! / 60)}h ${shift.duration_minutes! % 60}m\n**Ended:** ${new Date(shift.clock_out).toLocaleString()}` :
+        '**Status:** Currently clocked in';
+      
+      embed.addFields({
+        name: `Shift #${shift.id}`,
+        value: `**Started:** ${clockIn.toLocaleString()}\n${status}`,
+        inline: false
+      });
+    }
+
+    return interaction.reply({ embeds: [embed], ephemeral: true });
+  }
+
+  if (name === "shiftstats") {
+    if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+
+    const user = interaction.options.getUser('user') || interaction.user;
+    const days = interaction.options.getInteger('days') || 30;
+
+    const { getShiftStats } = await import('./services/shifts');
+    const stats = getShiftStats(interaction.guild.id, user.id, days);
+
+    const totalHours = Math.floor(stats.totalMinutes / 60);
+    const totalMins = stats.totalMinutes % 60;
+    const avgHours = Math.floor(stats.averageMinutes / 60);
+    const avgMins = stats.averageMinutes % 60;
+
+    const embed = new EmbedBuilder()
+      .setTitle(`📊 Shift Statistics - ${user.tag}`)
+      .setColor(0x5865F2)
+      .setDescription(`Last ${days} days`)
+      .addFields(
+        { name: 'Total Shifts', value: `${stats.totalShifts}`, inline: true },
+        { name: 'Total Time', value: `${totalHours}h ${totalMins}m`, inline: true },
+        { name: 'Average Shift', value: `${avgHours}h ${avgMins}m`, inline: true }
+      );
+
+    return interaction.reply({ embeds: [embed], ephemeral: true });
+  }
+
+  if (name === "whosonduty") {
+    if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+
+    const { getActiveStaff } = await import('./services/shifts');
+    const activeStaff = getActiveStaff(interaction.guild.id);
+
+    if (activeStaff.length === 0) {
+      return interaction.reply({ content: 'No staff currently clocked in.', ephemeral: true });
+    }
+
+    const embed = new EmbedBuilder()
+      .setTitle('👥 Staff On Duty')
+      .setColor(0x00FF00);
+
+    for (const shift of activeStaff) {
+      const clockIn = new Date(shift.clock_in);
+      const duration = Math.floor((Date.now() - clockIn.getTime()) / 60000);
+      const hours = Math.floor(duration / 60);
+      const mins = duration % 60;
+
+      embed.addFields({
+        name: `<@${shift.user_id}>`,
+        value: `Clocked in <t:${Math.floor(clockIn.getTime() / 1000)}:R> (${hours}h ${mins}m)`,
+        inline: false
+      });
+    }
+
+    return interaction.reply({ embeds: [embed], ephemeral: true });
+  }
+
+  // Server Stats Channels
+  if (name === "statschannels") {
+    if (!(await hasCommandAccess(interaction.member, 'statschannels', interaction.guild?.id || null))) {
+      return interaction.reply({ content: '❌ You don\'t have permission to use this command.', ephemeral: true });
+    }
+    if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+
+    const subCmd = interaction.options.getSubcommand();
+    const { setStatsChannel, getStatsChannels, removeStatsChannel } = await import('./services/statsChannels');
+
+    if (subCmd === "set") {
+      const type = interaction.options.getString('type', true) as any;
+      const channel = interaction.options.getChannel('channel', true);
+      const format = interaction.options.getString('format', true);
+
+      setStatsChannel({
+        guild_id: interaction.guild.id,
+        channel_type: type,
+        channel_id: channel.id,
+        format: format,
+        enabled: true
+      });
+
+      return interaction.reply({ content: `✅ Stats channel configured: ${channel.name} will show ${type}.`, ephemeral: true });
+    }
+
+    if (subCmd === "list") {
+      const channels = getStatsChannels(interaction.guild.id);
+      if (channels.length === 0) {
+        return interaction.reply({ content: 'No stats channels configured.', ephemeral: true });
+      }
+
+      const embed = new EmbedBuilder()
+        .setTitle('📊 Server Stats Channels')
+        .setColor(0x5865F2);
+
+      for (const ch of channels) {
+        embed.addFields({
+          name: ch.channel_type,
+          value: `<#${ch.channel_id}>\nFormat: \`${ch.format}\``,
+          inline: false
+        });
+      }
+
+      return interaction.reply({ embeds: [embed], ephemeral: true });
+    }
+
+    if (subCmd === "remove") {
+      const channel = interaction.options.getChannel('channel', true);
+      const success = removeStatsChannel(channel.id);
+      
+      if (success) {
+        return interaction.reply({ content: `✅ Removed stats channel configuration.`, ephemeral: true });
+      } else {
+        return interaction.reply({ content: `❌ No stats channel configuration found for that channel.`, ephemeral: true });
+      }
+    }
+  }
+
+  // Bulk Moderation Actions
+  if (name === "bulkban" || name === "bulkkick" || name === "bulkmute") {
+    if (!(await hasCommandAccess(interaction.member, name, interaction.guild?.id || null))) {
+      return interaction.reply({ content: '❌ You don\'t have permission to use this command.', ephemeral: true });
+    }
+    if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+
+    const usersStr = interaction.options.getString('users', true);
+    const reason = interaction.options.getString('reason') || 'No reason provided';
+    const duration = name === "bulkmute" ? interaction.options.getString('duration') : null;
+
+    // Parse user IDs
+    const userIds = usersStr.split(/[,\s]+/).filter(id => id.trim().length > 0);
+
+    if (userIds.length === 0) {
+      return interaction.reply({ content: '❌ No valid user IDs provided.', ephemeral: true });
+    }
+
+    if (userIds.length > 20) {
+      return interaction.reply({ content: '❌ Maximum 20 users at a time.', ephemeral: true });
+    }
+
+    // Confirmation
+    const confirmEmbed = new EmbedBuilder()
+      .setTitle(`⚠️ Confirm Bulk ${name.replace('bulk', '').toUpperCase()}`)
+      .setColor(0xFF0000)
+      .setDescription(`You are about to ${name.replace('bulk', '')} **${userIds.length}** users.\n\n**Reason:** ${reason}${duration ? `\n**Duration:** ${duration}` : ''}`)
+      .addFields({ name: 'User IDs', value: userIds.join(', ').slice(0, 1000), inline: false });
+
+    const confirmRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`bulk-confirm-${name}`)
+        .setLabel('Confirm')
+        .setStyle(ButtonStyle.Danger),
+      new ButtonBuilder()
+        .setCustomId('bulk-cancel')
+        .setLabel('Cancel')
+        .setStyle(ButtonStyle.Secondary)
+    );
+
+    await interaction.reply({ embeds: [confirmEmbed], components: [confirmRow], ephemeral: true });
+
+    // Store data for button handler
+    (client as any).bulkActionData = (client as any).bulkActionData || {};
+    (client as any).bulkActionData[interaction.user.id] = { action: name, userIds, reason, duration, guildId: interaction.guild.id, moderatorId: interaction.user.id };
+
+    return;
+  }
+
+  // Ticket System
+  if (name === "ticket") {
+    const subCmd = interaction.options.getSubcommand();
+
+    if (subCmd === "setup") {
+      if (!(await hasCommandAccess(interaction.member, 'ticket', interaction.guild?.id || null))) {
+        return interaction.reply({ content: '❌ You don\'t have permission to use this command.', ephemeral: true });
+      }
+      if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+
+      const category = interaction.options.getChannel('category', true);
+      const logChannel = interaction.options.getChannel('log_channel');
+      const supportRole = interaction.options.getRole('support_role');
+
+      const { setTicketConfig } = await import('./services/tickets');
+      setTicketConfig({
+        guild_id: interaction.guild.id,
+        category_id: category.id,
+        log_channel_id: logChannel?.id,
+        support_role_id: supportRole?.id,
+        enabled: true
+      });
+
+      return interaction.reply({ content: '✅ Ticket system configured!', ephemeral: true });
+    }
+
+    if (subCmd === "create") {
+      if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+
+      const category = interaction.options.getString('category', true);
+      const description = interaction.options.getString('description') || 'No description provided';
+
+      const { getTicketConfig, createTicket, getUserTickets } = await import('./services/tickets');
+      const config = getTicketConfig(interaction.guild.id);
+
+      if (!config || !config.enabled) {
+        return interaction.reply({ content: '❌ Ticket system is not configured. Ask an admin to run `/ticket setup`.', ephemeral: true });
+      }
+
+      // Check if user already has open ticket
+      const userTickets = getUserTickets(interaction.guild.id, interaction.user.id);
+      const openTicket = userTickets.find(t => t.status !== 'closed');
+      if (openTicket) {
+        return interaction.reply({ content: `❌ You already have an open ticket: <#${openTicket.channel_id}>`, ephemeral: true });
+      }
+
+      // Create ticket channel
+      const ticketChannel = await interaction.guild.channels.create({
+        name: `ticket-${interaction.user.username}`,
+        type: 0, // Text channel
+        parent: config.category_id,
+        permissionOverwrites: [
+          {
+            id: interaction.guild.id,
+            deny: ['ViewChannel']
+          },
+          {
+            id: interaction.user.id,
+            allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory']
+          },
+          {
+            id: client.user!.id,
+            allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory', 'ManageChannels']
+          }
+        ]
+      });
+
+      const ticketId = createTicket(interaction.guild.id, ticketChannel.id, interaction.user.id, category);
+
+      const ticketEmbed = new EmbedBuilder()
+        .setTitle(`🎫 Ticket #${ticketId}`)
+        .setColor(0x00AE86)
+        .setDescription(`**Category:** ${category}\n**Description:** ${description}\n\nSupport will be with you shortly!`)
+        .setFooter({ text: 'Use /ticket close to close this ticket' });
+
+      await ticketChannel.send({ content: config.support_role_id ? `<@&${config.support_role_id}>` : 'New ticket!', embeds: [ticketEmbed] });
+
+      return interaction.reply({ content: `✅ Ticket created: ${ticketChannel}`, ephemeral: true });
+    }
+
+    if (subCmd === "close") {
+      if (!interaction.channel || !('guild' in interaction.channel)) {
+        return interaction.reply({ content: 'This command must be used in a ticket channel.', ephemeral: true });
+      }
+
+      const { getTicket, closeTicket, getTicketConfig } = await import('./services/tickets');
+      const ticket = getTicket(interaction.channel.id);
+
+      if (!ticket) {
+        return interaction.reply({ content: '❌ This is not a ticket channel.', ephemeral: true });
+      }
+
+      if (ticket.status === 'closed') {
+        return interaction.reply({ content: '❌ This ticket is already closed.', ephemeral: true });
+      }
+
+      // Generate transcript (simplified - just last 100 messages)
+      const messages = await interaction.channel.messages.fetch({ limit: 100 });
+      const transcript = messages.reverse().map(m => 
+        `[${m.createdAt.toLocaleString()}] ${m.author.tag}: ${m.content}`
+      ).join('\n');
+
+      closeTicket(interaction.channel.id, transcript);
+
+      const closeEmbed = new EmbedBuilder()
+        .setTitle('🎫 Ticket Closed')
+        .setColor(0xFF0000)
+        .setDescription(`This ticket has been closed by <@${interaction.user.id}>.\nChannel will be deleted in 10 seconds.`);
+
+      await interaction.reply({ embeds: [closeEmbed] });
+
+      // Log transcript to log channel if configured
+      const config = getTicketConfig(ticket.guild_id);
+      if (config?.log_channel_id) {
+        try {
+          const logChannel = await interaction.guild!.channels.fetch(config.log_channel_id) as any;
+          const logEmbed = new EmbedBuilder()
+            .setTitle(`🎫 Ticket #${ticket.id} Closed`)
+            .setColor(0xFF0000)
+            .addFields(
+              { name: 'User', value: `<@${ticket.user_id}>`, inline: true },
+              { name: 'Claimed By', value: ticket.claimed_by ? `<@${ticket.claimed_by}>` : 'Unclaimed', inline: true },
+              { name: 'Category', value: ticket.category, inline: true }
+            )
+            .setTimestamp();
+
+          await logChannel.send({ embeds: [logEmbed], files: [{ attachment: Buffer.from(transcript), name: `ticket-${ticket.id}-transcript.txt` }] });
+        } catch {}
+      }
+
+      setTimeout(async () => {
+        try {
+          await (interaction.channel as any).delete();
+        } catch {}
+      }, 10000);
+    }
+
+    if (subCmd === "claim") {
+      if (!interaction.channel || !('guild' in interaction.channel)) {
+        return interaction.reply({ content: 'This command must be used in a ticket channel.', ephemeral: true });
+      }
+
+      const { getTicket, claimTicket } = await import('./services/tickets');
+      const ticket = getTicket(interaction.channel.id);
+
+      if (!ticket) {
+        return interaction.reply({ content: '❌ This is not a ticket channel.', ephemeral: true });
+      }
+
+      if (ticket.claimed_by) {
+        return interaction.reply({ content: `❌ This ticket is already claimed by <@${ticket.claimed_by}>.`, ephemeral: true });
+      }
+
+      claimTicket(interaction.channel.id, interaction.user.id);
+
+      const claimEmbed = new EmbedBuilder()
+        .setTitle('🎫 Ticket Claimed')
+        .setColor(0x00AE86)
+        .setDescription(`<@${interaction.user.id}> is now handling this ticket.`);
+
+      return interaction.reply({ embeds: [claimEmbed] });
+    }
+
+    if (subCmd === "list") {
+      if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+
+      const { getOpenTickets } = await import('./services/tickets');
+      const tickets = getOpenTickets(interaction.guild.id);
+
+      if (tickets.length === 0) {
+        return interaction.reply({ content: 'No open tickets.', ephemeral: true });
+      }
+
+      const embed = new EmbedBuilder()
+        .setTitle('🎫 Open Tickets')
+        .setColor(0x00AE86);
+
+      for (const ticket of tickets) {
+        const status = ticket.claimed_by ? `Claimed by <@${ticket.claimed_by}>` : 'Unclaimed';
+        embed.addFields({
+          name: `Ticket #${ticket.id}`,
+          value: `<#${ticket.channel_id}>\n**User:** <@${ticket.user_id}>\n**Status:** ${status}`,
+          inline: false
+        });
+      }
+
+      return interaction.reply({ embeds: [embed], ephemeral: true });
+    }
+  }
+
+  // Temporary Channels
+  if (name === "tempchannels") {
+    if (!(await hasCommandAccess(interaction.member, 'tempchannels', interaction.guild?.id || null))) {
+      return interaction.reply({ content: '❌ You don\'t have permission to use this command.', ephemeral: true });
+    }
+    if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+
+    const subCmd = interaction.options.getSubcommand();
+    const { setTempChannelConfig, getGuildTempChannelConfigs, removeTempChannelConfig } = await import('./services/tempChannels');
+
+    if (subCmd === "setup") {
+      const trigger = interaction.options.getChannel('trigger', true);
+      const type = interaction.options.getString('type', true) as any;
+      const template = interaction.options.getString('template', true);
+      const category = interaction.options.getChannel('category');
+      const userLimit = interaction.options.getInteger('user_limit');
+
+      setTempChannelConfig({
+        guild_id: interaction.guild.id,
+        trigger_channel_id: trigger.id,
+        channel_type: type,
+        name_template: template,
+        category_id: category?.id,
+        user_limit: userLimit || undefined,
+        enabled: true
+      });
+
+      return interaction.reply({ content: `✅ Temp channel configured! Users joining ${trigger.name} will create ${type} channels.`, ephemeral: true });
+    }
+
+    if (subCmd === "list") {
+      const configs = getGuildTempChannelConfigs(interaction.guild.id);
+      if (configs.length === 0) {
+        return interaction.reply({ content: 'No temp channel configs.', ephemeral: true });
+      }
+
+      const embed = new EmbedBuilder()
+        .setTitle('🔊 Temporary Channel Configs')
+        .setColor(0x5865F2);
+
+      for (const config of configs) {
+        embed.addFields({
+          name: `<#${config.trigger_channel_id}>`,
+          value: `Type: **${config.channel_type}**\nTemplate: \`${config.name_template}\``,
+          inline: false
+        });
+      }
+
+      return interaction.reply({ embeds: [embed], ephemeral: true });
+    }
+
+    if (subCmd === "remove") {
+      const trigger = interaction.options.getChannel('trigger', true);
+      const success = removeTempChannelConfig(trigger.id);
+
+      if (success) {
+        return interaction.reply({ content: '✅ Removed temp channel config.', ephemeral: true });
+      } else {
+        return interaction.reply({ content: '❌ No temp channel config found for that trigger.', ephemeral: true });
+      }
+    }
+  }
 
       if (name === "help") return interaction.reply({ content: `Use ${prefix}help or mention me to get conversational replies. Use moderation commands with appropriate permissions.`, ephemeral: true });
 
@@ -1664,7 +2610,36 @@ client.on("interactionCreate", async (interaction) => {
         { name: "supportend", description: "End a tracked support interaction (ticket)", options: [ { name: "id", description: "Interaction ID from /supportstart", type: 4, required: true }, { name: "resolved", description: "Was it resolved?", type: 5, required: true }, { name: "rating", description: "Satisfaction rating (1-5)", type: 4, required: false }, { name: "feedback", description: "Optional feedback text", type: 3, required: false } ] },
         { name: "supportrate", description: "Ticket requester: rate your support interaction", options: [ { name: "id", description: "Interaction ID", type: 4, required: true }, { name: "rating", description: "Satisfaction rating (1-5)", type: 4, required: true }, { name: "feedback", description: "Optional feedback text", type: 3, required: false } ] },
         { name: "supportaddhelper", description: "Support: add a co-helper to a ticket", options: [ { name: "id", description: "Interaction ID", type: 4, required: true }, { name: "member", description: "Helper to add", type: 6, required: true } ] },
-        { name: "listopentickets", description: "List all open support tickets" }
+        { name: "listopentickets", description: "List all open support tickets" },
+        // Auto-Moderation
+        { name: "automod", description: "🤖 Configure auto-moderation rules" },
+        // Mod Cases
+        { name: "case", description: "📋 View a moderation case by number", options: [ { name: "number", description: "Case number", type: 4, required: true } ] },
+        { name: "cases", description: "📋 View all cases for a user", options: [ { name: "user", description: "User to check cases for", type: 6, required: true } ] },
+        { name: "updatecase", description: "📝 Update case reason", options: [ { name: "number", description: "Case number", type: 4, required: true }, { name: "reason", description: "New reason", type: 3, required: true } ] },
+        // Appeals
+        { name: "appeal", description: "📨 Submit an appeal", options: [ { name: "type", description: "ban | mute | blacklist", type: 3, required: true }, { name: "reason", description: "Why should your punishment be revoked?", type: 3, required: true } ] },
+        { name: "appeals", description: "📨 Admin: Review pending appeals" },
+        // Reminders
+        { name: "remind", description: "⏰ Set a reminder", options: [ { name: "time", description: "Time (e.g., 2h, 30m, 1d)", type: 3, required: true }, { name: "message", description: "What to remind you about", type: 3, required: true } ] },
+        { name: "reminders", description: "⏰ List your active reminders" },
+        { name: "cancelreminder", description: "⏰ Cancel a reminder", options: [ { name: "id", description: "Reminder ID", type: 4, required: true } ] },
+        // Staff Shifts
+        { name: "clockin", description: "🕒 Clock in for your shift" },
+        { name: "clockout", description: "🕒 Clock out from your shift" },
+        { name: "shifts", description: "🕒 View shift history", options: [ { name: "user", description: "User to check (defaults to you)", type: 6, required: false }, { name: "limit", description: "Number of shifts to show (default 10)", type: 4, required: false } ] },
+        { name: "shiftstats", description: "📊 View shift statistics", options: [ { name: "user", description: "User to check (defaults to you)", type: 6, required: false }, { name: "days", description: "Days to analyze (default 30)", type: 4, required: false } ] },
+        { name: "whosonduty", description: "👥 View currently clocked-in staff" },
+        // Server Stats Channels
+        { name: "statschannels", description: "📊 Configure auto-updating stats channels" },
+        // Bulk Actions
+        { name: "bulkban", description: "🔨 Ban multiple users", options: [ { name: "users", description: "User IDs (comma or space separated)", type: 3, required: true }, { name: "reason", description: "Ban reason", type: 3, required: false } ] },
+        { name: "bulkkick", description: "👢 Kick multiple users", options: [ { name: "users", description: "User IDs (comma or space separated)", type: 3, required: true }, { name: "reason", description: "Kick reason", type: 3, required: false } ] },
+        { name: "bulkmute", description: "🔇 Mute multiple users", options: [ { name: "users", description: "User IDs (comma or space separated)", type: 3, required: true }, { name: "duration", description: "Duration (e.g., 10m, 1h)", type: 3, required: false }, { name: "reason", description: "Mute reason", type: 3, required: false } ] },
+        // Ticket System
+        { name: "ticket", description: "🎫 Ticket system commands" },
+        // Temporary Channels
+        { name: "tempchannels", description: "🔊 Configure temporary channels" }
       ];
       const registered = await client.application!.commands.set(cmds as any, interaction.guild.id);
       const names = (Array.isArray(cmds) ? cmds : []).map((c:any) => c?.name).filter(Boolean);
@@ -2176,7 +3151,7 @@ client.on("interactionCreate", async (interaction) => {
   }
   const user = interaction.options.getUser('user');
   const reason = interaction.options.getString('reason') ?? 'No reason provided';
-  if (!user) return interaction.reply({ content: 'User not found.', ephemeral: true });
+  if (!user || !interaction.guild) return interaction.reply({ content: 'User not found.', ephemeral: true });
     // DM with embed
     const embed = buildModerationEmbed({
       action: 'Warned',
@@ -2190,7 +3165,11 @@ client.on("interactionCreate", async (interaction) => {
     try { await user.send({ content: `<@${user.id}>`, embeds: [embed] }); } catch { /* ignore */ }
     await sendToModLog(interaction.guild!, embed, `<@${user.id}>`);
     warnings.addWarning(user.id, interaction.user.id, reason);
-    return interaction.reply({ content: `Warned ${user.tag}`, ephemeral: true });
+    
+    // Create case
+    const { createCase } = await import('./services/cases');
+    const caseNum = createCase(interaction.guild.id, user.id, interaction.user.id, 'warn', reason);
+    return interaction.reply({ content: `Warned ${user.tag} (Case #${caseNum})`, ephemeral: true });
   }
 
   if (name === 'checkwarn' || name === 'warnings' || name === 'checkwarnings' || name === 'warns') {
@@ -2446,6 +3425,13 @@ client.on("interactionCreate", async (interaction) => {
           try { await target.user.send({ content: `<@${target.id}>`, embeds: [embed] }); } catch { /* ignore */ }
           await target.kick(finalReason);
           await sendToModLog(interaction.guild!, embed, `<@${target.id}>`);
+          
+          // Create case
+          if (interaction.guild) {
+            const { createCase } = await import('./services/cases');
+            const caseNum = createCase(interaction.guild.id, target.id, interaction.user.id, 'kick', finalReason);
+            return interaction.reply({ content: `${target.user.tag} was kicked. Reason: ${reason ?? 'None'} (Case #${caseNum})` });
+          }
           return interaction.reply({ content: `${target.user.tag} was kicked. Reason: ${reason ?? 'None'}` });
         } catch (err) {
           console.error(err);
@@ -2468,6 +3454,13 @@ client.on("interactionCreate", async (interaction) => {
           try { await target.user.send({ content: `<@${target.id}>`, embeds: [embed] }); } catch { /* ignore */ }
           await target.ban({ reason: finalReason });
           await sendToModLog(interaction.guild!, embed, `<@${target.id}>`);
+          
+          // Create case
+          if (interaction.guild) {
+            const { createCase } = await import('./services/cases');
+            const caseNum = createCase(interaction.guild.id, target.id, interaction.user.id, 'ban', finalReason);
+            return interaction.reply({ content: `${target.user.tag} was banned. Reason: ${reason ?? 'None'} (Case #${caseNum})` });
+          }
           return interaction.reply({ content: `${target.user.tag} was banned. Reason: ${reason ?? 'None'}` });
         } catch (err) {
           console.error(err);
@@ -2498,6 +3491,13 @@ client.on("interactionCreate", async (interaction) => {
           try { await target.user.send({ content: `<@${target.id}>`, embeds: [embed] }); } catch { /* ignore */ }
           await target.timeout(ms, reason ?? 'No reason provided');
           await sendToModLog(interaction.guild!, embed, `<@${target.id}>`);
+          
+          // Create case
+          if (interaction.guild) {
+            const { createCase } = await import('./services/cases');
+            const caseNum = createCase(interaction.guild.id, target.id, interaction.user.id, 'mute', finalReason, Math.floor(secs / 60));
+            return interaction.reply({ content: `${target.user.tag} was timed out for ${ms/1000}s.` + (reason ? ` Reason: ${reason}` : '') + ` (Case #${caseNum})` });
+          }
           return interaction.reply({ content: `${target.user.tag} was timed out for ${ms/1000}s.` + (reason ? ` Reason: ${reason}` : '') });
         } catch (err) {
           console.error(err);
@@ -2764,6 +3764,84 @@ client.on("messageCreate", async (message: Message) => {
     }
   } catch (err) {
     console.error('Anti-abuse check failed:', err);
+  }
+
+  // Auto-Moderation checks
+  if (message.guild && !isOwnerId(message.author.id)) {
+    try {
+      const { checkAutoMod } = await import('./services/automod');
+      const { createCase } = await import('./services/cases');
+      const result = await checkAutoMod(message);
+      
+      if (result.violated && result.rule) {
+        const rule = result.rule;
+        
+        // Execute action
+        switch (rule.action) {
+          case 'delete':
+            try {
+              await message.delete();
+              if (message.channel.isTextBased()) {
+                (message.channel as any).send(`⚠️ <@${message.author.id}> ${result.reason || 'Auto-mod violation'}`).then((msg: any) => {
+                  setTimeout(() => msg.delete().catch(() => {}), 5000);
+                }).catch(() => {});
+              }
+            } catch {}
+            break;
+            
+          case 'warn':
+            try {
+              await message.delete();
+              const { incrementWarning } = await import('./services/antiAbuse');
+              incrementWarning(message.author.id, message.guild!.id, 'other', result.reason || 'Auto-mod violation');
+              createCase(message.guild!.id, message.author.id, client.user!.id, 'warn', result.reason || 'Auto-mod violation');
+              if (message.channel.isTextBased()) {
+                (message.channel as any).send(`⚠️ <@${message.author.id}> has been warned: ${result.reason}`).then((msg: any) => {
+                  setTimeout(() => msg.delete().catch(() => {}), 10000);
+                }).catch(() => {});
+              }
+            } catch {}
+            break;
+            
+          case 'mute':
+            try {
+              await message.delete();
+              const duration = rule.mute_duration || 10;
+              await message.member?.timeout(duration * 60 * 1000, result.reason || 'Auto-mod violation');
+              createCase(message.guild!.id, message.author.id, client.user!.id, 'mute', result.reason || 'Auto-mod violation', duration);
+              if (message.channel.isTextBased()) {
+                (message.channel as any).send(`🔇 <@${message.author.id}> has been muted for ${duration} minutes: ${result.reason}`).then((msg: any) => {
+                  setTimeout(() => msg.delete().catch(() => {}), 10000);
+                }).catch(() => {});
+              }
+            } catch {}
+            break;
+            
+          case 'kick':
+            try {
+              await message.delete();
+              createCase(message.guild!.id, message.author.id, client.user!.id, 'kick', result.reason || 'Auto-mod violation');
+              await message.member?.kick(result.reason || 'Auto-mod violation');
+            } catch {}
+            break;
+        }
+        
+        // Log to mod channel
+        try {
+          const logChannel = getModLogChannelId();
+          if (logChannel && message.guild) {
+            const channel = await message.guild.channels.fetch(logChannel);
+            if (channel?.isTextBased()) {
+              await (channel as any).send(`🤖 **Auto-Mod Action**\nUser: <@${message.author.id}>\nRule: ${rule.rule_type}\nAction: ${rule.action}\nReason: ${result.reason}`);
+            }
+          }
+        } catch {}
+        
+        return; // Don't process further
+      }
+    } catch (err) {
+      console.error('Auto-mod check failed:', err);
+    }
   }
 
   // Blacklist check first (overrides everything except owner)
@@ -3434,5 +4512,155 @@ client.on("guildMemberAdd", async (member) => {
     console.error('Failed to track member join:', e);
   }
 });
+
+// Voice State Update for Temporary Channels
+client.on('voiceStateUpdate', async (oldState, newState) => {
+  try {
+    const { getTempChannelConfig, registerTempChannel, getTempChannel, removeTempChannel } = await import('./services/tempChannels');
+    
+    // User joined a channel
+    if (!oldState.channelId && newState.channelId) {
+      const config = getTempChannelConfig(newState.channelId);
+      if (config && config.enabled) {
+        const userName = newState.member?.user.username || 'User';
+        const channelName = config.name_template.replace('{user}', userName);
+        
+        try {
+          if (config.channel_type === 'voice') {
+            const channel = await newState.guild.channels.create({
+              name: channelName,
+              type: 2, // Voice channel
+              parent: config.category_id || undefined,
+              userLimit: config.user_limit || 0
+            });
+            
+            registerTempChannel(newState.guild.id, channel.id, newState.member!.id);
+            
+            // Move user to new channel (only if it's a voice channel)
+            if (channel.isVoiceBased()) {
+              await newState.member?.voice.setChannel(channel);
+            }
+          } else if (config.channel_type === 'text') {
+            const channel = await newState.guild.channels.create({
+              name: channelName,
+              type: 0, // Text channel
+              parent: config.category_id || undefined,
+              permissionOverwrites: [
+                {
+                  id: newState.guild.id,
+                  deny: ['ViewChannel']
+                },
+                {
+                  id: newState.member!.id,
+                  allow: ['ViewChannel', 'SendMessages']
+                }
+              ]
+            });
+            
+            registerTempChannel(newState.guild.id, channel.id, newState.member!.id);
+          }
+        } catch (err) {
+          console.error('Failed to create temp channel:', err);
+        }
+      }
+    }
+    
+    // Check if a temp channel is now empty and should be deleted
+    if (oldState.channelId) {
+      const tempChannel = getTempChannel(oldState.channelId);
+      if (tempChannel) {
+        const channel = await oldState.guild.channels.fetch(oldState.channelId).catch(() => null);
+        if (channel && channel.isVoiceBased()) {
+          if (channel.members.size === 0) {
+            // Channel is empty, delete it
+            removeTempChannel(oldState.channelId);
+            await channel.delete().catch(() => {});
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Voice state update error:', err);
+  }
+});
+
+// Background task: Check reminders every minute
+setInterval(async () => {
+  try {
+    const { getDueReminders, completeReminder } = await import('./services/reminders');
+    const reminders = getDueReminders();
+    
+    for (const reminder of reminders) {
+      try {
+        if (reminder.channel_id) {
+          // Send in channel
+          const channel = await client.channels.fetch(reminder.channel_id).catch(() => null);
+          if (channel && 'send' in channel) {
+            await (channel as any).send(`⏰ <@${reminder.user_id}> Reminder: ${reminder.message}`);
+          }
+        } else {
+          // Send DM
+          const user = await client.users.fetch(reminder.user_id).catch(() => null);
+          if (user) {
+            await user.send(`⏰ Reminder: ${reminder.message}`).catch(() => {});
+          }
+        }
+        
+        completeReminder(reminder.id);
+      } catch (err) {
+        console.error('Failed to send reminder:', err);
+      }
+    }
+  } catch (err) {
+    console.error('Reminder check failed:', err);
+  }
+}, 60000); // Check every minute
+
+// Background task: Update stats channels every 10 minutes
+setInterval(async () => {
+  try {
+    const { getAllEnabledStatsChannels, updateStatsChannelTimestamp } = await import('./services/statsChannels');
+    const channels = getAllEnabledStatsChannels();
+    
+    for (const config of channels) {
+      try {
+        const guild = await client.guilds.fetch(config.guild_id).catch(() => null);
+        if (!guild) continue;
+        
+        const channel = await guild.channels.fetch(config.channel_id).catch(() => null);
+        if (!channel || !('setName' in channel)) continue;
+        
+        let count = 0;
+        switch (config.channel_type) {
+          case 'member_count':
+            count = guild.memberCount;
+            break;
+          case 'online_count':
+            count = guild.members.cache.filter(m => m.presence?.status !== 'offline').size;
+            break;
+          case 'bot_count':
+            count = guild.members.cache.filter(m => m.user.bot).size;
+            break;
+          case 'role_count':
+            count = guild.roles.cache.size;
+            break;
+          case 'channel_count':
+            count = guild.channels.cache.size;
+            break;
+        }
+        
+        const newName = config.format.replace('{count}', count.toString());
+        if (channel.name !== newName) {
+          await (channel as any).setName(newName);
+          updateStatsChannelTimestamp(config.channel_id);
+        }
+      } catch (err) {
+        console.error('Failed to update stats channel:', err);
+      }
+    }
+  } catch (err) {
+    console.error('Stats channel update failed:', err);
+  }
+}, 600000); // Update every 10 minutes
 
 client.login(token);

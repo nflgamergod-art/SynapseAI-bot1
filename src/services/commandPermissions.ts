@@ -152,6 +152,7 @@ export function getAllGuildCommandPermissions(guildId: string): CommandPermissio
 export const RESTRICTABLE_COMMANDS = [
   // Moderation
   'kick', 'ban', 'mute', 'unmute', 'warn', 'checkwarn', 'clearwarn',
+  'bulkban', 'bulkkick', 'bulkmute',
   // Role management
   'addrole', 'removerole',
   // Channel management
@@ -164,15 +165,27 @@ export const RESTRICTABLE_COMMANDS = [
   // Response rules
   'setresponserule', 'listresponserules', 'delresponserule',
   // Bypass management
-  'addbypass', 'removebypass', 'listbypass'
+  'addbypass', 'removebypass', 'listbypass',
+  // Auto-moderation
+  'automod',
+  // Case management
+  'case', 'cases', 'updatecase',
+  // Appeals
+  'appeals',
+  // Tickets
+  'ticket',
+  // Stats channels
+  'statschannels',
+  // Temp channels
+  'tempchannels'
 ];
 
 // Command categories for easier setup
 export const COMMAND_PRESETS = {
-  'head_support': ['kick', 'ban', 'mute', 'unmute', 'warn', 'checkwarn', 'clearwarn', 'addrole', 'removerole', 'purge', 'supportstart', 'supportend', 'supportaddhelper', 'listopentickets'],
-  'support': ['mute', 'unmute', 'warn', 'checkwarn', 'supportstart', 'supportend', 'supportaddhelper', 'listopentickets'],
-  'trial_support': ['mute', 'unmute', 'warn', 'checkwarn', 'supportstart', 'supportend', 'listopentickets'],
-  'moderator': ['kick', 'ban', 'mute', 'unmute', 'warn', 'checkwarn', 'clearwarn', 'purge'],
+  'head_support': ['kick', 'ban', 'mute', 'unmute', 'warn', 'checkwarn', 'clearwarn', 'addrole', 'removerole', 'purge', 'supportstart', 'supportend', 'supportaddhelper', 'listopentickets', 'case', 'cases', 'ticket', 'appeals'],
+  'support': ['mute', 'unmute', 'warn', 'checkwarn', 'supportstart', 'supportend', 'supportaddhelper', 'listopentickets', 'case', 'cases', 'ticket'],
+  'trial_support': ['mute', 'unmute', 'warn', 'checkwarn', 'supportstart', 'supportend', 'listopentickets', 'ticket'],
+  'moderator': ['kick', 'ban', 'mute', 'unmute', 'warn', 'checkwarn', 'clearwarn', 'purge', 'bulkban', 'bulkkick', 'bulkmute', 'case', 'cases', 'updatecase', 'automod'],
   'admin': RESTRICTABLE_COMMANDS // All commands
 };
 
