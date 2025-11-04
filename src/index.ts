@@ -529,7 +529,7 @@ client.once("clientReady", async () => {
 
   // Define a minimal set of global commands that should be available in DMs (outside guild scope)
   // Keep this list small to speed up global propagation and avoid clutter.
-  const globalCommandNames = new Set<string>(['appeal']);
+  const globalCommandNames = new Set<string>(['appeal', 'perks']);
   const globalCommands = finalCommands.filter((c: any) => globalCommandNames.has(c.name));
 
   (async () => {
@@ -1449,12 +1449,11 @@ client.on("interactionCreate", async (interaction) => {
     }
   }
 
-  // Appeals System
   if (name === "appeal") {
+    // Skip whitelist check for appeal command
     const type = interaction.options.getString('type', true) as any;
     const reason = interaction.options.getString('reason', true);
 
-    // Must be used in DMs with bot or in a guild
     const { createAppeal } = await import('./services/appeals');
     const guildId = interaction.guild?.id || process.env.GUILD_ID;
     if (!guildId) {
