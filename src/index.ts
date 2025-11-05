@@ -1,9 +1,13 @@
+// Add logs at the start of the bot's execution
+console.log('--- Bot Initialization ---');
+
 import * as dotenv from "dotenv";
 import * as path from "path";
 // Ensure .env loads reliably in production: dist/ -> project root
 dotenv.config({ path: path.join(__dirname, "../.env") });
-import { Client, GatewayIntentBits, Partials, Message, PermissionsBitField, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } from "discord.js";
+import { Client, GatewayIntentBits, Partials, Message, PermissionsBitField, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, MessageFlags, ChannelType, ColorResolvable } from "discord.js";
 import { isWakeWord, handleConversationalReply } from "./utils/responder";
+
 import { isOwnerId } from "./utils/owner";
 import { helpCommand } from "./commands/help";
 import { kickCommand, banCommand, muteCommand, addRoleCommand, removeRoleCommand } from "./commands/moderation";
@@ -11,6 +15,7 @@ import { getRandomJoke } from "./services/learningService";
 import { responseTracker } from "./services/responseTracker";
 import { responseRules } from "./services/responseRules";
 import { bypass } from "./services/bypass";
+// Ensure consistent use of `whitelistService` for all whitelist checks
 import { isWhitelisted, getWhitelist, addWhitelistEntry, removeWhitelistEntry } from "./services/whitelistService";
 import { isBlacklisted, getBlacklist, addBlacklistEntry, removeBlacklistEntry } from "./services/blacklistService";
 import { createGiveaway, getActiveGiveaways, getGiveawayById, endGiveaway, pickWinners, setGiveawayMessageId, addEntry as addGiveawayEntry } from "./services/giveawayService";
@@ -20,10 +25,38 @@ import { buildModerationEmbed, sendToModLog } from "./utils/moderationEmbed";
 import { setModLogChannelId, getModLogChannelId, clearModLogChannelId } from "./config";
 import { handleEnhancedCommands } from "./commands/enhancedCommands";
 import { initializeEnhancedFeatures, processMessageWithEnhancedFeatures } from "./services/enhancedIntegration";
+// Replace interaction.reply and interaction.followUp with safeReply
+import { safeReply, safeDeferReply, safeFollowUp } from "./utils/safeReply";
+
+// Removed duplicate import of globalCommands
+// Ensure only one import exists
+import { globalCommands } from './commands/enhancedCommands';
+import { handleReply } from './services/localResponder';
 
 const token = (process.env.DISCORD_TOKEN || '').trim();
 const prefix = process.env.PREFIX ?? "!";
 const wakeWord = process.env.WAKE_WORD ?? "SynapseAI";
+
+// Add debug logs to verify environment variables and commands array
+console.log('Environment Variables:', {
+  DISCORD_APPLICATION_ID: process.env.DISCORD_APPLICATION_ID,
+  DISCORD_TOKEN: process.env.DISCORD_TOKEN ? 'Set' : 'Not Set',
+  GUILD_ID: process.env.GUILD_ID
+});
+
+// Note: Commands will be logged after they are processed below
+
+// The command registration will be handled properly in the client ready event below
+// where the full commands array is available
+
+(async () => {
+  // Initialize the database early
+  const { getDB } = await import('./services/db');
+  getDB(); // This will initialize the database
+})().catch(console.error);
+
+// Temporary bypass flag for whitelist
+let whitelistBypassEnabled = false;
 
 // Helper function to parse duration strings
 function parseDuration(durationStr: string): number {
@@ -73,12 +106,15 @@ async function buildShiftPanelEmbed(guildId: string, client: Client): Promise<Em
   return embed;
 }
 
+// Handler for setcolor-menu select menu
+// (Moved below client initialization to ensure client is defined)
+
 if (!token) {
   console.error("DISCORD_TOKEN not set in .env — cannot start bot");
   process.exit(1);
 }
 
-const client = new Client({
+export const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
@@ -93,13 +129,147 @@ const client = new Client({
   }
 });
 
+// Move the `interactionCreate` handler to ensure it is added after the `client` initialization
+client.on('interactionCreate', async (interaction) => {
+  if (interaction.isStringSelectMenu() && interaction.customId === 'setcolor-menu') {
+    const selectedColor = interaction.values[0];
+    const guild = interaction.guild;
 
+    if (!guild) {
+      return interaction.reply({ content: 'This interaction can only be used in a server.', ephemeral: true });
+    }
 
-client.once("clientReady", async () => {
+    const member = await guild.members.fetch(interaction.user.id);
+
+    if (selectedColor === 'default') {
+      // Remove all color roles
+      const colorRoles = member.roles.cache.filter(role => role.name.startsWith('Color:'));
+      for (const role of colorRoles.values()) {
+        await role.delete('User selected default color');
+      }
+      return interaction.reply({ content: 'Your color has been reset to default.', ephemeral: true });
+    }
+
+    // Remove existing color roles
+    const existingColorRoles = member.roles.cache.filter(role => role.name.startsWith('Color:'));
+    for (const role of existingColorRoles.values()) {
+      await role.delete('Replacing with new color role');
+    }
+
+    // Create a new role with the selected color
+    const highestRolePosition = Math.max(...member.roles.cache.map(role => role.position));
+    const roleName = `Color: ${selectedColor}`;
+    let colorRole;
+    try {
+      colorRole = await guild.roles.create({
+        name: roleName,
+        color: selectedColor as ColorResolvable,
+        position: highestRolePosition + 1, // Place the role above the user's highest role
+        permissions: [], // No permissions, purely cosmetic
+        reason: 'User selected a new color',
+      });
+    } catch (error) {
+      console.error('Failed to create color role:', error);
+      return interaction.reply({ content: 'An error occurred while creating your color role. Please try again later.', flags: 64 });
+    }
+
+    // Assign the new role to the user
+    try {
+      await member.roles.add(colorRole);
+      await interaction.reply({ content: `Your color has been set to ${selectedColor}.`, flags: 64 }); // Replace `ephemeral` with `flags`
+    } catch (error) {
+      console.error('Failed to assign color role:', error);
+      return interaction.reply({ content: 'An error occurred while assigning your color role. Please try again later.', ephemeral: true });
+    }
+  }
+});
+
+// Patch Discord interaction methods at startup to avoid unhandled InteractionAlreadyReplied
+// errors from third-party or legacy call sites. This wraps ChatInputCommandInteraction.reply
+// and followUp to try safer fallbacks (followUp/editReply) instead of throwing.
+(() => {
+  try {
+    // require is used here to avoid circular import issues with the top-level ES imports
+    const dj = require('discord.js');
+    const proto = dj?.ChatInputCommandInteraction?.prototype;
+    if (!proto) return;
+
+    const originalReply = proto.reply;
+    if (originalReply && !originalReply.__patchedBySynapse) {
+      proto.reply = async function patchedReply(...args: any[]) {
+        try {
+          // Attempt the original reply first
+          return await originalReply.apply(this, args);
+        } catch (err: any) {
+          const msg = String(err?.message || err);
+          // Detect already-replied error (string-match and name/code checks)
+          const isAlready = msg.includes('already been sent') || msg.includes('already been replied') || err?.name === 'InteractionAlreadyReplied' || err?.code === 'InteractionAlreadyReplied';
+          if (isAlready) {
+            try {
+              // If interaction was already acknowledged, try followUp instead
+              const opts = args[0];
+              if (this.replied || this.deferred) {
+                try { return await this.followUp(typeof opts === 'string' ? { content: opts } : opts); } catch (e) { /* swallow */ }
+              }
+              // Otherwise, try editReply as a last resort
+              try { return await this.editReply(typeof opts === 'string' ? { content: opts } : opts); } catch (e) { /* swallow */ }
+            } catch (e) {
+              // ignore
+            }
+            // Suppress the error to avoid process crash; log for traceability
+            console.warn('[patchedReply] suppressed InteractionAlreadyReplied for', this.id || '<unknown-interaction>');
+            return null;
+          }
+          throw err;
+        }
+      };
+      (proto.reply as any).__patchedBySynapse = true;
+    }
+
+    const originalFollowUp = proto.followUp;
+    if (originalFollowUp && !originalFollowUp.__patchedBySynapse) {
+      proto.followUp = async function patchedFollowUp(...args: any[]) {
+        try {
+          return await originalFollowUp.apply(this, args);
+        } catch (err: any) {
+          const msg = String(err?.message || err);
+          // If followUp fails due to not-yet-deferred, try reply
+          const isNotAck = msg.includes('not been acknowledged') || err?.name === 'HTTPError';
+          if (isNotAck) {
+            try { return await originalReply.apply(this, args); } catch (e) { /* swallow */ }
+          }
+          throw err;
+        }
+      };
+      (proto.followUp as any).__patchedBySynapse = true;
+    }
+    } catch (e) {
+    console.warn('Failed to patch discord interaction prototypes:', String((e as Error)?.message || e));
+  }
+})();
+
+// Ensure application_id is set correctly
+const applicationId = process.env.DISCORD_APPLICATION_ID || client.user?.id;
+if (!applicationId || isNaN(Number(applicationId))) {
+  console.error("Application ID is missing or invalid. Please set DISCORD_APPLICATION_ID in the .env file.");
+  process.exit(1);
+}
+
+// Add logging to confirm bot is ready and connected
+client.once('ready', () => {
+  console.log(`[Bot Ready] Logged in as ${client.user?.tag}`);
+});
+
+// Add logging to confirm bot is connected to Discord
+client.on('shardReady', (id) => {
+  console.log(`[Shard Ready] Shard ID: ${id}`);
+});
+
+// Update deprecated 'ready' event to 'clientReady'
+client.once('clientReady', async () => {
   console.log(`Logged in as ${client.user?.tag}`);
-  
   // Initialize enhanced features
-  await initializeEnhancedFeatures();
+  await initializeEnhancedFeatures(); // Removed the client argument
   
   // Start achievement cron jobs for periodic checks
   const { startAchievementCron } = await import('./services/achievementCron');
@@ -113,35 +283,15 @@ client.once("clientReady", async () => {
     { name: "diagcommands", description: "Owner: list registered slash commands in this guild" },
     { name: "help", description: "Show help for bot commands" },
     { name: "ping", description: "Check bot latency" },
-    { name: "pong", description: "Alias for ping" },
-    { name: "joke", description: "Tell a random joke" },
-    { name: "dadjoke", description: "Tell a dad joke" },
+    { name: "joke", description: "Tell a joke", options: [
+      { name: "type", description: "Type of joke (random/dad)", type: 3, required: false }
+    ] },
     // Owner-only maintenance commands (no SSH required)
     { name: "redeploy", description: "Owner: pull latest code and restart bot (runs deploy.sh)" },
-    { name: "setgeminikey", description: "Owner: set Gemini API key and restart bot", options: [
-      { name: "key", description: "Gemini API key", type: 3, required: true }
-    ] },
-    { name: "setopenai", description: "Owner: set OpenAI API key and restart bot", options: [
-      { name: "key", description: "OpenAI API key", type: 3, required: true }
-    ] },
-    { name: "setprovider", description: "Owner: choose AI provider (openai|gemini) and restart", options: [
-      { name: "provider", description: "openai or gemini", type: 3, required: true }
-    ] },
     { name: "pm2clean", description: "Owner: remove old PM2 process 'synapseai' and save" },
     { name: "version", description: "Owner: show running commit and config" },
     { name: "envcheck", description: "Owner: verify env values on server (masked)", options: [
       { name: "name", description: "Optional env name to check (e.g., OPENAI_API_KEY)", type: 3, required: false }
-    ] },
-    { name: "setmodel", description: "Owner: set AI model for a provider and restart", options: [
-      { name: "provider", description: "openai or gemini", type: 3, required: true },
-      { name: "model", description: "Model id (e.g., gpt-4o-mini or gemini-1.5-pro-latest)", type: 3, required: true }
-    ] },
-    { name: "setmodelpreset", description: "Owner: set AI model by preset (fast|balanced|cheap)", options: [
-      { name: "preset", description: "fast | balanced | cheap", type: 3, required: true },
-      { name: "provider", description: "openai or gemini (defaults to AI_PROVIDER)", type: 3, required: false }
-    ] },
-    { name: "settaunt", description: "Owner: set trash talk tone (soft|normal|edgy)", options: [
-      { name: "tone", description: "soft | normal | edgy", type: 3, required: true }
     ] },
     { name: "diagai", description: "Owner: AI health check (env + test call)" },
     { name: "setsupportroles", description: "Owner: set support role IDs (head/support/trial)", options: [
@@ -158,41 +308,21 @@ client.once("clientReady", async () => {
     { name: "setfounderrole", description: "Owner: set the Founder role for this server", options: [
       { name: "role", description: "Founder role", type: 8, required: true }
     ] },
-    { name: "addfounder", description: "Owner: add a founder user for this server", options: [
-      { name: "user", description: "User to add as founder", type: 6, required: true }
-    ] },
-    { name: "removefounder", description: "Owner: remove a founder user for this server", options: [
-      { name: "user", description: "User to remove from founders", type: 6, required: true }
-    ] },
-    { name: "getfounders", description: "Owner: show founder config for this server" },
   { name: "registercommands", description: "Owner: re-register slash commands in this server (immediate)" },
     { name: "setmention", description: "Owner: toggle @mentions for PobKC or Joycemember", options: [
       { name: "owner", description: "pobkc or joycemember", type: 3, required: true },
       { name: "enabled", description: "true or false", type: 5, required: true }
     ] },
     { name: "getmention", description: "Owner: show mention preference status for owners" },
-    // Owner-only whitelist management
-    { name: "addwhitelist", description: "Owner: add a whitelist entry (user or role)", options: [
-      { name: "type", description: "user or role", type: 3, required: true },
-      { name: "id", description: "User ID or Role ID (or mention)", type: 3, required: true },
-      { name: "duration", description: "Optional duration (e.g., 7d, 24h, 3600)", type: 3, required: false },
-      { name: "autorole", description: "Optional auto-assign role id", type: 3, required: false }
-    ] },
-    { name: "removewhitelist", description: "Owner: remove a whitelist entry", options: [
-      { name: "type", description: "user or role", type: 3, required: true },
-      { name: "id", description: "User ID or Role ID (or mention)", type: 3, required: true }
-    ] },
-    { name: "listwhitelist", description: "Owner: list whitelist entries" },
-    { name: "addblacklist", description: "Owner: add a blacklist entry (user or role)", options: [
-      { name: "type", description: "user or role", type: 3, required: true },
-      { name: "id", description: "User ID or Role ID (or mention)", type: 3, required: true },
+    // Owner-only access management (consolidated)
+    { name: "manage", description: "Owner: Manage whitelist, blacklist, and bypass entries", options: [
+      { name: "type", description: "whitelist | blacklist | bypass", type: 3, required: true },
+      { name: "action", description: "add | remove | list", type: 3, required: true },
+      { name: "target_type", description: "user | role (for add/remove)", type: 3, required: false },
+      { name: "id", description: "User ID or Role ID (for add/remove)", type: 3, required: false },
+      { name: "duration", description: "Duration for whitelist (e.g., 7d)", type: 3, required: false },
       { name: "reason", description: "Reason for blacklist", type: 3, required: false }
     ] },
-    { name: "removeblacklist", description: "Owner: remove a blacklist entry", options: [
-      { name: "type", description: "user or role", type: 3, required: true },
-      { name: "id", description: "User ID or Role ID (or mention)", type: 3, required: true }
-    ] },
-    { name: "listblacklist", description: "Owner: list blacklist entries" },
     // Giveaway commands
     { name: "giveaway", description: "Manage giveaways", options: [
       { name: "start", description: "Start a new giveaway", type: 1, options: [
@@ -244,7 +374,6 @@ client.once("clientReady", async () => {
   { name: "getquestiontimeout", description: "Get the current question repeat timeout" },
   { name: "addbypass", description: "Add a bypass entry (user or role) to allow using admin commands", options: [ { name: 'type', description: 'user or role', type: 3, required: true }, { name: 'id', description: 'User ID or Role ID (or mention)', type: 3, required: true } ] },
   { name: "removebypass", description: "Remove a bypass entry", options: [ { name: 'type', description: 'user or role', type: 3, required: true }, { name: 'id', description: 'User ID or Role ID (or mention)', type: 3, required: true } ] },
-  { name: "listbypass", description: "List bypass entries" },
   { name: "setresponserule", description: "Add a rule to customize responses (admin)", options: [ { name: 'type', description: 'Type: phrase|emoji|sticker', type: 3, required: true }, { name: 'trigger', description: 'Trigger text/emoji/sticker id', type: 3, required: true }, { name: 'response', description: 'Response text (use __IGNORE__ to ignore). Can be JSON for translations.', type: 3, required: true }, { name: 'match', description: 'Match type: contains|equals|regex (phrase only)', type: 3, required: false } ] },
   { name: "listresponserules", description: "List configured response rules (admin)" },
   { name: "delresponserule", description: "Delete a response rule by id (admin)", options: [{ name: 'id', description: 'Rule id', type: 3, required: true }] },
@@ -253,9 +382,6 @@ client.once("clientReady", async () => {
   { name: "clearmodlog", description: "Clear the moderation log channel (admin)" },
   { name: "warn", description: "Warn a user (DM and record)", options: [{ name: 'user', type: 6, description: 'User to warn', required: true }, { name: 'reason', type: 3, description: 'Reason', required: false }] },
   { name: "warns", description: "Check user warnings", options: [{ name: 'user', type: 6, description: 'User to check', required: true }] },
-  { name: "checkwarn", description: "Check warnings for a user", options: [{ name: 'user', type: 6, description: 'User to check', required: true }] },
-  { name: "warnings", description: "Alias: check warnings for a user", options: [{ name: 'user', type: 6, description: 'User to check', required: true }] },
-  { name: "checkwarnings", description: "Alias: check warnings for a user", options: [{ name: 'user', type: 6, description: 'User to check', required: true }] },
     { name: "clearwarn", description: "Clear warnings for a user", options: [{ name: 'user', type: 6, description: 'User', required: true }] },
     { name: "unmute", description: "Remove timeout from a member", options: [{ name: 'user', type: 6, description: 'Member to unmute', required: true }] },
   { name: "announce", description: "Send an announcement as the bot", options: [{ name: 'message', type: 3, description: 'Message content', required: true }, { name: 'channel', type: 7, description: 'Channel to announce in', required: false }] },
@@ -283,18 +409,12 @@ client.once("clientReady", async () => {
   { name: "supportend", description: "End a tracked support interaction (ticket)", options: [ { name: "id", description: "Interaction ID from /supportstart", type: 4, required: true }, { name: "resolved", description: "Was it resolved?", type: 5, required: true }, { name: "rating", description: "Satisfaction rating (1-5)", type: 4, required: false }, { name: "feedback", description: "Optional feedback text", type: 3, required: false } ] },
   { name: "supportrate", description: "Ticket requester: rate your support interaction", options: [ { name: "id", description: "Interaction ID", type: 4, required: true }, { name: "rating", description: "Satisfaction rating (1-5)", type: 4, required: true }, { name: "feedback", description: "Optional feedback text", type: 3, required: false } ] },
   { name: "supportaddhelper", description: "Support: add a co-helper to a ticket", options: [ { name: "id", description: "Interaction ID", type: 4, required: true }, { name: "member", description: "Helper to add", type: 6, required: true } ] },
-  { name: "listopentickets", description: "List all open support tickets" },
     { name: "perks", description: "✨ View your unlocked perks and special abilities" },
   { name: "perkspanel", description: "Owner: post a perks claim panel in this channel" },
   { name: "claimperk", description: "Claim an unlocked perk", options: [ { name: "perk", description: "custom_color|priority_support|custom_emoji|channel_suggest|voice_priority|exclusive_role", type: 3, required: true } ] },
   { name: "setcolor", description: "Set your custom role color (requires custom_color perk)", options: [ { name: "hex", description: "Hex color like #FF8800", type: 3, required: true } ] },
   { name: "requestemoji", description: "Create a custom emoji (requires custom_emoji perk)", options: [ { name: "name", description: "Emoji name (letters, numbers, _)", type: 3, required: true }, { name: "image", description: "Emoji image (PNG/GIF)", type: 11, required: true } ] },
   { name: "setperkrole", description: "Owner: bind a server role to a perk so claims use it", options: [ { name: "perk", description: "Perk name (see /claimperk for options)", type: 3, required: true }, { name: "role", description: "Role to bind", type: 8, required: true } ] },
-    { name: "patterns", description: "📈 Admin: View detected user behavior patterns" },
-    { name: "insights", description: "🔮 Admin: Get AI predictions for best posting times" },
-    { name: "checkins", description: "📋 Admin: View scheduled proactive user follow-ups" },
-    { name: "sentiment", description: "💭 Admin: Real-time emotional analysis of conversations", options: [ { name: "channel", description: "Channel to analyze (defaults to current)", type: 7, required: false } ] },
-    { name: "commonissues", description: "🔍 Admin: Detect recurring support issues", options: [ { name: "hours", description: "Hours to analyze (default 24)", type: 4, required: false } ] },
     { name: "faq", description: "❓ Quick access to frequently asked questions", options: [ { name: "category", description: "Filter by category", type: 3, required: false } ] },
     // Command Permissions Management
     { name: "cmdpermissions", description: "🔐 Owner: Manage command permissions panel", options: [
@@ -495,34 +615,43 @@ client.once("clientReady", async () => {
   };
   const sanitizedCommands = commands.map((c) => sanitizeCommand({ ...c }));
 
-  // Respect Discord's 100-command per scope limit. Ensure priority commands are included.
+  // Update the PRIORITY_NAMES set to include the new commands
   const PRIORITY_NAMES = new Set<string>([
-    'automod','case','cases','updatecase','appeal','appeals',
-    'remind','reminders','cancelreminder',
-    'clockin','clockout','shifts','shiftstats','whosonduty',
-    'statschannels','bulkban','bulkkick','bulkmute',
-    'ticket','tempchannels',
-    // a few maintenance/admin
-    'redeploy','cmdpermissions','abusebypass','help','ping'
+    'achievements', 'claimperks', 'kb', 'leaderboard', 'perks', 'setcolor', 'supportstats', 'whitelist',
+    'diagcommands', // Ensure diagcommands is prioritized
+    'help', 'ping', 'redeploy', 'cmdpermissions', 'abusebypass',
+    // Shift commands - essential for staff management
+    'clockin', 'clockout', 'shifts', 'shiftstats', 'whosonduty'
   ]);
+  
+  // Adjust the buildFinalCommands function to ensure prioritized commands are included
   const buildFinalCommands = (all: any[]) => {
     const byName = new Map<string, any>();
     all.forEach(c => byName.set(c.name, c));
     const prioritized: any[] = [];
-    // Keep original order but pull priorities to the front once
+  
+    // Add prioritized commands first
     all.forEach(c => {
       if (PRIORITY_NAMES.has(c.name)) prioritized.push(c);
     });
+  
+    // Add the rest of the commands, ensuring no duplicates
     const rest = all.filter(c => !PRIORITY_NAMES.has(c.name));
     const combined: any[] = [];
     const seen = new Set<string>();
     for (const c of [...prioritized, ...rest]) {
-      if (!seen.has(c.name)) { combined.push(c); seen.add(c.name); }
+      if (!seen.has(c.name)) {
+        combined.push(c);
+        seen.add(c.name);
+      }
     }
+  
+    // Truncate to 100 commands if necessary
     if (combined.length > 100) {
       console.warn(`Command count (${combined.length}) exceeds Discord limit (100). Truncating to first 100.`);
       return combined.slice(0, 100);
     }
+  
     return combined;
   };
   const finalCommands = buildFinalCommands(sanitizedCommands);
@@ -586,6 +715,30 @@ client.once("clientReady", async () => {
 
 client.on("interactionCreate", async (interaction) => {
   try {
+    // Handle color-picker select menu interaction
+    if (interaction.isStringSelectMenu() && interaction.customId === 'color-picker') {
+      const selectedColor = interaction.values[0];
+      try {
+        const guild = interaction.guild;
+        if (!guild) {
+          return interaction.reply({ content: 'This interaction can only be used in a server.', flags: 64 });
+        }
+
+        const member = await guild.members.fetch(interaction.user.id);
+        const role = member.roles.cache.find(r => r.name === 'Custom Color');
+
+        if (!role) {
+          return interaction.reply({ content: 'You do not have a role named "Custom Color". Please contact an admin.', flags: 64 });
+        }
+
+        await role.setColor(selectedColor as ColorResolvable, 'Updated via color-picker interaction');
+        await interaction.reply({ content: `Your role color has been updated to ${selectedColor}!`, flags: 64 });
+      } catch (error) {
+        console.error('Failed to update role color:', error);
+        await interaction.reply({ content: 'An error occurred while updating your role color. Please try again later.', flags: 64 });
+      }
+      return;
+    }
     // Button interactions for perks panel and approvals
     if (interaction.isButton()) {
       const btn = interaction.customId || '';
@@ -909,7 +1062,11 @@ client.on("interactionCreate", async (interaction) => {
         }
       }
       if (blacklisted) {
-        return interaction.reply({ content: "You have been blacklisted from using this bot.", ephemeral: true });
+        if (interaction.replied || interaction.deferred) {
+          console.log('Debug: Interaction already acknowledged. Skipping response.');
+          return;
+        }
+        return await safeReply(interaction, { content: "You have been blacklisted from using this bot.", flags: MessageFlags.Ephemeral });
       }
     }
 
@@ -924,8 +1081,17 @@ client.on("interactionCreate", async (interaction) => {
         }
       }
     }
-    if (!whitelisted && !isOwnerId(userId)) {
-      return interaction.reply({ content: "My owner hasn't whitelisted you. You can either pay to use my services or buy Synapse script to use my commands and have a conversation for free.", ephemeral: true });
+    if (!whitelisted) {
+        if (isOwnerId(userId)) {
+            console.log(`Owner bypassing whitelist check: userId=${userId}`); // Debug log
+            whitelisted = true; // Force whitelist for owner
+        } else {
+            if (interaction.replied || interaction.deferred) {
+                console.log('Debug: Interaction already acknowledged. Skipping response.');
+                return;
+            }
+            return await safeReply(interaction, { content: "My owner hasn't whitelisted you. You can either pay to use my services or buy Synapse script to use my commands and have a conversation for free.", flags: MessageFlags.Ephemeral });
+        }
     }
   // Whitelist admin commands (owner only)
   if (isOwnerId(interaction.user.id)) {
@@ -1042,7 +1208,13 @@ client.on("interactionCreate", async (interaction) => {
 
     // Command Permissions Management
     if (interaction.commandName === "cmdpermissions") {
-      if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+      if (!interaction.guild) {
+        if (interaction.replied || interaction.deferred) {
+          console.log('Debug: Interaction already acknowledged. Skipping response.');
+          return;
+        }
+        return await safeReply(interaction, { content: 'This command can only be used in a server.', flags: MessageFlags.Ephemeral });
+      }
       
       const { 
         addCommandPermission, 
@@ -1071,7 +1243,7 @@ client.on("interactionCreate", async (interaction) => {
           )
           .setFooter({ text: 'Owner/Admin only • Permissions are checked before command execution' });
 
-        return interaction.reply({ embeds: [embed], ephemeral: true });
+        return await safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
       }
 
       if (subcommand === "add") {
@@ -1203,13 +1375,13 @@ client.on("interactionCreate", async (interaction) => {
           .setDescription(`**Allowed Commands (${commands.length}):**\n\`\`\`${commands.join(', ')}\`\`\``)
           .setFooter({ text: 'Use /cmdpermissions to modify permissions' });
 
-        return interaction.reply({ embeds: [embed], ephemeral: true });
+        return await safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
       }
     }
 
     // Anti-Abuse Bypass Management
     if (interaction.commandName === "abusebypass") {
-      if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+      if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', flags: MessageFlags.Ephemeral });
       
       const { addBypassRole, removeBypassRole, getBypassedRoles, clearBypassedRoles } = await import('./services/antiAbuse');
       const subcommand = interaction.options.getSubcommand();
@@ -1307,9 +1479,13 @@ client.on("interactionCreate", async (interaction) => {
   // Auto-Moderation Commands
   if (name === "automod") {
     if (!(await hasCommandAccess(interaction.member, 'automod', interaction.guild?.id || null))) {
-      return interaction.reply({ content: '❌ You don\'t have permission to use this command.', ephemeral: true });
+      if (interaction.replied || interaction.deferred) {
+        console.log('Debug: Interaction already acknowledged. Skipping response.');
+        return;
+      }
+      return await safeReply(interaction, '❌ You don\'t have permission to use this command.', { flags: MessageFlags.Ephemeral });
     }
-    if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+    if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', flags: MessageFlags.Ephemeral });
 
     const subCmd = interaction.options.getSubcommand();
     const { getAutoModRules, setAutoModRule, deleteAutoModRule } = await import('./services/automod');
@@ -1330,7 +1506,7 @@ client.on("interactionCreate", async (interaction) => {
         mute_duration: muteDuration || undefined
       });
 
-      return interaction.reply({ content: `✅ Auto-mod rule **${rule}** has been ${enabled ? 'enabled' : 'disabled'} with action **${action}**.`, ephemeral: true });
+      return await safeReply(interaction, { content: `✅ Auto-mod rule **${rule}** has been ${enabled ? 'enabled' : 'disabled'} with action **${action}**.`, ephemeral: true });
     }
 
     if (subCmd === "list") {
@@ -1354,20 +1530,20 @@ client.on("interactionCreate", async (interaction) => {
         });
       }
 
-      return interaction.reply({ embeds: [embed], ephemeral: true });
+      return await safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
     }
 
     if (subCmd === "delete") {
       const rule = interaction.options.getString('rule', true) as any;
       deleteAutoModRule(interaction.guild.id, rule);
-      return interaction.reply({ content: `✅ Deleted auto-mod rule **${rule}**.`, ephemeral: true });
+      return await safeReply(interaction, { content: `✅ Deleted auto-mod rule **${rule}**.`, flags: MessageFlags.Ephemeral });
     }
   }
 
   // Case Management Commands
   if (name === "case") {
     if (!(await hasCommandAccess(interaction.member, 'case', interaction.guild?.id || null))) {
-      return interaction.reply({ content: '❌ You don\'t have permission to use this command.', ephemeral: true });
+      return await safeReply(interaction, '❌ You don\'t have permission to use this command.', { flags: MessageFlags.Ephemeral });
     }
 
     const caseNumber = interaction.options.getInteger('number', true);
@@ -1375,7 +1551,15 @@ client.on("interactionCreate", async (interaction) => {
     const caseData = getCase(caseNumber);
 
     if (!caseData) {
-      return interaction.reply({ content: `❌ Case #${caseNumber} not found.`, ephemeral: true });
+      if (interaction.replied || interaction.deferred) {
+        console.log('Debug: Interaction already acknowledged. Skipping response.');
+        return;
+      }
+      if (interaction.replied || interaction.deferred) {
+        console.log('Debug: Interaction already acknowledged. Skipping response.');
+        return;
+      }
+      return await safeReply(interaction, `❌ Case #${caseNumber} not found.`, { flags: MessageFlags.Ephemeral });
     }
 
     const embed = new EmbedBuilder()
@@ -1393,21 +1577,25 @@ client.on("interactionCreate", async (interaction) => {
       embed.addFields({ name: 'Duration', value: `${caseData.duration} minutes`, inline: true });
     }
 
-    return interaction.reply({ embeds: [embed], ephemeral: true });
+    return await safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
   }
 
   if (name === "cases") {
     if (!(await hasCommandAccess(interaction.member, 'cases', interaction.guild?.id || null))) {
-      return interaction.reply({ content: '❌ You don\'t have permission to use this command.', ephemeral: true });
+      return await safeReply(interaction, '❌ You don\'t have permission to use this command.', { flags: MessageFlags.Ephemeral });
     }
-    if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+    if (!interaction.guild) return await safeReply(interaction, 'This command can only be used in a server.', { flags: MessageFlags.Ephemeral });
 
     const user = interaction.options.getUser('user', true);
     const { getUserCases } = await import('./services/cases');
     const cases = getUserCases(interaction.guild.id, user.id);
 
     if (cases.length === 0) {
-      return interaction.reply({ content: `${user.tag} has no moderation cases.`, ephemeral: true });
+      if (interaction.replied || interaction.deferred) {
+        console.log('Debug: Interaction already acknowledged. Skipping response.');
+        return;
+      }
+      return await safeReply(interaction, `${user.tag} has no moderation cases.`, { flags: MessageFlags.Ephemeral });
     }
 
     const embed = new EmbedBuilder()
@@ -1429,12 +1617,12 @@ client.on("interactionCreate", async (interaction) => {
       embed.setFooter({ text: `Showing 10 of ${cases.length} cases` });
     }
 
-    return interaction.reply({ embeds: [embed], ephemeral: true });
+    return await safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
   }
 
   if (name === "updatecase") {
     if (!(await hasCommandAccess(interaction.member, 'updatecase', interaction.guild?.id || null))) {
-      return interaction.reply({ content: '❌ You don\'t have permission to use this command.', ephemeral: true });
+      return interaction.reply({ content: '❌ You don\'t have permission to use this command.', flags: MessageFlags.Ephemeral });
     }
 
     const caseNumber = interaction.options.getInteger('number', true);
@@ -1443,9 +1631,9 @@ client.on("interactionCreate", async (interaction) => {
 
     const success = updateCaseReason(caseNumber, reason);
     if (success) {
-      return interaction.reply({ content: `✅ Updated case #${caseNumber} reason.`, ephemeral: true });
+      return await safeReply(interaction, { content: `✅ Updated case #${caseNumber} reason.`, flags: MessageFlags.Ephemeral });
     } else {
-      return interaction.reply({ content: `❌ Case #${caseNumber} not found.`, ephemeral: true });
+      return await safeReply(interaction, `❌ Case #${caseNumber} not found.`, { flags: MessageFlags.Ephemeral });
     }
   }
 
@@ -1457,22 +1645,30 @@ client.on("interactionCreate", async (interaction) => {
     const { createAppeal } = await import('./services/appeals');
     const guildId = interaction.guild?.id || process.env.GUILD_ID;
     if (!guildId) {
-      return interaction.reply({ content: '❌ Could not determine server. Please use this command in the server or ensure the bot is configured.', ephemeral: true });
+      if (interaction.replied || interaction.deferred) {
+        console.log('Debug: Interaction already acknowledged. Skipping response.');
+        return;
+      }
+      return await safeReply(interaction, '❌ Could not determine server. Please use this command in the server or ensure the bot is configured.', { flags: MessageFlags.Ephemeral });
     }
 
     try {
       const appealId = createAppeal(guildId, interaction.user.id, type, reason);
-      return interaction.reply({ content: `✅ Appeal #${appealId} submitted successfully. Staff will review it soon.`, ephemeral: true });
+      return await safeReply(interaction, { content: `✅ Appeal #${appealId} submitted successfully. Staff will review it soon.`, flags: MessageFlags.Ephemeral });
     } catch (err: any) {
-      return interaction.reply({ content: `❌ ${err.message || 'Failed to submit appeal.'}`, ephemeral: true });
+      if (interaction.replied || interaction.deferred) {
+        console.log('Debug: Interaction already acknowledged. Skipping response.');
+        return;
+      }
+      return await safeReply(interaction, `❌ ${err.message || 'Failed to submit appeal.'}`, { flags: MessageFlags.Ephemeral });
     }
   }
 
   if (name === "appeals") {
     if (!(await hasCommandAccess(interaction.member, 'appeals', interaction.guild?.id || null))) {
-      return interaction.reply({ content: '❌ You don\'t have permission to use this command.', ephemeral: true });
+      return interaction.reply({ content: '❌ You don\'t have permission to use this command.', flags: MessageFlags.Ephemeral });
     }
-    if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+    if (!interaction.guild) return await safeReply(interaction, 'This command can only be used in a server.', { flags: MessageFlags.Ephemeral });
 
     const subCmd = interaction.options.getSubcommand();
     const { getPendingAppeals, getAppeal, reviewAppeal } = await import('./services/appeals');
@@ -1495,7 +1691,7 @@ client.on("interactionCreate", async (interaction) => {
         });
       }
 
-      return interaction.reply({ embeds: [embed], ephemeral: true });
+      return await safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
     }
 
     if (subCmd === "approve" || subCmd === "deny") {
@@ -1530,7 +1726,11 @@ client.on("interactionCreate", async (interaction) => {
     const minutes = parseTimeString(timeStr);
 
     if (!minutes) {
-      return interaction.reply({ content: '❌ Invalid time format. Use formats like: 2h, 30m, 1d, 45s', ephemeral: true });
+      if (interaction.replied || interaction.deferred) {
+        console.log('Debug: Interaction already acknowledged. Skipping response.');
+        return;
+      }
+      return await safeReply(interaction, '❌ Invalid time format. Use formats like: 2h, 30m, 1d, 45s', { flags: MessageFlags.Ephemeral });
     }
 
     const reminderId = createReminder(
@@ -1542,7 +1742,7 @@ client.on("interactionCreate", async (interaction) => {
     );
 
     const reminderTime = new Date(Date.now() + minutes * 60000);
-    return interaction.reply({ content: `✅ Reminder #${reminderId} set for <t:${Math.floor(reminderTime.getTime() / 1000)}:R>!\n**Message:** ${message}`, ephemeral: true });
+    return await safeReply(interaction, `✅ Reminder #${reminderId} set for <t:${Math.floor(reminderTime.getTime() / 1000)}:R>!\n**Message:** ${message}`, { flags: MessageFlags.Ephemeral });
   }
 
   if (name === "reminders") {
@@ -1550,7 +1750,11 @@ client.on("interactionCreate", async (interaction) => {
     const reminders = getUserReminders(interaction.user.id);
 
     if (reminders.length === 0) {
-      return interaction.reply({ content: 'You have no active reminders.', ephemeral: true });
+      if (interaction.replied || interaction.deferred) {
+        console.log('Debug: Interaction already acknowledged. Skipping response.');
+        return;
+      }
+      return await safeReply(interaction, 'You have no active reminders.', { flags: MessageFlags.Ephemeral });
     }
 
     const embed = new EmbedBuilder()
@@ -1566,7 +1770,7 @@ client.on("interactionCreate", async (interaction) => {
       });
     }
 
-    return interaction.reply({ embeds: [embed], ephemeral: true });
+    return await safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
   }
 
   if (name === "cancelreminder") {
@@ -1575,15 +1779,19 @@ client.on("interactionCreate", async (interaction) => {
 
     const success = cancelReminder(reminderId, interaction.user.id);
     if (success) {
-      return interaction.reply({ content: `✅ Cancelled reminder #${reminderId}.`, ephemeral: true });
+      return await safeReply(interaction, `✅ Cancelled reminder #${reminderId}.`, { flags: MessageFlags.Ephemeral });
     } else {
-      return interaction.reply({ content: `❌ Reminder #${reminderId} not found or doesn't belong to you.`, ephemeral: true });
+      if (interaction.replied || interaction.deferred) {
+        console.log('Debug: Interaction already acknowledged. Skipping response.');
+        return;
+      }
+      return await safeReply(interaction, `❌ Reminder #${reminderId} not found or doesn't belong to you.`, { flags: MessageFlags.Ephemeral });
     }
   }
 
   // Staff Shifts
   if (name === "clockin") {
-    if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+    if (!interaction.guild) return await safeReply(interaction, 'This command can only be used in a server.', { flags: MessageFlags.Ephemeral });
 
     const { clockIn, getShiftPanels } = await import('./services/shifts');
     const result = clockIn(interaction.guild.id, interaction.user.id);
@@ -1609,11 +1817,11 @@ client.on("interactionCreate", async (interaction) => {
       }
     }
 
-    return interaction.reply({ content: result.message, ephemeral: true });
+    return await safeReply(interaction, result.message, { flags: MessageFlags.Ephemeral });
   }
 
   if (name === "clockout") {
-    if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+    if (!interaction.guild) return await safeReply(interaction, 'This command can only be used in a server.', { flags: MessageFlags.Ephemeral });
 
     const { clockOut, getShiftPanels } = await import('./services/shifts');
     const result = clockOut(interaction.guild.id, interaction.user.id);
@@ -1642,14 +1850,14 @@ client.on("interactionCreate", async (interaction) => {
     if (result.success && result.duration) {
       const hours = Math.floor(result.duration / 60);
       const mins = result.duration % 60;
-      return interaction.reply({ content: `${result.message} Duration: **${hours}h ${mins}m**`, ephemeral: true });
+      return await safeReply(interaction, `${result.message} Duration: **${hours}h ${mins}m**`, { flags: MessageFlags.Ephemeral });
     }
 
-    return interaction.reply({ content: result.message, ephemeral: true });
+    return await safeReply(interaction, { content: result.message, flags: MessageFlags.Ephemeral });
   }
 
   if (name === "shifts") {
-    if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+    if (!interaction.guild) return await safeReply(interaction, 'This command can only be used in a server.', { flags: MessageFlags.Ephemeral });
 
     const subCmd = interaction.options.getSubcommand();
     
@@ -1681,7 +1889,7 @@ client.on("interactionCreate", async (interaction) => {
         });
       }
 
-      return interaction.reply({ embeds: [embed], ephemeral: true });
+      return await safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
     }
 
     if (subCmd === "panel") {
@@ -1691,22 +1899,33 @@ client.on("interactionCreate", async (interaction) => {
       }
 
       const { registerShiftPanel } = await import('./services/shifts');
-      const embed = await buildShiftPanelEmbed(interaction.guild.id, interaction.client);
-      const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder().setCustomId('shifts-refresh').setLabel('🔄 Refresh').setStyle(ButtonStyle.Secondary)
-      );
+      
+      try {
+        const embed = await buildShiftPanelEmbed(interaction.guild.id, interaction.client);
+        const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder().setCustomId('shifts-refresh').setLabel('🔄 Refresh').setStyle(ButtonStyle.Secondary)
+        );
 
-      if (interaction.channel && 'send' in interaction.channel) {
-        const message = await interaction.channel.send({ embeds: [embed], components: [row] });
-        registerShiftPanel(interaction.guild.id, interaction.channel.id, message.id);
+        if (interaction.channel && 'send' in interaction.channel) {
+          const message = await interaction.channel.send({ embeds: [embed], components: [row] });
+          registerShiftPanel(interaction.guild.id, interaction.channel.id, message.id);
+          return interaction.reply({ content: '✅ Posted shift tracker panel in this channel!', flags: MessageFlags.Ephemeral });
+        } else {
+          return interaction.reply({ content: '❌ Cannot post shift panel in this channel type.', flags: MessageFlags.Ephemeral });
+        }
+      } catch (error: any) {
+        console.error('Error posting shift panel:', error);
+        if (error.code === 50001) {
+          return interaction.reply({ content: '❌ I don\'t have permission to send messages in this channel. Please check my permissions.', flags: MessageFlags.Ephemeral });
+        } else {
+          return interaction.reply({ content: '❌ Failed to post shift panel. Please try again.', flags: MessageFlags.Ephemeral });
+        }
       }
-
-      return interaction.reply({ content: '✅ Posted shift tracker panel in this channel!', ephemeral: true });
     }
   }
 
   if (name === "shiftstats") {
-    if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+    if (!interaction.guild) return await safeReply(interaction, 'This command can only be used in a server.', { flags: MessageFlags.Ephemeral });
 
     const user = interaction.options.getUser('user') || interaction.user;
     const days = interaction.options.getInteger('days') || 30;
@@ -1729,17 +1948,17 @@ client.on("interactionCreate", async (interaction) => {
         { name: 'Average Shift', value: `${avgHours}h ${avgMins}m`, inline: true }
       );
 
-    return interaction.reply({ embeds: [embed], ephemeral: true });
+    return await safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
   }
 
   if (name === "whosonduty") {
-    if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+    if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', flags: MessageFlags.Ephemeral });
 
     const { getActiveStaff } = await import('./services/shifts');
     const activeStaff = getActiveStaff(interaction.guild.id);
 
     if (activeStaff.length === 0) {
-      return interaction.reply({ content: 'No staff currently clocked in.', ephemeral: true });
+      return await safeReply(interaction, 'No staff currently clocked in.', { flags: MessageFlags.Ephemeral });
     }
 
     const embed = new EmbedBuilder()
@@ -1759,15 +1978,15 @@ client.on("interactionCreate", async (interaction) => {
       });
     }
 
-    return interaction.reply({ embeds: [embed], ephemeral: true });
+    return await safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
   }
 
   // Server Stats Channels
   if (name === "statschannels") {
     if (!(await hasCommandAccess(interaction.member, 'statschannels', interaction.guild?.id || null))) {
-      return interaction.reply({ content: '❌ You don\'t have permission to use this command.', ephemeral: true });
+      return interaction.reply({ content: '❌ You don\'t have permission to use this command.', flags: MessageFlags.Ephemeral });
     }
-    if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+    if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', flags: MessageFlags.Ephemeral });
 
     const subCmd = interaction.options.getSubcommand();
     const { setStatsChannel, getStatsChannels, removeStatsChannel } = await import('./services/statsChannels');
@@ -1785,7 +2004,7 @@ client.on("interactionCreate", async (interaction) => {
         enabled: true
       });
 
-      return interaction.reply({ content: `✅ Stats channel configured: ${channel.name} will show ${type}.`, ephemeral: true });
+      return await safeReply(interaction, `✅ Stats channel configured: ${channel.name} will show ${type}.`, { flags: MessageFlags.Ephemeral });
     }
 
     if (subCmd === "list") {
@@ -1806,7 +2025,7 @@ client.on("interactionCreate", async (interaction) => {
         });
       }
 
-      return interaction.reply({ embeds: [embed], ephemeral: true });
+      return await safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
     }
 
     if (subCmd === "remove") {
@@ -1824,9 +2043,9 @@ client.on("interactionCreate", async (interaction) => {
   // Bulk Moderation Actions
   if (name === "bulkban" || name === "bulkkick" || name === "bulkmute") {
     if (!(await hasCommandAccess(interaction.member, name, interaction.guild?.id || null))) {
-      return interaction.reply({ content: '❌ You don\'t have permission to use this command.', ephemeral: true });
+      return interaction.reply({ content: '❌ You don\'t have permission to use this command.', flags: MessageFlags.Ephemeral });
     }
-    if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+    if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', flags: MessageFlags.Ephemeral });
 
     const usersStr = interaction.options.getString('users', true);
     const reason = interaction.options.getString('reason') || 'No reason provided';
@@ -1836,11 +2055,11 @@ client.on("interactionCreate", async (interaction) => {
     const userIds = usersStr.split(/[,\s]+/).filter(id => id.trim().length > 0);
 
     if (userIds.length === 0) {
-      return interaction.reply({ content: '❌ No valid user IDs provided.', ephemeral: true });
+      return await safeReply(interaction, '❌ No valid user IDs provided.', { flags: MessageFlags.Ephemeral });
     }
 
     if (userIds.length > 20) {
-      return interaction.reply({ content: '❌ Maximum 20 users at a time.', ephemeral: true });
+      return await safeReply(interaction, '❌ Maximum 20 users at a time.', { flags: MessageFlags.Ephemeral });
     }
 
     // Confirmation
@@ -1861,7 +2080,7 @@ client.on("interactionCreate", async (interaction) => {
         .setStyle(ButtonStyle.Secondary)
     );
 
-    await interaction.reply({ embeds: [confirmEmbed], components: [confirmRow], ephemeral: true });
+    await interaction.reply({ embeds: [confirmEmbed], components: [confirmRow], flags: MessageFlags.Ephemeral });
 
     // Store data for button handler
     (client as any).bulkActionData = (client as any).bulkActionData || {};
@@ -1876,9 +2095,9 @@ client.on("interactionCreate", async (interaction) => {
 
     if (subCmd === "setup") {
       if (!(await hasCommandAccess(interaction.member, 'ticket', interaction.guild?.id || null))) {
-        return interaction.reply({ content: '❌ You don\'t have permission to use this command.', ephemeral: true });
+        return interaction.reply({ content: '❌ You don\'t have permission to use this command.', flags: MessageFlags.Ephemeral });
       }
-      if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+      if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', flags: MessageFlags.Ephemeral });
 
       const category = interaction.options.getChannel('category', true);
       const logChannel = interaction.options.getChannel('log_channel');
@@ -1911,14 +2130,14 @@ client.on("interactionCreate", async (interaction) => {
         }
       } catch {}
 
-      return interaction.reply({ content: '✅ Ticket system configured! I posted a ticket panel here.', ephemeral: true });
+      return await safeReply(interaction, '✅ Ticket system configured! I posted a ticket panel here.', { ephemeral: true } as any);
     }
 
     if (subCmd === "panel") {
       if (!(await hasCommandAccess(interaction.member, 'ticket', interaction.guild?.id || null))) {
-        return interaction.reply({ content: '❌ You don\'t have permission to use this command.', ephemeral: true });
+        return interaction.reply({ content: '❌ You don\'t have permission to use this command.', flags: MessageFlags.Ephemeral });
       }
-      if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+      if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', flags: MessageFlags.Ephemeral });
       try {
         const panelEmbed = new EmbedBuilder()
           .setTitle('🎫 Need Help?')
@@ -1936,7 +2155,7 @@ client.on("interactionCreate", async (interaction) => {
     }
 
     if (subCmd === "create") {
-      if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+      if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', flags: MessageFlags.Ephemeral });
 
       const category = interaction.options.getString('category', true);
       const description = interaction.options.getString('description') || 'No description provided';
@@ -1986,7 +2205,7 @@ client.on("interactionCreate", async (interaction) => {
 
       await ticketChannel.send({ content: config.support_role_id ? `<@&${config.support_role_id}>` : 'New ticket!', embeds: [ticketEmbed] });
 
-      return interaction.reply({ content: `✅ Ticket created: ${ticketChannel}`, ephemeral: true });
+      return await safeReply(interaction, `✅ Ticket created: ${ticketChannel}`, { flags: MessageFlags.Ephemeral });
     }
 
     if (subCmd === "close") {
@@ -2048,7 +2267,7 @@ client.on("interactionCreate", async (interaction) => {
         .setColor(0xFF0000)
         .setDescription(`This ticket has been closed by <@${interaction.user.id}>.\nChannel will be deleted in 10 seconds.`);
 
-      await interaction.reply({ embeds: [closeEmbed] });
+      await safeReply(interaction, { embeds: [closeEmbed] });
 
       setTimeout(async () => {
         try {
@@ -2131,7 +2350,7 @@ client.on("interactionCreate", async (interaction) => {
         .setColor(0x00AE86)
         .setDescription(`<@${interaction.user.id}> is now handling this ticket.`);
 
-      return interaction.reply({ embeds: [claimEmbed] });
+      return await safeReply(interaction, { embeds: [claimEmbed] });
     }
 
     if (subCmd === "addhelper") {
@@ -2178,7 +2397,7 @@ client.on("interactionCreate", async (interaction) => {
         console.error('Failed to add helper to support interaction:', e);
       }
 
-      return interaction.reply({ content: `✅ Added <@${helper.id}> as a helper to this ticket.`, ephemeral: true });
+      return await safeReply(interaction, `✅ Added <@${helper.id}> as a helper to this ticket.`, { flags: MessageFlags.Ephemeral });
     }
 
     if (subCmd === "unclaim") {
@@ -2227,11 +2446,11 @@ client.on("interactionCreate", async (interaction) => {
         .setColor(0xFFA500)
         .setDescription(`<@${interaction.user.id}> has unclaimed this ticket. It's now available for other staff to claim.`);
 
-      return interaction.reply({ embeds: [unclaimEmbed] });
+      return await safeReply(interaction, { embeds: [unclaimEmbed] });
     }
 
     if (subCmd === "list") {
-      if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+      if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', flags: MessageFlags.Ephemeral });
 
       const { getOpenTickets } = await import('./services/tickets');
       const tickets = getOpenTickets(interaction.guild.id);
@@ -2253,16 +2472,16 @@ client.on("interactionCreate", async (interaction) => {
         });
       }
 
-      return interaction.reply({ embeds: [embed], ephemeral: true });
+      return await safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
     }
   }
 
   // Temporary Channels
   if (name === "tempchannels") {
     if (!(await hasCommandAccess(interaction.member, 'tempchannels', interaction.guild?.id || null))) {
-      return interaction.reply({ content: '❌ You don\'t have permission to use this command.', ephemeral: true });
+      return interaction.reply({ content: '❌ You don\'t have permission to use this command.', flags: MessageFlags.Ephemeral });
     }
-    if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+    if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', flags: MessageFlags.Ephemeral });
 
     const subCmd = interaction.options.getSubcommand();
     const { setTempChannelConfig, getGuildTempChannelConfigs, removeTempChannelConfig } = await import('./services/tempChannels');
@@ -2284,7 +2503,7 @@ client.on("interactionCreate", async (interaction) => {
         enabled: true
       });
 
-      return interaction.reply({ content: `✅ Temp channel configured! Users joining ${trigger.name} will create ${type} channels.`, ephemeral: true });
+      return interaction.reply({ content: `✅ Temp channel configured! Users joining ${trigger.name} will create ${type} channels.`, flags: MessageFlags.Ephemeral });
     }
 
     if (subCmd === "list") {
@@ -2324,7 +2543,7 @@ client.on("interactionCreate", async (interaction) => {
 
       // Support ticket tracking commands
       if (name === "supportstart") {
-        if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+        if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', flags: MessageFlags.Ephemeral });
         // Allow admins/bypass or users in support roles
         let allowed = adminOrBypass(interaction.member);
         if (!allowed) {
@@ -2347,14 +2566,14 @@ client.on("interactionCreate", async (interaction) => {
             channelId: interaction.channelId,
             questionText: question
           });
-          return interaction.reply({ content: `Started support interaction #${id} for <@${target.id}>`, ephemeral: true });
+          return interaction.reply({ content: `Started support interaction #${id} for <@${target.id}>`, flags: MessageFlags.Ephemeral });
         } catch (e:any) {
           console.error('supportstart failed:', e);
-          return interaction.reply({ content: `Failed to start interaction: ${e?.message ?? e}`, ephemeral: true });
+          return interaction.reply({ content: `Failed to start interaction: ${e?.message ?? e}`, flags: MessageFlags.Ephemeral });
         }
       }
       if (name === "supportend") {
-        if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+        if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', flags: MessageFlags.Ephemeral });
         let allowed = adminOrBypass(interaction.member);
         if (!allowed) {
           try {
@@ -2372,14 +2591,14 @@ client.on("interactionCreate", async (interaction) => {
         try {
           const { endSupportInteraction } = await import('./services/smartSupport');
           endSupportInteraction({ interactionId: id, wasResolved: resolved, satisfactionRating: rating, feedbackText: feedback });
-          return interaction.reply({ content: `Ended support interaction #${id} (${resolved ? 'resolved' : 'unresolved'})` + (rating ? ` • rating ${rating}/5` : ''), ephemeral: true });
+          return interaction.reply({ content: `Ended support interaction #${id} (${resolved ? 'resolved' : 'unresolved'})` + (rating ? ` • rating ${rating}/5` : ''), flags: MessageFlags.Ephemeral });
         } catch (e:any) {
           console.error('supportend failed:', e);
-          return interaction.reply({ content: `Failed to end interaction: ${e?.message ?? e}`, ephemeral: true });
+          return interaction.reply({ content: `Failed to end interaction: ${e?.message ?? e}`, flags: MessageFlags.Ephemeral });
         }
       }
       if (name === "supportrate") {
-        if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+        if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', flags: MessageFlags.Ephemeral });
         const id = interaction.options.getInteger('id', true)!;
         const rating = interaction.options.getInteger('rating', true)!;
         const feedback = interaction.options.getString('feedback') ?? undefined;
@@ -2393,14 +2612,14 @@ client.on("interactionCreate", async (interaction) => {
           const { rateSupportInteraction } = await import('./services/smartSupport');
           const res = rateSupportInteraction({ interactionId: id, byUserId: interaction.user.id, rating, feedbackText: feedback });
           if (!res.ok) return interaction.reply({ content: `Could not record rating: ${res.reason}`, ephemeral: true });
-          return interaction.reply({ content: `Thanks! Recorded your rating ${rating}/5 for #${id}.`, ephemeral: true });
+          return interaction.reply({ content: `Thanks! Recorded your rating ${rating}/5 for #${id}.`, flags: MessageFlags.Ephemeral });
         } catch (e:any) {
           console.error('supportrate failed:', e);
-          return interaction.reply({ content: `Failed to record rating: ${e?.message ?? e}`, ephemeral: true });
+          return interaction.reply({ content: `Failed to record rating: ${e?.message ?? e}`, flags: MessageFlags.Ephemeral });
         }
       }
       if (name === "supportaddhelper") {
-        if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+        if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', flags: MessageFlags.Ephemeral });
         // Allow admins/bypass or users in support roles
         let allowed = adminOrBypass(interaction.member);
         if (!allowed) {
@@ -2417,14 +2636,14 @@ client.on("interactionCreate", async (interaction) => {
         try {
           const { addSupportHelper } = await import('./services/smartSupport');
           const helpers = addSupportHelper(id, member.id);
-          return interaction.reply({ content: `Added <@${member.id}> as helper on #${id}. Helpers now: ${helpers.map(h=>`<@${h}>`).join(', ')}`, ephemeral: true });
+          return interaction.reply({ content: `Added <@${member.id}> as helper on #${id}. Helpers now: ${helpers.map(h=>`<@${h}>`).join(', ')}`, flags: MessageFlags.Ephemeral });
         } catch (e:any) {
           console.error('supportaddhelper failed:', e);
-          return interaction.reply({ content: `Failed to add helper: ${e?.message ?? e}`, ephemeral: true });
+          return interaction.reply({ content: `Failed to add helper: ${e?.message ?? e}`, flags: MessageFlags.Ephemeral });
         }
       }
       if (name === "listopentickets") {
-        if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+        if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', flags: MessageFlags.Ephemeral });
         // Allow admins/bypass or users in support roles
         let allowed = adminOrBypass(interaction.member);
         if (!allowed) {
@@ -2446,10 +2665,10 @@ client.on("interactionCreate", async (interaction) => {
             return `**#${t.id}** • <@${t.user_id}> helped by <@${t.support_member_id}>${helpers}\n  ${t.question_category || 'general'} • ${time}\n  ${(t.question || 'No description').slice(0, 80)}`;
           });
           const out = lines.join('\n\n').slice(0, 1900);
-          return interaction.reply({ content: `**Open Support Tickets (${tickets.length})**\n\n${out}`, ephemeral: true });
+          return interaction.reply({ content: `**Open Support Tickets (${tickets.length})**\n\n${out}`, flags: MessageFlags.Ephemeral });
         } catch (e:any) {
           console.error('listopentickets failed:', e);
-          return interaction.reply({ content: `Failed to list tickets: ${e?.message ?? e}`, ephemeral: true });
+          return interaction.reply({ content: `Failed to list tickets: ${e?.message ?? e}`, flags: MessageFlags.Ephemeral });
         }
       }
   if (name === "rpsai") {
@@ -2504,7 +2723,7 @@ client.on("interactionCreate", async (interaction) => {
   }
   if (name === "remember") {
     if (!adminOrBypass(interaction.member) && !isOwnerId(interaction.user.id)) {
-      return interaction.reply({ content: "You are not authorized to use this feature.", ephemeral: true });
+      return interaction.reply({ content: "You are not authorized to use this feature.", flags: MessageFlags.Ephemeral });
     }
     const { saveMemory, upsertUniqueMemory } = await import('./services/memory');
     const type = (interaction.options.getString('type', true) as string).toLowerCase();
@@ -2525,29 +2744,29 @@ client.on("interactionCreate", async (interaction) => {
           confidence: 0.9
         });
       }
-      return interaction.reply({ content: `Saved (${type}) ${key}: ${value}`, ephemeral: true });
+      return interaction.reply({ content: `Saved (${type}) ${key}: ${value}`, flags: MessageFlags.Ephemeral });
     } catch (e) {
       console.error('remember failed', e);
-      return interaction.reply({ content: 'Failed to save memory.', ephemeral: true });
+      return interaction.reply({ content: 'Failed to save memory.', flags: MessageFlags.Ephemeral });
     }
   }
   if (name === "forget") {
     if (!adminOrBypass(interaction.member) && !isOwnerId(interaction.user.id)) {
-      return interaction.reply({ content: "You are not authorized to use this feature.", ephemeral: true });
+      return interaction.reply({ content: "You are not authorized to use this feature.", flags: MessageFlags.Ephemeral });
     }
     const { deleteMemoryByKey } = await import('./services/memory');
     const key = interaction.options.getString('key', true).trim();
     try {
       const n = deleteMemoryByKey(interaction.user.id, key, interaction.guild?.id ?? null);
       if (n > 0) return interaction.reply({ content: `Deleted ${n} entr${n === 1 ? 'y' : 'ies'} for key '${key}'.`, ephemeral: true });
-      return interaction.reply({ content: `No entries found for key '${key}'.`, ephemeral: true });
+      return interaction.reply({ content: `No entries found for key '${key}'.`, flags: MessageFlags.Ephemeral });
     } catch (e) {
       console.error('forget failed', e);
-      return interaction.reply({ content: 'Failed to delete memory.', ephemeral: true });
+      return interaction.reply({ content: 'Failed to delete memory.', flags: MessageFlags.Ephemeral });
     }
   }
   if (name === "getmention") {
-    if (!isOwnerId(interaction.user.id)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
+    if (!isOwnerId(interaction.user.id)) return interaction.reply({ content: 'You are not authorized to use this feature.', flags: MessageFlags.Ephemeral });
     try {
       const { getMentionConfig } = await import('./services/ownerMentions');
       const cfg = getMentionConfig();
@@ -2556,7 +2775,7 @@ client.on("interactionCreate", async (interaction) => {
         `PobKC: ${cfg.pobkc ? 'enabled (@mention)' : 'disabled (name only)'}`,
         `Joycemember: ${cfg.joycemember ? 'enabled (@mention)' : 'disabled (name only)'}`
       ].join('\n');
-      return interaction.reply({ content: lines, ephemeral: true });
+      return interaction.reply({ content: lines, flags: MessageFlags.Ephemeral });
     } catch (err: any) {
       console.error('getmention failed:', err);
       return interaction.reply({ content: `Failed to get mention config: ${err?.message ?? err}`, ephemeral: true });
@@ -2564,21 +2783,21 @@ client.on("interactionCreate", async (interaction) => {
   }
   if (name === "aliases") {
     if (!adminOrBypass(interaction.member) && !isOwnerId(interaction.user.id)) {
-      return interaction.reply({ content: "You are not authorized to use this feature.", ephemeral: true });
+      return interaction.reply({ content: "You are not authorized to use this feature.", flags: MessageFlags.Ephemeral });
     }
     const { getAliases } = await import('./services/memory');
     try {
       const aliases = getAliases(interaction.user.id, interaction.guild?.id ?? null);
       if (!aliases.length) return interaction.reply({ content: 'No name aliases found.', ephemeral: true });
-      return interaction.reply({ content: `Your name aliases: ${aliases.join(', ')}`, ephemeral: true });
+      return interaction.reply({ content: `Your name aliases: ${aliases.join(', ')}`, flags: MessageFlags.Ephemeral });
     } catch (e) {
       console.error('aliases failed', e);
-      return interaction.reply({ content: 'Failed to retrieve aliases.', ephemeral: true });
+      return interaction.reply({ content: 'Failed to retrieve aliases.', flags: MessageFlags.Ephemeral });
     }
   }
   if (name === "history") {
     if (!adminOrBypass(interaction.member) && !isOwnerId(interaction.user.id)) {
-      return interaction.reply({ content: "You are not authorized to use this feature.", ephemeral: true });
+      return interaction.reply({ content: "You are not authorized to use this feature.", flags: MessageFlags.Ephemeral });
     }
     const { getMemoryHistory } = await import('./services/memory');
     const key = interaction.options.getString('key', true).trim();
@@ -2587,10 +2806,10 @@ client.on("interactionCreate", async (interaction) => {
       const hist = getMemoryHistory(interaction.user.id, key, interaction.guild?.id ?? null, limit);
       if (!hist.length) return interaction.reply({ content: `No history found for key '${key}'.`, ephemeral: true });
       const lines = hist.map((h: any) => `[${new Date(h.changed_at).toLocaleString()}] ${h.action}: ${h.old_value ? `${h.old_value} → ` : ''}${h.new_value}`).join('\n').slice(0, 1900);
-      return interaction.reply({ content: `History for '${key}':\n${lines}`, ephemeral: true });
+      return interaction.reply({ content: `History for '${key}':\n${lines}`, flags: MessageFlags.Ephemeral });
     } catch (e) {
       console.error('history failed', e);
-      return interaction.reply({ content: 'Failed to retrieve history.', ephemeral: true });
+      return interaction.reply({ content: 'Failed to retrieve history.', flags: MessageFlags.Ephemeral });
     }
   }
   if (name === "revert") {
@@ -2599,15 +2818,15 @@ client.on("interactionCreate", async (interaction) => {
     try {
       const event = revertMemory(interaction.user.id, key, interaction.guild?.id ?? null);
       if (!event) return interaction.reply({ content: `No previous value found for key '${key}'.`, ephemeral: true });
-      return interaction.reply({ content: `Reverted '${key}' from ${event.oldValue} back to ${event.newValue}.`, ephemeral: true });
+      return interaction.reply({ content: `Reverted '${key}' from ${event.oldValue} back to ${event.newValue}.`, flags: MessageFlags.Ephemeral });
     } catch (e) {
       console.error('revert failed', e);
-      return interaction.reply({ content: 'Failed to revert memory.', ephemeral: true });
+      return interaction.reply({ content: 'Failed to revert memory.', flags: MessageFlags.Ephemeral });
     }
   }
   if (name === "redeploy") {
-    if (!isOwnerId(interaction.user.id)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
-    await interaction.reply({ content: 'Starting deploy... I will pull latest code, rebuild, and restart.', ephemeral: true });
+    if (!isOwnerId(interaction.user.id)) return interaction.reply({ content: 'You are not authorized to use this feature.', flags: MessageFlags.Ephemeral });
+    await interaction.reply({ content: 'Starting deploy... I will pull latest code, rebuild, and restart.', flags: MessageFlags.Ephemeral });
     try {
       const { exec } = await import('child_process');
       await new Promise<void>((resolve, reject) => {
@@ -2616,7 +2835,7 @@ client.on("interactionCreate", async (interaction) => {
           resolve();
         });
       });
-      await interaction.followUp({ content: 'Deploy finished. If I briefly went offline, that was the restart.', ephemeral: true });
+      await interaction.followUp({ content: 'Deploy finished. If I briefly went offline, that was the restart.', flags: MessageFlags.Ephemeral });
     } catch (err: any) {
       console.error('Redeploy failed:', err);
       await interaction.followUp({ content: `Deploy failed: ${err?.message ?? err}. Try again or use the DigitalOcean console.`, ephemeral: true });
@@ -2624,12 +2843,12 @@ client.on("interactionCreate", async (interaction) => {
     return;
   }
   if (name === "setgeminikey") {
-    if (!isOwnerId(interaction.user.id)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
+    if (!isOwnerId(interaction.user.id)) return interaction.reply({ content: 'You are not authorized to use this feature.', flags: MessageFlags.Ephemeral });
     const newKey = interaction.options.getString('key', true).trim();
     if (!newKey || !/^AIza[0-9A-Za-z-_]{30,}$/.test(newKey)) {
       return interaction.reply({ content: 'That does not look like a valid Gemini API key.', ephemeral: true });
     }
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     try {
       const fs = await import('fs/promises');
       const path = '/opt/synapseai-bot/.env';
@@ -2668,13 +2887,13 @@ client.on("interactionCreate", async (interaction) => {
     return;
   }
   if (name === "setopenai") {
-    if (!isOwnerId(interaction.user.id)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
+    if (!isOwnerId(interaction.user.id)) return interaction.reply({ content: 'You are not authorized to use this feature.', flags: MessageFlags.Ephemeral });
     const newKey = interaction.options.getString('key', true).trim();
     if (!newKey || !/^sk-/.test(newKey)) {
       return interaction.reply({ content: 'That does not look like a valid OpenAI API key (expected to start with sk-).', ephemeral: true });
     }
     // Defer and only show the final result (success/failure). Avoid the noisy pre-message.
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     try {
       const fs = await import('fs/promises');
       const path = '/opt/synapseai-bot/.env';
@@ -2719,12 +2938,12 @@ client.on("interactionCreate", async (interaction) => {
     return;
   }
   if (name === "setprovider") {
-    if (!isOwnerId(interaction.user.id)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
+    if (!isOwnerId(interaction.user.id)) return interaction.reply({ content: 'You are not authorized to use this feature.', flags: MessageFlags.Ephemeral });
     const provider = (interaction.options.getString('provider', true) || '').toLowerCase();
     if (!['openai','gemini'].includes(provider)) {
       return interaction.reply({ content: 'Provider must be openai or gemini.', ephemeral: true });
     }
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     try {
       const fs = await import('fs/promises');
       const path = '/opt/synapseai-bot/.env';
@@ -2753,14 +2972,14 @@ client.on("interactionCreate", async (interaction) => {
     return;
   }
   if (name === "pm2clean") {
-    if (!isOwnerId(interaction.user.id)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
-    await interaction.reply({ content: `Deleting old PM2 process 'synapseai' and saving...`, ephemeral: true });
+    if (!isOwnerId(interaction.user.id)) return interaction.reply({ content: 'You are not authorized to use this feature.', flags: MessageFlags.Ephemeral });
+    await interaction.reply({ content: `Deleting old PM2 process 'synapseai' and saving...`, flags: MessageFlags.Ephemeral });
     try {
       const { exec } = await import('child_process');
       await new Promise<void>((resolve, reject) => {
         exec("pm2 delete synapseai || true && pm2 save", (error, stdout, stderr) => error ? reject(error) : resolve());
       });
-      await interaction.followUp({ content: `PM2 cleanup done. If duplicates remain, run /redeploy once more.`, ephemeral: true });
+      await interaction.followUp({ content: `PM2 cleanup done. If duplicates remain, run /redeploy once more.`, flags: MessageFlags.Ephemeral });
     } catch (err: any) {
       console.error('pm2clean failed:', err);
       await interaction.followUp({ content: `pm2clean failed: ${err?.message ?? err}`, ephemeral: true });
@@ -2768,7 +2987,7 @@ client.on("interactionCreate", async (interaction) => {
     return;
   }
   if (name === "version") {
-    if (!isOwnerId(interaction.user.id)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
+    if (!isOwnerId(interaction.user.id)) return interaction.reply({ content: 'You are not authorized to use this feature.', flags: MessageFlags.Ephemeral });
     try {
       const { execSync } = await import('child_process');
       let commit = 'unknown';
@@ -2784,14 +3003,14 @@ client.on("interactionCreate", async (interaction) => {
         `GEMINI_MODEL: ${geminiModel}`,
         `Node: ${process.version}`
       ].join('\n');
-      return interaction.reply({ content: lines, ephemeral: true });
+      return interaction.reply({ content: lines, flags: MessageFlags.Ephemeral });
     } catch (err: any) {
       console.error('version failed:', err);
       return interaction.reply({ content: `version failed: ${err?.message ?? err}`, ephemeral: true });
     }
   }
   if (name === "envcheck") {
-    if (!isOwnerId(interaction.user.id)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
+    if (!isOwnerId(interaction.user.id)) return interaction.reply({ content: 'You are not authorized to use this feature.', flags: MessageFlags.Ephemeral });
     try {
       const target = (interaction.options.getString('name') || '').trim();
       const fs = await import('fs/promises');
@@ -2827,19 +3046,19 @@ client.on("interactionCreate", async (interaction) => {
         const match = (fv ?? '') === (rv ?? '');
         lines.push(`${k}: file=${mask(k, fv)} | runtime=${mask(k, rv)} | match=${match ? 'yes' : 'no'}`);
       }
-      return interaction.reply({ content: `Env check:\n${lines.join('\n')}`.slice(0, 1900), ephemeral: true });
+      return interaction.reply({ content: `Env check:\n${lines.join('\n')}`.slice(0, 1900), flags: MessageFlags.Ephemeral });
     } catch (err: any) {
       console.error('envcheck failed:', err);
       return interaction.reply({ content: `envcheck failed: ${err?.message ?? err}`, ephemeral: true });
     }
   }
   if (name === "setmodel") {
-    if (!isOwnerId(interaction.user.id)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
+    if (!isOwnerId(interaction.user.id)) return interaction.reply({ content: 'You are not authorized to use this feature.', flags: MessageFlags.Ephemeral });
     const provider = (interaction.options.getString('provider', true) || '').toLowerCase();
     const model = interaction.options.getString('model', true).trim();
     if (!['openai','gemini'].includes(provider)) return interaction.reply({ content: 'Provider must be openai or gemini.', ephemeral: true });
     if (!model) return interaction.reply({ content: 'Model cannot be empty.', ephemeral: true });
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     try {
       const fs = await import('fs/promises');
       const path = '/opt/synapseai-bot/.env';
@@ -2869,7 +3088,7 @@ client.on("interactionCreate", async (interaction) => {
     return;
   }
   if (name === "setmodelpreset") {
-    if (!isOwnerId(interaction.user.id)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
+    if (!isOwnerId(interaction.user.id)) return interaction.reply({ content: 'You are not authorized to use this feature.', flags: MessageFlags.Ephemeral });
     const preset = (interaction.options.getString('preset', true) || '').toLowerCase();
     const providerArg = (interaction.options.getString('provider') || '').toLowerCase();
     const provider = providerArg || (process.env.AI_PROVIDER || 'openai').toLowerCase();
@@ -2928,7 +3147,7 @@ client.on("interactionCreate", async (interaction) => {
       const { setTauntMode, getTauntMode } = await import('./config');
       setTauntMode(toneRaw as any);
       const now = getTauntMode();
-      return interaction.reply({ content: `Trash talk tone set to '${now}'.`, ephemeral: true });
+      return interaction.reply({ content: `Trash talk tone set to '${now}'.`, flags: MessageFlags.Ephemeral });
     } catch (err: any) {
       console.error('settaunt failed:', err);
       return interaction.reply({ content: `Failed to set tone: ${err?.message ?? err}`, ephemeral: true });
@@ -2951,7 +3170,7 @@ client.on("interactionCreate", async (interaction) => {
         `Support: ${cfg.support ? `<@&${cfg.support}>` : 'not set'}`,
         `Trial: ${cfg.trial ? `<@&${cfg.trial}>` : 'not set'}`
       ].join('\n');
-      return interaction.reply({ content: lines, ephemeral: true });
+      return interaction.reply({ content: lines, flags: MessageFlags.Ephemeral });
     } catch (err: any) {
       console.error('setsupportroles failed:', err);
       return interaction.reply({ content: `Failed to set support roles: ${err?.message ?? err}`, ephemeral: true });
@@ -2959,13 +3178,13 @@ client.on("interactionCreate", async (interaction) => {
   }
   if (name === "setsupportintercept") {
     if (!isOwnerId(interaction.user.id)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
-    if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+    if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', flags: MessageFlags.Ephemeral });
     try {
       const enabled = interaction.options.getBoolean('enabled', true);
       const { setSupportInterceptEnabled, getSupportInterceptStatus } = await import('./services/supportIntercept');
       setSupportInterceptEnabled(interaction.guild.id, !!enabled);
       const status = getSupportInterceptStatus(interaction.guild.id);
-      return interaction.reply({ content: `Global support interception is now ${status} for this server.`, ephemeral: true });
+      return interaction.reply({ content: `Global support interception is now ${status} for this server.`, flags: MessageFlags.Ephemeral });
     } catch (err: any) {
       console.error('setsupportintercept failed:', err);
       return interaction.reply({ content: `Failed to update setting: ${err?.message ?? err}`, ephemeral: true });
@@ -2973,18 +3192,18 @@ client.on("interactionCreate", async (interaction) => {
   }
   if (name === "getsupportintercept") {
     if (!isOwnerId(interaction.user.id)) return interaction.reply({ content: 'You are not authorized to use this feature.', ephemeral: true });
-    if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+    if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', flags: MessageFlags.Ephemeral });
     try {
       const { getSupportInterceptStatus } = await import('./services/supportIntercept');
       const status = getSupportInterceptStatus(interaction.guild.id);
-      return interaction.reply({ content: `Global support interception: ${status}`, ephemeral: true });
+      return interaction.reply({ content: `Global support interception: ${status}`, flags: MessageFlags.Ephemeral });
     } catch (err: any) {
       console.error('getsupportintercept failed:', err);
       return interaction.reply({ content: `Failed to get setting: ${err?.message ?? err}`, ephemeral: true });
     }
   }
   if (name === "setfounderrole") {
-    if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+    if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', flags: MessageFlags.Ephemeral });
     try {
       const { isFounderUser } = await import('./services/founders');
       const founderOk = isFounderUser(interaction.guild, interaction.user.id, interaction.member as any);
@@ -2998,14 +3217,14 @@ client.on("interactionCreate", async (interaction) => {
         `Role: <@&${f.roleId}>`,
         `Users: ${(f.userIds || []).length ? f.userIds.map(id => `<@${id}>`).join(', ') : 'none set'}`
       ].join('\n');
-      return interaction.reply({ content: lines, ephemeral: true });
+      return interaction.reply({ content: lines, flags: MessageFlags.Ephemeral });
     } catch (err: any) {
       console.error('setfounderrole failed:', err);
       return interaction.reply({ content: `Failed to set founder role: ${err?.message ?? err}`, ephemeral: true });
     }
   }
   if (name === "addfounder") {
-    if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+    if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', flags: MessageFlags.Ephemeral });
     try {
       const { isFounderUser } = await import('./services/founders');
       const founderOk = isFounderUser(interaction.guild, interaction.user.id, interaction.member as any);
@@ -3019,14 +3238,14 @@ client.on("interactionCreate", async (interaction) => {
         `Role: ${f.roleId ? `<@&${f.roleId}>` : 'none set'}`,
         `Users: ${(f.userIds || []).map(id => `<@${id}>`).join(', ') || 'none set'}`
       ].join('\n');
-      return interaction.reply({ content: lines, ephemeral: true });
+      return interaction.reply({ content: lines, flags: MessageFlags.Ephemeral });
     } catch (err: any) {
       console.error('addfounder failed:', err);
       return interaction.reply({ content: `Failed to add founder: ${err?.message ?? err}`, ephemeral: true });
     }
   }
   if (name === "removefounder") {
-    if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+    if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', flags: MessageFlags.Ephemeral });
     try {
       const { isFounderUser } = await import('./services/founders');
       const founderOk = isFounderUser(interaction.guild, interaction.user.id, interaction.member as any);
@@ -3040,14 +3259,14 @@ client.on("interactionCreate", async (interaction) => {
         `Role: ${f.roleId ? `<@&${f.roleId}>` : 'none set'}`,
         `Users: ${(f.userIds || []).map(id => `<@${id}>`).join(', ') || 'none set'}`
       ].join('\n');
-      return interaction.reply({ content: lines, ephemeral: true });
+      return interaction.reply({ content: lines, flags: MessageFlags.Ephemeral });
     } catch (err: any) {
       console.error('removefounder failed:', err);
       return interaction.reply({ content: `Failed to remove founder: ${err?.message ?? err}`, ephemeral: true });
     }
   }
   if (name === "getfounders") {
-    if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+    if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', flags: MessageFlags.Ephemeral });
     try {
       const { isFounderUser } = await import('./services/founders');
       const founderOk = isFounderUser(interaction.guild, interaction.user.id, interaction.member as any);
@@ -3231,7 +3450,7 @@ client.on("interactionCreate", async (interaction) => {
   }
   if (name === "support") {
     try {
-      if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+      if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', flags: MessageFlags.Ephemeral });
       // Defer immediately since fetching members can take a few seconds
       await interaction.deferReply();
   const { listSupportMembers } = await import('./services/supportRoles');
@@ -3417,7 +3636,7 @@ client.on("interactionCreate", async (interaction) => {
     
     if (subcommand === "start") {
       if (!adminOrBypass(interaction.member)) {
-        return interaction.reply({ content: "You are not authorized to use this feature.", ephemeral: true });
+        return interaction.reply({ content: "You are not authorized to use this feature.", flags: MessageFlags.Ephemeral });
       }
       
       const prize = interaction.options.getString("prize", true);
@@ -3479,7 +3698,7 @@ client.on("interactionCreate", async (interaction) => {
     
     if (subcommand === "end") {
       if (!adminOrBypass(interaction.member)) {
-        return interaction.reply({ content: "You are not authorized to use this feature.", ephemeral: true });
+        return interaction.reply({ content: "You are not authorized to use this feature.", flags: MessageFlags.Ephemeral });
       }
       
       const id = interaction.options.getString("id", true);
@@ -3508,7 +3727,7 @@ client.on("interactionCreate", async (interaction) => {
     
     if (subcommand === "reroll") {
       if (!adminOrBypass(interaction.member)) {
-        return interaction.reply({ content: "You are not authorized to use this feature.", ephemeral: true });
+        return interaction.reply({ content: "You are not authorized to use this feature.", flags: MessageFlags.Ephemeral });
       }
       
       const id = interaction.options.getString("id", true);
@@ -3942,7 +4161,7 @@ client.on("interactionCreate", async (interaction) => {
       const secs = getDefaultMuteSeconds();
       // small formatter
       const human = formatSeconds(secs);
-      return interaction.reply({ content: `Default mute duration: ${secs} seconds (${human}).`, ephemeral: true });
+      return interaction.reply({ content: `Default mute duration: ${secs} seconds (${human}).`, flags: MessageFlags.Ephemeral });
     }
 
     // Moderation interactions
@@ -4189,6 +4408,32 @@ client.on("messageReactionAdd", async (reaction, user) => {
 
 client.on("messageCreate", async (message: Message) => {
   if (message.author.bot) return;
+
+  // Handle replies to the bot's messages
+  await handleReply(message);
+
+  // Debugging log for bot mention
+  console.log(`[DEBUG] Message content: ${message.content}`);
+  if (client.user && message.mentions.has(client.user)) {
+    console.log(`[DEBUG] Bot mentioned by ${message.author.username}`);
+    await message.reply(`Hello ${message.author.username}, how can I assist you today?`);
+    return;
+  }
+
+  // Respond to direct messages to the bot
+  if (message.channel.type === ChannelType.DM) {
+    console.log(`[DEBUG] Direct message received from ${message.author.username}`);
+    await message.reply('Thank you for reaching out! How can I help you?');
+    return;
+  }
+
+  // Command to toggle whitelist bypass (owner only)
+  // Temporarily disable whitelist bypass logic for testing
+  if (isOwnerId(message.author.id) && message.content.startsWith("!toggleWhitelistBypass")) {
+    console.log("[DEBUG] whitelistBypassEnabled logic temporarily disabled for testing.");
+    message.reply("Whitelist bypass logic is currently disabled for debugging purposes.");
+    return;
+  }
 
   // Anti-abuse detection
   try {
@@ -4551,8 +4796,8 @@ client.on("messageCreate", async (message: Message) => {
         }
       }
     }
-  } catch (e) {
-    console.warn('Global support intercept check failed:', (e as any)?.message ?? e);
+    } catch (e) {
+    console.warn('Global support intercept check failed:', String(e || 'Unknown error'));
   }
   if (!whitelisted && !isOwnerId(userId)) {
     if (tryingToUse) {
@@ -5223,4 +5468,94 @@ setInterval(async () => {
   }
 }, 600000); // Update every 10 minutes
 
+client.on('interactionCreate', async (interaction) => {
+  if (interaction.isChatInputCommand() && interaction.commandName === 'whitelist') {
+    const { handleWhitelist } = await import('./commands/enhancedCommands');
+    await handleWhitelist(interaction);
+  }
+});
+
 client.login(token);
+
+// Fix null checks for interaction.guild in clock-in/clock-out commands
+client.on('interactionCreate', async (interaction) => {
+  if (!interaction.isChatInputCommand()) return;
+
+  const { commandName } = interaction;
+
+  if (commandName === 'clockin') {
+    if (!interaction.guild) {
+      await interaction.reply('This command can only be used in a server.');
+      return;
+    }
+    const { clockIn } = await import('./services/shifts');
+    const result = clockIn(interaction.guild.id, interaction.user.id);
+    await interaction.reply(result.message);
+  }
+
+  if (commandName === 'clockout') {
+    if (!interaction.guild) {
+      await interaction.reply('This command can only be used in a server.');
+      return;
+    }
+    const { clockOut } = await import('./services/shifts');
+    const result = clockOut(interaction.guild.id, interaction.user.id);
+    await interaction.reply(result.message);
+  }
+});
+
+// Integrate ticket system commands
+client.on('interactionCreate', async (interaction) => {
+  if (!interaction.isChatInputCommand()) return;
+
+  const { commandName } = interaction;
+
+  if (commandName === 'ticket') {
+    const subCommand = interaction.options.getSubcommand();
+    const { createTicket, closeTicket } = await import('./services/tickets');
+
+    if (subCommand === 'create') {
+      const category = interaction.options.getString('category');
+      const channelId = interaction.channelId;
+      if (!interaction.guild) {
+        await interaction.reply('This command can only be used in a server.');
+        return;
+      }
+      if (!channelId) {
+        await interaction.reply('Unable to determine the current channel.');
+        return;
+      }
+      const ticketId = createTicket(interaction.guild.id, channelId, interaction.user.id, category || 'general');
+      await interaction.reply(`Ticket #${ticketId} created successfully.`);
+    }
+
+    if (subCommand === 'close') {
+      const channelId = interaction.channelId;
+      const success = closeTicket(channelId);
+      await interaction.reply(success ? 'Ticket closed successfully.' : 'Failed to close ticket.');
+    }
+  }
+});
+
+// Integrate reward system commands
+client.on('interactionCreate', async (interaction) => {
+  if (!interaction.isChatInputCommand()) return;
+
+  const { commandName } = interaction;
+
+  if (commandName === 'achievements') {
+    const { getUserAchievements } = await import('./services/rewards');
+    const achievements = getUserAchievements(interaction.user.id, interaction.guild?.id || null);
+    const achievementList = achievements.map(a => `${a.name}: ${a.description}`).join('\n');
+    await interaction.reply(`Your achievements:\n${achievementList}`);
+  }
+});
+
+// Global error handlers for debugging
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception thrown:', err);
+});

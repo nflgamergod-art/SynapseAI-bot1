@@ -2,6 +2,7 @@ import { Message } from "discord.js";
 import { getWeather } from "./weatherApi";
 import { findMatchingResponse, learnPattern, getRandomJoke } from "./learningService";
 import { responseTracker } from "./responseTracker";
+import { generateReply } from './openai';
 
 const GREETINGS = ["hello", "hi", "hey", "yo", "sup", "greetings"];
 const FAREWELLS = ["bye", "goodbye", "see ya", "see you", "catch you later", "take care"];
@@ -173,6 +174,26 @@ export async function localReply(message: Message, prompt?: string) {
     userId: message.author.id
   });
   return reply;
+}
+
+// Add logic to handle replies to the bot's messages
+export async function handleReply(message: Message): Promise<boolean> {
+  console.log(`[handleReply] Received message: ${message.content}`);
+  if (message.reference?.messageId) {
+    const repliedTo = await message.channel.messages.fetch(message.reference.messageId);
+    console.log(`[handleReply] Replying to message ID: ${repliedTo.id}, Author: ${repliedTo.author.username}`);
+    if (repliedTo.author.id === message.client.user?.id) {
+      try {
+        const response = await generateReply(message.content, message.guild?.id);
+        console.log(`[handleReply] Generated response: ${response}`);
+        await message.reply(response);
+        return true; // Indicate that a response was sent
+      } catch (error) {
+        console.error('[handleReply] Error generating response:', error);
+      }
+    }
+  }
+  return false; // Indicate that no response was sent
 }
 
 function capitalize(s: string) {

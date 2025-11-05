@@ -32,9 +32,11 @@ export function getWhitelist(): WhitelistEntry[] {
 
 export function isWhitelisted(id: string, type: 'user' | 'role'): boolean {
   const now = Date.now();
-  return loadWhitelist().some(entry =>
+  const result = loadWhitelist().some(entry =>
     entry.id === id && entry.type === type && (!entry.expiresAt || entry.expiresAt > now)
   );
+  console.log(`[isWhitelisted] id=${id}, type=${type}, result=${result}`);
+  return result;
 }
 
 export function addWhitelistEntry(entry: WhitelistEntry) {

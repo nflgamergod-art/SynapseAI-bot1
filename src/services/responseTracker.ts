@@ -53,6 +53,8 @@ class ResponseTracker {
 
   private loadConfig(): TrackerConfig {
     try {
+      console.log("Loading tracker config from:", this.CONFIG_FILE);
+      console.log("Current working directory:", process.cwd()); // Debugging log
       if (!fs.existsSync(this.CONFIG_FILE)) {
         const defaultConfig: TrackerConfig = {
           repeatTimeoutSeconds: this.DEFAULT_TIMEOUT

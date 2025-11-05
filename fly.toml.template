@@ -10,7 +10,7 @@ primary_region = "iad"
 [env]
   # Set your secrets instead of placing them here.
   # DISCORD_TOKEN = "REPLACE_WITH_SECRET"
-  # OWNER_ID = "1234567890"
+  # OWNER_ID = "1272923881052704820"
 
 [[services]]
   internal_port = 8080

@@ -13,8 +13,8 @@ Quick deploy (recommended)
    - If asked to set a port, you can accept the default
 
 2. Set secrets (never commit tokens)
-   flyctl secrets set DISCORD_TOKEN="your_discord_token"
-   flyctl secrets set OWNER_ID="your_user_id"
+   flyctl secrets set DISCORD_TOKEN="Discord_Token"
+   flyctl secrets set OWNER_ID="1272923881052704820"
    # Add any other environment variables you need (PREFIX, GUILD_ID, etc.)
 
 3. Deploy

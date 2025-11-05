@@ -348,6 +348,10 @@ export function getFullUserContext(userId: string, guildId: string | null): {
  */
 export async function initializeEnhancedFeatures() {
   const { initEnhancedSchema } = await import('./enhancedDB');
-  // Schema is auto-initialized when enhancedDB is imported
+  const { initShiftsSchema } = await import('./shifts');
+  
+  // Initialize database schemas
+  initShiftsSchema();
+  
   console.log('✅ Enhanced features initialized');
 }
