@@ -564,7 +564,13 @@ client.once('clientReady', async () => {
         { name: "user", description: "User who is helping", type: 6, required: true }
       ] },
       { name: "list", description: "List open tickets", type: 1 },
-      { name: "config", description: "View current ticket system configuration", type: 1 }
+      { name: "config", description: "View current ticket system configuration", type: 1 },
+      { name: "addsupportrole", description: "Add a support role", type: 1, options: [
+        { name: "role", description: "Role to add as support", type: 8, required: true }
+      ] },
+      { name: "removesupportrole", description: "Remove a support role", type: 1, options: [
+        { name: "role", description: "Role to remove from support", type: 8, required: true }
+      ] }
     ] },
     // Temporary Channels
     { name: "tempchannels", description: "🔊 Configure temporary channels", options: [
@@ -857,8 +863,14 @@ client.on("interactionCreate", async (interaction) => {
             new ButtonBuilder().setCustomId(`ticket-close:${ticketId}`).setLabel('🔒 Close Ticket').setStyle(ButtonStyle.Danger)
           );
 
+          const { getSupportRoleIds } = await import('./services/tickets');
+          const supportRoleIds = getSupportRoleIds(interaction.guild.id);
+          const supportMentions = supportRoleIds.length > 0 
+            ? supportRoleIds.map(id => `<@&${id}>`).join(' ')
+            : 'New ticket!';
+
           await (ticketChannel as any).send({ 
-            content: config.support_role_id ? `<@&${config.support_role_id}>` : 'New ticket!', 
+            content: supportMentions, 
             embeds: [ticketEmbed],
             components: [ticketActions]
           });
@@ -2299,12 +2311,19 @@ client.on("interactionCreate", async (interaction) => {
       const supportRole = interaction.options.getRole('support_role');
       const vouchChannel = interaction.options.getChannel('vouch_channel');
 
-      const { setTicketConfig } = await import('./services/tickets');
+      const { setTicketConfig, getSupportRoleIds } = await import('./services/tickets');
+      
+      // Get existing support roles or create new array with the provided role
+      let supportRoleIds: string[] = getSupportRoleIds(interaction.guild.id);
+      if (supportRole && !supportRoleIds.includes(supportRole.id)) {
+        supportRoleIds.push(supportRole.id);
+      }
+      
       setTicketConfig({
         guild_id: interaction.guild.id,
         category_id: category.id,
         log_channel_id: logChannel?.id,
-        support_role_id: supportRole?.id,
+        support_role_ids: supportRoleIds.length > 0 ? JSON.stringify(supportRoleIds) : undefined,
         vouch_channel_id: vouchChannel?.id,
         enabled: true
       });
@@ -2402,8 +2421,14 @@ client.on("interactionCreate", async (interaction) => {
         new ButtonBuilder().setCustomId(`ticket-close:${ticketId}`).setLabel('🔒 Close Ticket').setStyle(ButtonStyle.Danger)
       );
 
+      const { getSupportRoleIds } = await import('./services/tickets');
+      const supportRoleIds = getSupportRoleIds(interaction.guild.id);
+      const supportMentions = supportRoleIds.length > 0 
+        ? supportRoleIds.map(id => `<@&${id}>`).join(' ')
+        : 'New ticket!';
+
       await ticketChannel.send({ 
-        content: config.support_role_id ? `<@&${config.support_role_id}>` : 'New ticket!', 
+        content: supportMentions, 
         embeds: [ticketEmbed],
         components: [ticketActions]
       });
@@ -2669,12 +2694,17 @@ client.on("interactionCreate", async (interaction) => {
       }
       if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', flags: MessageFlags.Ephemeral });
 
-      const { getTicketConfig } = await import('./services/tickets');
+      const { getTicketConfig, getSupportRoleIds } = await import('./services/tickets');
       const config = getTicketConfig(interaction.guild.id);
 
       if (!config) {
         return interaction.reply({ content: '❌ Ticket system is not configured. Run `/ticket setup` to configure it.', ephemeral: true });
       }
+
+      const supportRoleIds = getSupportRoleIds(interaction.guild.id);
+      const supportRolesList = supportRoleIds.length > 0 
+        ? supportRoleIds.map(id => `<@&${id}>`).join(', ')
+        : 'Not set';
 
       const embed = new EmbedBuilder()
         .setTitle('🎫 Ticket System Configuration')
@@ -2691,8 +2721,8 @@ client.on("interactionCreate", async (interaction) => {
             inline: true 
           },
           { 
-            name: '👥 Support Role', 
-            value: config.support_role_id ? `<@&${config.support_role_id}>` : 'Not set', 
+            name: '👥 Support Roles', 
+            value: supportRolesList, 
             inline: true 
           },
           { 
@@ -2706,9 +2736,53 @@ client.on("interactionCreate", async (interaction) => {
             inline: true 
           }
         )
-        .setFooter({ text: 'Use /ticket setup to modify these settings' });
+        .setFooter({ text: 'Use /ticket setup to modify settings, /ticket addsupportrole or /ticket removesupportrole to manage support roles' });
 
       return interaction.reply({ embeds: [embed], ephemeral: true });
+    }
+
+    if (subCmd === "addsupportrole") {
+      if (!(await hasCommandAccess(interaction.member, 'ticket', interaction.guild?.id || null))) {
+        return interaction.reply({ content: '❌ You don\'t have permission to use this command.', flags: MessageFlags.Ephemeral });
+      }
+      if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', flags: MessageFlags.Ephemeral });
+
+      const role = interaction.options.getRole('role', true);
+      const { addSupportRole, getTicketConfig } = await import('./services/tickets');
+      
+      const config = getTicketConfig(interaction.guild.id);
+      if (!config) {
+        return interaction.reply({ content: '❌ Ticket system is not configured. Run `/ticket setup` first.', ephemeral: true });
+      }
+
+      const added = addSupportRole(interaction.guild.id, role.id);
+      if (added) {
+        return interaction.reply({ content: `✅ Added ${role} as a support role.`, ephemeral: true });
+      } else {
+        return interaction.reply({ content: `❌ ${role} is already a support role.`, ephemeral: true });
+      }
+    }
+
+    if (subCmd === "removesupportrole") {
+      if (!(await hasCommandAccess(interaction.member, 'ticket', interaction.guild?.id || null))) {
+        return interaction.reply({ content: '❌ You don\'t have permission to use this command.', flags: MessageFlags.Ephemeral });
+      }
+      if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', flags: MessageFlags.Ephemeral });
+
+      const role = interaction.options.getRole('role', true);
+      const { removeSupportRole, getTicketConfig } = await import('./services/tickets');
+      
+      const config = getTicketConfig(interaction.guild.id);
+      if (!config) {
+        return interaction.reply({ content: '❌ Ticket system is not configured. Run `/ticket setup` first.', ephemeral: true });
+      }
+
+      const removed = removeSupportRole(interaction.guild.id, role.id);
+      if (removed) {
+        return interaction.reply({ content: `✅ Removed ${role} from support roles.`, ephemeral: true });
+      } else {
+        return interaction.reply({ content: `❌ ${role} is not a support role.`, ephemeral: true });
+      }
     }
   }
 

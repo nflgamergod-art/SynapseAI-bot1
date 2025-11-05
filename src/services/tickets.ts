@@ -19,7 +19,7 @@ export interface TicketConfig {
   guild_id: string;
   category_id: string;
   log_channel_id?: string;
-  support_role_id?: string;
+  support_role_ids?: string; // JSON array of role IDs
   vouch_channel_id?: string;
   enabled: boolean;
 }
@@ -32,7 +32,7 @@ export function initTicketsSchema() {
       guild_id TEXT PRIMARY KEY,
       category_id TEXT NOT NULL,
       log_channel_id TEXT,
-      support_role_id TEXT,
+      support_role_ids TEXT,
       vouch_channel_id TEXT,
       enabled INTEGER NOT NULL DEFAULT 1
     );
@@ -62,19 +62,19 @@ export function setTicketConfig(config: TicketConfig): void {
   const db = getDB();
   
   db.prepare(`
-    INSERT INTO ticket_configs (guild_id, category_id, log_channel_id, support_role_id, vouch_channel_id, enabled)
+    INSERT INTO ticket_configs (guild_id, category_id, log_channel_id, support_role_ids, vouch_channel_id, enabled)
     VALUES (?, ?, ?, ?, ?, ?)
     ON CONFLICT(guild_id) DO UPDATE SET
       category_id = excluded.category_id,
       log_channel_id = excluded.log_channel_id,
-      support_role_id = excluded.support_role_id,
+      support_role_ids = excluded.support_role_ids,
       vouch_channel_id = excluded.vouch_channel_id,
       enabled = excluded.enabled
   `).run(
     config.guild_id,
     config.category_id,
     config.log_channel_id || null,
-    config.support_role_id || null,
+    config.support_role_ids || null,
     config.vouch_channel_id || null,
     config.enabled ? 1 : 0
   );
@@ -84,7 +84,7 @@ export function setTicketConfig(config: TicketConfig): void {
 export function getTicketConfig(guildId: string): TicketConfig | null {
   const db = getDB();
   const row = db.prepare(`
-    SELECT guild_id, category_id, log_channel_id, support_role_id, vouch_channel_id, enabled
+    SELECT guild_id, category_id, log_channel_id, support_role_ids, vouch_channel_id, enabled
     FROM ticket_configs
     WHERE guild_id = ?
   `).get(guildId) as any;
@@ -95,7 +95,7 @@ export function getTicketConfig(guildId: string): TicketConfig | null {
     guild_id: row.guild_id,
     category_id: row.category_id,
     log_channel_id: row.log_channel_id,
-    support_role_id: row.support_role_id,
+    support_role_ids: row.support_role_ids,
     vouch_channel_id: row.vouch_channel_id,
     enabled: row.enabled === 1
   };
@@ -305,6 +305,48 @@ export function getUserTickets(guildId: string, userId: string): Ticket[] {
     support_interaction_id: row.support_interaction_id,
     helpers: row.helpers
   }));
+}
+
+// Get support role IDs as array
+export function getSupportRoleIds(guildId: string): string[] {
+  const config = getTicketConfig(guildId);
+  if (!config || !config.support_role_ids) return [];
+  
+  try {
+    return JSON.parse(config.support_role_ids);
+  } catch {
+    return [];
+  }
+}
+
+// Set support role IDs from array
+export function setSupportRoleIds(guildId: string, roleIds: string[]): void {
+  const config = getTicketConfig(guildId);
+  if (!config) return;
+  
+  config.support_role_ids = JSON.stringify(roleIds);
+  setTicketConfig(config);
+}
+
+// Add support role ID
+export function addSupportRole(guildId: string, roleId: string): boolean {
+  const roleIds = getSupportRoleIds(guildId);
+  if (roleIds.includes(roleId)) return false; // Already exists
+  
+  roleIds.push(roleId);
+  setSupportRoleIds(guildId, roleIds);
+  return true;
+}
+
+// Remove support role ID
+export function removeSupportRole(guildId: string, roleId: string): boolean {
+  const roleIds = getSupportRoleIds(guildId);
+  const index = roleIds.indexOf(roleId);
+  if (index === -1) return false; // Not found
+  
+  roleIds.splice(index, 1);
+  setSupportRoleIds(guildId, roleIds);
+  return true;
 }
 
 // Initialize schema on import
