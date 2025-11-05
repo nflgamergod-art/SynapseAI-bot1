@@ -314,6 +314,10 @@ client.once('clientReady', async () => {
       { name: "enabled", description: "true or false", type: 5, required: true }
     ] },
     { name: "getmention", description: "Owner: show mention preference status for owners" },
+    // Appeals (user + staff)
+    { name: "appealhistory", description: "View appeal history (users: own; staff: optional target user)", options: [
+      { name: "user", description: "User to view (staff only)", type: 6, required: false }
+    ] },
     // Owner-only access management (consolidated)
     { name: "manage", description: "Owner: Manage whitelist, blacklist, and bypass entries", options: [
       { name: "type", description: "whitelist | blacklist | bypass", type: 3, required: true },
@@ -666,6 +670,8 @@ client.once('clientReady', async () => {
   // Define a minimal set of global commands that should be available in DMs (outside guild scope)
   // Keep this list small to speed up global propagation and avoid clutter.
   const globalCommandNames = new Set<string>(['appeal', 'perks']);
+  // Include appealhistory globally for DMs for self-view only
+  globalCommandNames.add('appealhistory');
   const globalCommands = finalCommands.filter((c: any) => globalCommandNames.has(c.name));
 
   (async () => {
@@ -2025,11 +2031,11 @@ client.on("interactionCreate", async (interaction) => {
   }
 
   if (name === "appeal") {
-    // Skip whitelist check for appeal command
+    // Skip whitelist check for appeal command (rate limited)
     const type = interaction.options.getString('type', true) as any;
     const reason = interaction.options.getString('reason', true);
 
-    const { createAppeal } = await import('./services/appeals');
+    const { createAppeal, canSubmitAppeal } = await import('./services/appeals');
     const guildId = interaction.guild?.id || process.env.GUILD_ID;
     if (!guildId) {
       if (interaction.replied || interaction.deferred) {
@@ -2037,6 +2043,14 @@ client.on("interactionCreate", async (interaction) => {
         return;
       }
       return await safeReply(interaction, '❌ Could not determine server. Please use this command in the server or ensure the bot is configured.', { flags: MessageFlags.Ephemeral });
+    }
+
+    // Rate limit: 1 submission per 12 hours per type
+    const windowSeconds = 12 * 60 * 60; // 12h
+    const rl = canSubmitAppeal(guildId, interaction.user.id, type, windowSeconds);
+    if (!rl.allowed) {
+      const hrs = Math.max(1, Math.ceil((rl.retryAfterSeconds || 0) / 3600));
+      return await safeReply(interaction, { content: `⏳ You recently submitted a ${type} appeal. Please wait about ${hrs} hour(s) before submitting another.`, flags: MessageFlags.Ephemeral });
     }
 
     try {
@@ -2198,6 +2212,54 @@ client.on("interactionCreate", async (interaction) => {
         return interaction.reply({ content: `❌ Appeal #${appealId} not found or already reviewed.`, ephemeral: true });
       }
     }
+  }
+
+  // Appeal history: users can view their own; staff can view anyone
+  if (name === "appealhistory") {
+    const { getUserAppeals } = await import('./services/appeals');
+    const targetUser = interaction.options.getUser('user');
+    const isDm = !interaction.guild;
+    const guildId = interaction.guild?.id || process.env.GUILD_ID || '';
+    if (!guildId) {
+      return await safeReply(interaction, { content: '❌ Could not determine server to look up appeals.', flags: MessageFlags.Ephemeral });
+    }
+
+    // Permission: in DMs or non-staff → restrict to self
+    let userIdToView = interaction.user.id;
+    if (targetUser) {
+      const isStaff = await hasCommandAccess(interaction.member, 'appeals', interaction.guild?.id || null);
+      if (!isStaff) {
+        return await safeReply(interaction, { content: '❌ You can only view your own appeal history.', flags: MessageFlags.Ephemeral });
+      }
+      userIdToView = targetUser.id;
+    }
+
+    const appeals = getUserAppeals(guildId, userIdToView);
+    if (!appeals.length) {
+      return await safeReply(interaction, { content: `No appeals found for <@${userIdToView}>.`, flags: MessageFlags.Ephemeral });
+    }
+
+    const page = 1; // simple single page for now
+    const max = Math.min(10, appeals.length);
+    const slice = appeals.slice(0, max);
+    const embed = new EmbedBuilder()
+      .setTitle(`📜 Appeal History — ${userIdToView === interaction.user.id ? 'You' : `<@${userIdToView}>`}`)
+      .setColor(0x3366FF)
+      .setFooter({ text: `Showing ${slice.length}/${appeals.length}` })
+      .setTimestamp(new Date());
+
+    for (const a of slice) {
+      const status = a.status.toUpperCase();
+      const when = new Date(a.created_at).toLocaleString();
+      const reviewed = a.reviewed_at ? new Date(a.reviewed_at).toLocaleString() : '—';
+      embed.addFields({
+        name: `#${a.id} • ${a.appeal_type} • ${status}`,
+        value: `Reason: ${a.reason}\nSubmitted: ${when}\nReviewed: ${reviewed}`,
+        inline: false
+      });
+    }
+
+    return await safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
   }
 
   // Reminders System

@@ -136,6 +136,42 @@ export function getUserAppeals(guildId: string, userId: string): Appeal[] {
   }));
 }
 
+// Get the most recent appeal of a given type for a user
+export function getLatestAppealOfType(guildId: string, userId: string, appealType: Appeal['appeal_type']): Appeal | null {
+  const db = getDB();
+  const row = db.prepare(`
+    SELECT id, guild_id, user_id, appeal_type, reason, status, reviewed_by, review_note, created_at, reviewed_at
+    FROM appeals
+    WHERE guild_id = ? AND user_id = ? AND appeal_type = ?
+    ORDER BY datetime(created_at) DESC
+    LIMIT 1
+  `).get(guildId, userId, appealType) as any;
+  if (!row) return null;
+  return {
+    id: row.id,
+    guild_id: row.guild_id,
+    user_id: row.user_id,
+    appeal_type: row.appeal_type,
+    reason: row.reason,
+    status: row.status,
+    reviewed_by: row.reviewed_by,
+    review_note: row.review_note,
+    created_at: row.created_at,
+    reviewed_at: row.reviewed_at
+  };
+}
+
+// Can the user submit an appeal of this type now? Enforce cooldownSeconds window between submissions
+export function canSubmitAppeal(guildId: string, userId: string, appealType: Appeal['appeal_type'], cooldownSeconds: number): { allowed: boolean; retryAfterSeconds?: number } {
+  const last = getLatestAppealOfType(guildId, userId, appealType);
+  if (!last) return { allowed: true };
+  const lastTime = Date.parse(last.created_at);
+  if (!Number.isFinite(lastTime)) return { allowed: true };
+  const elapsed = Math.floor((Date.now() - lastTime) / 1000);
+  if (elapsed >= cooldownSeconds) return { allowed: true };
+  return { allowed: false, retryAfterSeconds: cooldownSeconds - elapsed };
+}
+
 // Review an appeal
 export function reviewAppeal(
   appealId: number,
