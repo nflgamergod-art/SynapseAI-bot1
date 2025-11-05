@@ -4409,8 +4409,11 @@ client.on("messageReactionAdd", async (reaction, user) => {
 client.on("messageCreate", async (message: Message) => {
   if (message.author.bot) return;
 
-  // Handle replies to the bot's messages
-  await handleReply(message);
+  // Handle replies to the bot's messages - if it responds, don't process further
+  const handledByReplySystem = await handleReply(message);
+  if (handledByReplySystem) {
+    return; // Stop processing if the reply system handled it
+  }
 
   // Debugging log for bot mention
   console.log(`[DEBUG] Message content: ${message.content}`);
