@@ -5093,11 +5093,35 @@ client.on("messageCreate", async (message: Message) => {
     if (command === 'purge') {
       if (!isAdminOrBypassForMessage(message.member) && !isOwnerId(message.author.id)) return message.reply('You are not authorized to use this feature.');
       const count = Number(args[0]) || 0;
-      if (count < 1 || count > 100) return message.reply('Count must be between 1 and 100.');
+      if (count < 1 || count > 1000) return message.reply('Count must be between 1 and 1000.');
       try {
-        // @ts-ignore
-        const deleted = await (message.channel as any).bulkDelete(count, true);
-        return message.reply(`Deleted ${deleted.size ?? deleted} messages.`);
+        // Handle large purges with batching like the slash command
+        let totalDeleted = 0;
+        let remaining = count;
+        
+        while (remaining > 0) {
+          const batchSize = Math.min(remaining, 100);
+          try {
+            // @ts-ignore
+            const deleted = await (message.channel as any).bulkDelete(batchSize, true);
+            const deletedCount = deleted.size ?? deleted;
+            totalDeleted += deletedCount;
+            remaining -= batchSize;
+            
+            if (deletedCount < batchSize) {
+              break;
+            }
+            
+            if (remaining > 0) {
+              await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+          } catch (err) {
+            console.error('Purge batch failed (prefix)', err);
+            break;
+          }
+        }
+        
+        return message.reply(`Deleted ${totalDeleted} messages.`);
       } catch (err) {
         console.error('Purge failed (prefix)', err);
         return message.reply('Failed to purge messages. Messages older than 14 days cannot be bulk-deleted.');
