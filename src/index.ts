@@ -1177,7 +1177,7 @@ client.on("interactionCreate", async (interaction) => {
               .setLabel('📝 Add Feedback')
               .setStyle(ButtonStyle.Primary),
             new ButtonBuilder()
-              .setCustomId(`ticket-skip-feedback:${ticket.id}:${rating}:${Buffer.from(transcript).toString('base64')}`)
+              .setCustomId(`ticket-skip:${ticket.id}:${rating}`)
               .setLabel('⏭️ Skip')
               .setStyle(ButtonStyle.Secondary)
           );
@@ -1225,11 +1225,10 @@ client.on("interactionCreate", async (interaction) => {
       }
 
       // Skip feedback button
-      if (btn.startsWith('ticket-skip-feedback:')) {
-        const [, ticketIdStr, ratingStr, transcriptBase64] = btn.split(':');
+      if (btn.startsWith('ticket-skip:')) {
+        const [, ticketIdStr, ratingStr] = btn.split(':');
         const ticketId = parseInt(ticketIdStr);
         const rating = parseInt(ratingStr);
-        const transcript = Buffer.from(transcriptBase64, 'base64').toString();
 
         const { getTicketById } = await import('./services/tickets');
         const ticket = getTicketById(ticketId);
@@ -1241,6 +1240,16 @@ client.on("interactionCreate", async (interaction) => {
         // Only ticket owner can skip feedback
         if (ticket.user_id !== interaction.user.id) {
           return interaction.reply({ content: '❌ Only the ticket owner can close this ticket.', ephemeral: true });
+        }
+
+        // Generate transcript when skipping
+        const channel = await interaction.guild?.channels.fetch(ticket.channel_id);
+        let transcript = '';
+        if (channel && 'messages' in channel) {
+          const messages = await (channel as any).messages.fetch({ limit: 100 });
+          transcript = messages.reverse().map((m: any) => 
+            `[${m.createdAt.toLocaleString()}] ${m.author.tag}: ${m.content}`
+          ).join('\n');
         }
 
         // Close ticket without feedback
@@ -2595,27 +2604,18 @@ client.on("interactionCreate", async (interaction) => {
     }
 
     if (subCmd === "close") {
-      console.log('[DEBUG] /ticket close command triggered');
-      
       if (!interaction.channel || !('guild' in interaction.channel)) {
-        console.log('[DEBUG] Not in a guild channel');
         return interaction.reply({ content: 'This command must be used in a ticket channel.', ephemeral: true });
       }
 
-      console.log('[DEBUG] Channel ID:', interaction.channel.id);
-      
       const { getTicket, getTicketConfig } = await import('./services/tickets');
       const ticket = getTicket(interaction.channel.id);
 
-      console.log('[DEBUG] Ticket found:', ticket ? `ID ${ticket.id}, Status: ${ticket.status}` : 'null');
-
       if (!ticket) {
-        console.log('[DEBUG] No ticket found for this channel');
         return interaction.reply({ content: '❌ This is not a ticket channel.', ephemeral: true });
       }
 
       if (ticket.status === 'closed') {
-        console.log('[DEBUG] Ticket already closed');
         return interaction.reply({ content: '❌ This ticket is already closed.', ephemeral: true });
       }
 
@@ -2624,14 +2624,9 @@ client.on("interactionCreate", async (interaction) => {
       const isClaimer = ticket.claimed_by === interaction.user.id;
       const hasManageChannels = (interaction.member as any)?.permissions?.has('ManageChannels');
       
-      console.log('[DEBUG] Permissions - isOwner:', isOwner, 'isClaimer:', isClaimer, 'hasManageChannels:', hasManageChannels);
-      
       if (!isOwner && !isClaimer && !hasManageChannels) {
-        console.log('[DEBUG] User lacks permission to close ticket');
         return interaction.reply({ content: '❌ Only the ticket owner, assigned staff, or administrators can close this ticket.', ephemeral: true });
       }
-
-      console.log('[DEBUG] Showing rating prompt for ticket', ticket.id);
 
       // Always ask ticket OWNER to rate before closing (regardless of who initiated the close)
       const ratingEmbed = new EmbedBuilder()
