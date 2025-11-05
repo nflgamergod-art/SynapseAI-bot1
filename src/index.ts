@@ -850,8 +850,17 @@ client.on("interactionCreate", async (interaction) => {
             .setTitle(`🎫 Ticket #${ticketId}`)
             .setColor(0x00AE86)
             .setDescription(`Thanks for opening a ticket. Please describe your issue and any details that can help us assist you.`)
-            .setFooter({ text: 'Use /ticket close to close this ticket' });
-          await (ticketChannel as any).send({ content: config.support_role_id ? `<@&${config.support_role_id}>` : 'New ticket!', embeds: [ticketEmbed] });
+            .setFooter({ text: 'Use the button below or /ticket close to close this ticket' });
+
+          const ticketActions = new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder().setCustomId(`ticket-close:${ticketId}`).setLabel('🔒 Close Ticket').setStyle(ButtonStyle.Danger)
+          );
+
+          await (ticketChannel as any).send({ 
+            content: config.support_role_id ? `<@&${config.support_role_id}>` : 'New ticket!', 
+            embeds: [ticketEmbed],
+            components: [ticketActions]
+          });
           return interaction.reply({ content: `✅ Ticket created: <#${(ticketChannel as any).id}>`, ephemeral: true });
         } catch (e) {
           return interaction.reply({ content: '❌ Failed to create ticket. Please try again or contact staff.', ephemeral: true });
@@ -873,6 +882,84 @@ client.on("interactionCreate", async (interaction) => {
         } catch (e) {
           console.error('Failed to refresh shift panel:', e);
           return interaction.reply({ content: '❌ Failed to refresh panel.', ephemeral: true });
+        }
+      }
+
+      // Ticket close button
+      if (btn.startsWith('ticket-close:')) {
+        try {
+          const [, ticketIdStr] = btn.split(':');
+          const ticketId = parseInt(ticketIdStr);
+
+          if (!interaction.guild || !interaction.channel) {
+            return interaction.reply({ content: '❌ Invalid context.', ephemeral: true });
+          }
+
+          const { getTicketById, closeTicket } = await import('./services/tickets');
+          const ticket = getTicketById(ticketId);
+
+          if (!ticket) {
+            return interaction.reply({ content: '❌ Ticket not found.', ephemeral: true });
+          }
+
+          if (ticket.status === 'closed') {
+            return interaction.reply({ content: '❌ This ticket is already closed.', ephemeral: true });
+          }
+
+          // Check permissions - only ticket owner, claimer, or admins can close
+          const isOwner = ticket.user_id === interaction.user.id;
+          const isClaimer = ticket.claimed_by === interaction.user.id;
+          const hasManageChannels = (interaction.member as any)?.permissions?.has('ManageChannels');
+          
+          if (!isOwner && !isClaimer && !hasManageChannels) {
+            return interaction.reply({ content: '❌ Only the ticket owner, assigned staff, or administrators can close this ticket.', ephemeral: true });
+          }
+
+          // If ticket has support interaction, ask user to rate before closing
+          if (ticket.support_interaction_id && isOwner) {
+            const ratingEmbed = new EmbedBuilder()
+              .setTitle('📊 Rate Your Support Experience')
+              .setDescription(`<@${ticket.user_id}>, please rate the support you received before we close this ticket.`)
+              .setColor(0x5865F2)
+              .addFields(
+                { name: 'How would you rate your experience?', value: 'Click a star rating below (1-5 stars)' }
+              );
+
+            const ratingRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+              new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:1`).setLabel('⭐').setStyle(ButtonStyle.Secondary),
+              new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:2`).setLabel('⭐⭐').setStyle(ButtonStyle.Secondary),
+              new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:3`).setLabel('⭐⭐⭐').setStyle(ButtonStyle.Secondary),
+              new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:4`).setLabel('⭐⭐⭐⭐').setStyle(ButtonStyle.Primary),
+              new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:5`).setLabel('⭐⭐⭐⭐⭐').setStyle(ButtonStyle.Success)
+            );
+
+            return interaction.reply({ embeds: [ratingEmbed], components: [ratingRow] });
+          }
+
+          // Close ticket directly (staff closing or no support interaction)
+          const messages = await interaction.channel.messages.fetch({ limit: 100 });
+          const transcript = messages.reverse().map((m: any) => 
+            `[${m.createdAt.toLocaleString()}] ${m.author.tag}: ${m.content}`
+          ).join('\n');
+
+          closeTicket(ticket.channel_id, transcript);
+
+          const closeEmbed = new EmbedBuilder()
+            .setTitle('🎫 Ticket Closed')
+            .setColor(0xFF0000)
+            .setDescription(`This ticket has been closed by <@${interaction.user.id}>.\nChannel will be deleted in 10 seconds.`);
+
+          await interaction.reply({ embeds: [closeEmbed] });
+
+          setTimeout(async () => {
+            try {
+              await (interaction.channel as any).delete();
+            } catch {}
+          }, 10000);
+
+        } catch (e) {
+          console.error('Failed to close ticket:', e);
+          return interaction.reply({ content: '❌ Failed to close ticket. Please try again.', ephemeral: true });
         }
       }
 
@@ -2303,9 +2390,17 @@ client.on("interactionCreate", async (interaction) => {
         .setTitle(`🎫 Ticket #${ticketId}`)
         .setColor(0x00AE86)
         .setDescription(`**Category:** ${category}\n**Description:** ${description}\n\nSupport will be with you shortly!`)
-        .setFooter({ text: 'Use /ticket close to close this ticket' });
+        .setFooter({ text: 'Use the button below or /ticket close to close this ticket' });
 
-      await ticketChannel.send({ content: config.support_role_id ? `<@&${config.support_role_id}>` : 'New ticket!', embeds: [ticketEmbed] });
+      const ticketActions = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId(`ticket-close:${ticketId}`).setLabel('🔒 Close Ticket').setStyle(ButtonStyle.Danger)
+      );
+
+      await ticketChannel.send({ 
+        content: config.support_role_id ? `<@&${config.support_role_id}>` : 'New ticket!', 
+        embeds: [ticketEmbed],
+        components: [ticketActions]
+      });
 
       return await safeReply(interaction, `✅ Ticket created: ${ticketChannel}`, { flags: MessageFlags.Ephemeral });
     }
