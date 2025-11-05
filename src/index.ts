@@ -2145,6 +2145,53 @@ client.on("interactionCreate", async (interaction) => {
             const noteMsg = note ? `\n\n**Note:** ${note}` : '';
             await user.send(`${statusMsg} (Appeal #${appealId})${autoMsg}${noteMsg}`);
           } catch {}
+
+          // Audit log to moderation channel and staff summary in the current channel (on approval only)
+          if (subCmd === 'approve') {
+            try {
+              const actionText = appeal.appeal_type === 'ban'
+                ? 'Unbanned'
+                : appeal.appeal_type === 'mute'
+                  ? 'Unmuted'
+                  : 'Removed from Blacklist';
+
+              const summaryEmbed = new EmbedBuilder()
+                .setTitle('✅ Appeal Approved')
+                .setColor(0x00AE86)
+                .addFields(
+                  { name: 'Appeal ID', value: `#${appealId}`, inline: true },
+                  { name: 'User', value: `<@${appeal.user_id}> (${appeal.user_id})`, inline: true },
+                  { name: 'Type', value: appeal.appeal_type, inline: true },
+                  { name: 'Action Taken', value: actionText, inline: true },
+                  { name: 'Reviewed By', value: `<@${interaction.user.id}>`, inline: true },
+                  { name: 'Reason', value: appeal.reason || 'None', inline: false },
+                  { name: 'Note', value: note || 'None', inline: false }
+                )
+                .setTimestamp(new Date());
+
+              // Send to moderation log channel if configured
+              try {
+                const guild = interaction.guild ?? (await client.guilds.fetch(appeal.guild_id).catch(() => null));
+                if (guild) {
+                  await sendToModLog(guild as any, summaryEmbed, `Appeal #${appealId} approved`);
+                }
+              } catch (e) {
+                console.warn('[Appeals] Failed to send mod-log embed:', (e as any)?.message ?? e);
+              }
+
+              // Also post a summary embed in the current channel if text-based (for staff visibility)
+              try {
+                const ch: any = interaction.channel;
+                if (ch && ch.isTextBased && ch.isTextBased()) {
+                  await ch.send({ embeds: [summaryEmbed] });
+                }
+              } catch (e) {
+                console.warn('[Appeals] Failed to send staff summary embed:', (e as any)?.message ?? e);
+              }
+            } catch (e) {
+              console.warn('[Appeals] Logging summary encountered an error:', (e as any)?.message ?? e);
+            }
+          }
         }
         return interaction.reply({ content: `✅ Appeal #${appealId} ${subCmd === "approve" ? 'approved' : 'denied'}.`, ephemeral: true });
       } else {
