@@ -5990,47 +5990,6 @@ client.on('interactionCreate', async (interaction) => {
 
 client.login(token);
 
-// Fix null checks for interaction.guild in clock-in/clock-out commands
-client.on('interactionCreate', async (interaction) => {
-  if (!interaction.isChatInputCommand()) return;
-
-  const { commandName } = interaction;
-
-  if (commandName === 'clockin') {
-    if (!interaction.guild) {
-      await interaction.reply('This command can only be used in a server.');
-      return;
-    }
-    const { clockIn } = await import('./services/shifts');
-    const result = clockIn(interaction.guild.id, interaction.user.id);
-    await interaction.reply(result.message);
-  }
-
-  if (commandName === 'clockout') {
-    if (!interaction.guild) {
-      await interaction.reply('This command can only be used in a server.');
-      return;
-    }
-    const { clockOut } = await import('./services/shifts');
-    const result = clockOut(interaction.guild.id, interaction.user.id);
-    await interaction.reply(result.message);
-  }
-});
-
-// Integrate reward system commands
-client.on('interactionCreate', async (interaction) => {
-  if (!interaction.isChatInputCommand()) return;
-
-  const { commandName } = interaction;
-
-  if (commandName === 'achievements') {
-    const { getUserAchievements } = await import('./services/rewards');
-    const achievements = getUserAchievements(interaction.user.id, interaction.guild?.id || null);
-    const achievementList = achievements.map(a => `${a.name}: ${a.description}`).join('\n');
-    await interaction.reply(`Your achievements:\n${achievementList}`);
-  }
-});
-
 // Global error handlers for debugging
 process.on('unhandledRejection', (reason, promise) => {
   console.error('Unhandled Rejection at:', promise, 'reason:', reason);
