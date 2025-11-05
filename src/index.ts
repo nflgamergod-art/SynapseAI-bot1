@@ -5,7 +5,7 @@ import * as dotenv from "dotenv";
 import * as path from "path";
 // Ensure .env loads reliably in production: dist/ -> project root
 dotenv.config({ path: path.join(__dirname, "../.env") });
-import { Client, GatewayIntentBits, Partials, Message, PermissionsBitField, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, MessageFlags, ChannelType, ColorResolvable } from "discord.js";
+import { Client, GatewayIntentBits, Partials, Message, PermissionsBitField, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, MessageFlags, ChannelType, ColorResolvable, ModalBuilder, TextInputBuilder, TextInputStyle } from "discord.js";
 import { isWakeWord, handleConversationalReply } from "./utils/responder";
 
 import { isOwnerId } from "./utils/owner";
@@ -720,6 +720,157 @@ client.once('clientReady', async () => {
   })();
 });
 
+// Handle modal submissions for feedback
+client.on('interactionCreate', async (interaction) => {
+  if (!interaction.isModalSubmit()) return;
+  
+  const customId = interaction.customId;
+  
+  if (customId.startsWith('ticket-feedback-submit:')) {
+    const [, ticketIdStr, ratingStr] = customId.split(':');
+    const ticketId = parseInt(ticketIdStr);
+    const rating = parseInt(ratingStr);
+    const feedback = interaction.fields.getTextInputValue('feedback');
+
+    const { getTicketById } = await import('./services/tickets');
+    const ticket = getTicketById(ticketId);
+
+    if (!ticket) {
+      return interaction.reply({ content: '❌ Ticket not found.', ephemeral: true });
+    }
+
+    // Only ticket owner can provide feedback
+    if (ticket.user_id !== interaction.user.id) {
+      return interaction.reply({ content: '❌ Only the ticket owner can provide feedback.', ephemeral: true });
+    }
+
+    // Generate transcript
+    const channel = await interaction.guild?.channels.fetch(ticket.channel_id);
+    let transcript = '';
+    if (channel && 'messages' in channel) {
+      const messages = await (channel as any).messages.fetch({ limit: 100 });
+      transcript = messages.reverse().map((m: any) => 
+        `[${m.createdAt.toLocaleString()}] ${m.author.tag}: ${m.content}`
+      ).join('\n');
+    }
+
+    // Close ticket with feedback
+    await closeTicketWithFeedback(interaction, ticket, rating, transcript, feedback);
+  }
+});
+
+// Helper function to close ticket with feedback
+async function closeTicketWithFeedback(interaction: any, ticket: any, rating: number, transcript: string, feedback?: string) {
+  const { closeTicket, getTicketConfig, getTicketHelpers } = await import('./services/tickets');
+  
+  // Close the ticket
+  closeTicket(ticket.channel_id, transcript);
+
+  // Update support interaction with feedback
+  if (ticket.support_interaction_id) {
+    try {
+      const { endSupportInteraction } = await import('./services/smartSupport');
+      endSupportInteraction({
+        interactionId: ticket.support_interaction_id,
+        wasResolved: rating >= 6,
+        satisfactionRating: rating,
+        feedbackText: feedback
+      });
+    } catch (e) {
+      console.error('Failed to end support interaction:', e);
+    }
+  }
+
+  // Post vouch with feedback if provided
+  const config = getTicketConfig(ticket.guild_id);
+  if (config?.vouch_channel_id) {
+    try {
+      const vouchChannel = await interaction.guild?.channels.fetch(config.vouch_channel_id) as any;
+      const helpers = getTicketHelpers(ticket.channel_id);
+      const allStaff = [...new Set([ticket.claimed_by, ...helpers].filter(Boolean))];
+
+      // Determine color and emoji based on rating
+      let color = 0xFF0000; // Red for low ratings
+      let titlePrefix = '❌ Low Rating';
+      let ratingDisplay = `${rating}/10`;
+
+      if (rating >= 8) {
+        color = 0xFFD700; // Gold for excellent (8-10)
+        titlePrefix = '⭐ Excellent Support';
+        ratingDisplay = `${rating}/10 ⭐`;
+      } else if (rating >= 6) {
+        color = 0x00AE86; // Green for good (6-7)
+        titlePrefix = '✅ Good Support';
+        ratingDisplay = `${rating}/10`;
+      } else if (rating >= 4) {
+        color = 0xFFA500; // Orange for average (4-5)
+        titlePrefix = '⚠️ Average Support';
+        ratingDisplay = `${rating}/10`;
+      }
+
+      const vouchEmbed = new EmbedBuilder()
+        .setTitle(`${titlePrefix} - Ticket Review`)
+        .setColor(color)
+        .setDescription(`**Rating:** ${ratingDisplay}\n**Ticket:** #${ticket.id} - ${ticket.category}`)
+        .addFields(
+          { name: 'User', value: `<@${ticket.user_id}>`, inline: true },
+          { name: 'Support Staff', value: allStaff.map(id => `<@${id}>`).join(', ') || 'Unknown', inline: true }
+        )
+        .setTimestamp();
+
+      // Add feedback if provided
+      if (feedback && feedback.trim()) {
+        vouchEmbed.addFields({ name: 'User Feedback', value: feedback.slice(0, 1024) });
+      }
+
+      await vouchChannel.send({ embeds: [vouchEmbed] });
+    } catch (e) {
+      console.error('Failed to post vouch:', e);
+    }
+  }
+
+  // Log to log channel with feedback
+  if (config?.log_channel_id) {
+    try {
+      const logChannel = await interaction.guild?.channels.fetch(config.log_channel_id) as any;
+      const logEmbed = new EmbedBuilder()
+        .setTitle('🎫 Ticket Closed')
+        .setColor(0x5865F2)
+        .setDescription(`**Rating:** ${rating}/10`)
+        .addFields(
+          { name: 'Ticket', value: `#${ticket.id} - ${ticket.category}`, inline: true },
+          { name: 'User', value: `<@${ticket.user_id}>`, inline: true },
+          { name: 'Closed By', value: `<@${interaction.user.id}>`, inline: true }
+        );
+
+      if (feedback && feedback.trim()) {
+        logEmbed.addFields({ name: 'User Feedback', value: feedback.slice(0, 1024) });
+      }
+
+      await logChannel.send({ embeds: [logEmbed], files: transcript ? [{ attachment: Buffer.from(transcript), name: `ticket-${ticket.id}-transcript.txt` }] : [] });
+    } catch (e) {
+      console.error('Failed to log ticket:', e);
+    }
+  }
+
+  // Reply and close
+  const replyMessage = feedback 
+    ? `✅ Thank you for your ${rating}/10 rating and feedback! This ticket will close in 5 seconds.`
+    : `✅ Thank you for your ${rating}/10 rating! This ticket will close in 5 seconds.`;
+
+  await interaction.reply({ content: replyMessage, ephemeral: true });
+
+  // Delete channel after delay
+  setTimeout(async () => {
+    try {
+      const channel = await interaction.guild?.channels.fetch(ticket.channel_id);
+      if (channel) await (channel as any).delete();
+    } catch (e) {
+      console.error('Failed to delete channel:', e);
+    }
+  }, 5000);
+}
+
 client.on("interactionCreate", async (interaction) => {
   try {
     // Handle color-picker select menu interaction
@@ -1009,141 +1160,91 @@ client.on("interactionCreate", async (interaction) => {
           ).join('\n');
         }
 
-        // Show feedback prompt and set up collection
+        // Show feedback options after rating
         const feedbackEmbed = new EmbedBuilder()
           .setTitle(`Thank you for rating ${rating}/10! 📊`)
-          .setDescription(`**Optional:** You can now send a message with feedback about your support experience.\n\n*You have 30 seconds to add feedback, or this ticket will close automatically.*`)
+          .setDescription(`Would you like to add feedback about your support experience?`)
           .setColor(rating >= 6 ? 0x00AE86 : rating >= 4 ? 0xFFA500 : 0xFF0000)
-          .addFields({ name: 'Next Steps', value: '• Send a message with your feedback (optional)\n• Wait 30 seconds to close without feedback' });
+          .addFields({ 
+            name: 'Your Options', 
+            value: '• **Add Feedback** - Share what went well or could improve\n• **Skip** - Close the ticket without additional feedback' 
+          });
 
-        await interaction.update({ embeds: [feedbackEmbed], components: [] });
+        const feedbackButtons = new ActionRowBuilder<ButtonBuilder>()
+          .addComponents(
+            new ButtonBuilder()
+              .setCustomId(`ticket-feedback:${ticket.id}:${rating}`)
+              .setLabel('📝 Add Feedback')
+              .setStyle(ButtonStyle.Primary),
+            new ButtonBuilder()
+              .setCustomId(`ticket-skip-feedback:${ticket.id}:${rating}:${Buffer.from(transcript).toString('base64')}`)
+              .setLabel('⏭️ Skip')
+              .setStyle(ButtonStyle.Secondary)
+          );
 
-        // Set up feedback collection
-        const feedbackCollector = (channel as any)?.createMessageCollector({
-          filter: (m: any) => m.author.id === ticket.user_id && !m.author.bot,
-          time: 30000, // 30 seconds
-          max: 1
-        });
+        await interaction.update({ embeds: [feedbackEmbed], components: [feedbackButtons] });
 
-        let feedback: string | undefined;
+        return;
+      }
 
-        feedbackCollector?.on('collect', (msg: any) => {
-          feedback = msg.content;
-          feedbackCollector.stop('feedback_received');
-        });
+      // Ticket feedback modal button
+      if (btn.startsWith('ticket-feedback:')) {
+        const [, ticketIdStr, ratingStr] = btn.split(':');
+        const ticketId = parseInt(ticketIdStr);
+        const rating = parseInt(ratingStr);
 
-        feedbackCollector?.on('end', async (collected: any, reason: string) => {
-          // Close the ticket with or without feedback
-          closeTicket(ticket.channel_id, transcript);
+        const { getTicketById } = await import('./services/tickets');
+        const ticket = getTicketById(ticketId);
 
-          // Update support interaction with feedback
-          if (ticket.support_interaction_id) {
-            try {
-              const { endSupportInteraction } = await import('./services/smartSupport');
-              endSupportInteraction({
-                interactionId: ticket.support_interaction_id,
-                wasResolved: rating >= 6,
-                satisfactionRating: rating,
-                feedbackText: feedback
-              });
-            } catch (e) {
-              console.error('Failed to end support interaction:', e);
-            }
-          }
+        if (!ticket) {
+          return interaction.reply({ content: '❌ Ticket not found.', ephemeral: true });
+        }
 
-          // Post vouch with feedback if provided
-          const config = getTicketConfig(ticket.guild_id);
-          if (config?.vouch_channel_id) {
-            try {
-              const vouchChannel = await interaction.guild?.channels.fetch(config.vouch_channel_id) as any;
-              const helpers = getTicketHelpers(ticket.channel_id);
-              const allStaff = [...new Set([ticket.claimed_by, ...helpers].filter(Boolean))];
+        // Only ticket owner can provide feedback
+        if (ticket.user_id !== interaction.user.id) {
+          return interaction.reply({ content: '❌ Only the ticket owner can provide feedback.', ephemeral: true });
+        }
 
-              // Determine color and emoji based on rating
-              let color = 0xFF0000; // Red for low ratings
-              let titlePrefix = '❌ Low Rating';
-              let ratingDisplay = `${rating}/10`;
+        // Show modal for feedback input
+        const feedbackModal = new ModalBuilder()
+          .setCustomId(`ticket-feedback-submit:${ticketId}:${rating}`)
+          .setTitle(`Feedback for Rating ${rating}/10`);
 
-              if (rating >= 8) {
-                color = 0xFFD700; // Gold for excellent (8-10)
-                titlePrefix = '⭐ Excellent Support';
-                ratingDisplay = `${rating}/10 ⭐`;
-              } else if (rating >= 6) {
-                color = 0x00AE86; // Green for good (6-7)
-                titlePrefix = '✅ Good Support';
-                ratingDisplay = `${rating}/10`;
-              } else if (rating >= 4) {
-                color = 0xFFA500; // Orange for average (4-5)
-                titlePrefix = '⚠️ Average Support';
-                ratingDisplay = `${rating}/10`;
-              }
+        const feedbackInput = new TextInputBuilder()
+          .setCustomId('feedback')
+          .setLabel('Share your feedback (what went well/could improve)')
+          .setStyle(TextInputStyle.Paragraph)
+          .setPlaceholder('Your feedback helps us improve our support quality!')
+          .setRequired(true)
+          .setMaxLength(1000);
 
-              const vouchEmbed = new EmbedBuilder()
-                .setTitle(`${titlePrefix} - Ticket Review`)
-                .setColor(color)
-                .setDescription(`**Rating:** ${ratingDisplay}\n**Ticket:** #${ticket.id} - ${ticket.category}`)
-                .addFields(
-                  { name: 'User', value: `<@${ticket.user_id}>`, inline: true },
-                  { name: 'Support Staff', value: allStaff.map(id => `<@${id}>`).join(', ') || 'Unknown', inline: true }
-                )
-                .setTimestamp();
+        const firstActionRow = new ActionRowBuilder<any>().addComponents(feedbackInput);
+        feedbackModal.addComponents(firstActionRow);
 
-              // Add feedback if provided
-              if (feedback && feedback.trim()) {
-                vouchEmbed.addFields({ name: 'User Feedback', value: feedback.slice(0, 1024) });
-              }
+        return interaction.showModal(feedbackModal);
+      }
 
-              await vouchChannel.send({ embeds: [vouchEmbed] });
-            } catch (e) {
-              console.error('Failed to post vouch:', e);
-            }
-          }
+      // Skip feedback button
+      if (btn.startsWith('ticket-skip-feedback:')) {
+        const [, ticketIdStr, ratingStr, transcriptBase64] = btn.split(':');
+        const ticketId = parseInt(ticketIdStr);
+        const rating = parseInt(ratingStr);
+        const transcript = Buffer.from(transcriptBase64, 'base64').toString();
 
-          // Log to log channel with feedback
-          if (config?.log_channel_id) {
-            try {
-              const logChannel = await interaction.guild?.channels.fetch(config.log_channel_id) as any;
-              const logEmbed = new EmbedBuilder()
-                .setTitle('🎫 Ticket Closed')
-                .setColor(0x5865F2)
-                .setDescription(`**Rating:** ${rating}/10`)
-                .addFields(
-                  { name: 'Ticket', value: `#${ticket.id} - ${ticket.category}`, inline: true },
-                  { name: 'User', value: `<@${ticket.user_id}>`, inline: true },
-                  { name: 'Rated By', value: `<@${interaction.user.id}>`, inline: true }
-                );
+        const { getTicketById } = await import('./services/tickets');
+        const ticket = getTicketById(ticketId);
 
-              if (feedback && feedback.trim()) {
-                logEmbed.addFields({ name: 'User Feedback', value: feedback.slice(0, 1024) });
-              }
+        if (!ticket) {
+          return interaction.reply({ content: '❌ Ticket not found.', ephemeral: true });
+        }
 
-              await logChannel.send({ embeds: [logEmbed], files: transcript ? [{ attachment: Buffer.from(transcript), name: `ticket-${ticket.id}-transcript.txt` }] : [] });
-            } catch (e) {
-              console.error('Failed to log ticket:', e);
-            }
-          }
+        // Only ticket owner can skip feedback
+        if (ticket.user_id !== interaction.user.id) {
+          return interaction.reply({ content: '❌ Only the ticket owner can close this ticket.', ephemeral: true });
+        }
 
-          // Final closing message
-          const finalMessage = feedback 
-            ? `✅ Thank you for your ${rating}/10 rating and feedback! This ticket will close in 5 seconds.`
-            : `✅ Thank you for your ${rating}/10 rating! This ticket will close in 5 seconds.`;
-
-          try {
-            await (channel as any)?.send(finalMessage);
-          } catch (e) {
-            console.error('Failed to send final message:', e);
-          }
-
-          // Delete channel after delay
-          setTimeout(async () => {
-            try {
-              if (channel) await (channel as any).delete();
-            } catch (e) {
-              console.error('Failed to delete channel:', e);
-            }
-          }, 5000);
-        });
-
+        // Close ticket without feedback
+        await closeTicketWithFeedback(interaction, ticket, rating, transcript, undefined);
         return;
       }
 
