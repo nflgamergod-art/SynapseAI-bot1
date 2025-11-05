@@ -550,7 +550,7 @@ client.once('clientReady', async () => {
         { name: "category", description: "Category for ticket channels", type: 7, required: true },
         { name: "log_channel", description: "Channel for ticket logs", type: 7, required: false },
         { name: "support_role", description: "Role to ping for new tickets", type: 8, required: false },
-        { name: "vouch_channel", description: "Channel to post positive ratings as vouches", type: 7, required: false }
+        { name: "vouch_channel", description: "Channel to post all ticket ratings and reviews", type: 7, required: false }
       ] },
       { name: "panel", description: "Post a ticket panel in this channel", type: 1 },
       { name: "create", description: "Create a new ticket", type: 1, options: [
@@ -915,25 +915,34 @@ client.on("interactionCreate", async (interaction) => {
             return interaction.reply({ content: '❌ Only the ticket owner, assigned staff, or administrators can close this ticket.', ephemeral: true });
           }
 
-          // If ticket has support interaction, ask user to rate before closing
-          if (ticket.support_interaction_id && isOwner) {
+          // Always ask user to rate before closing (changed to require rating for all tickets)
+          if (isOwner) {
             const ratingEmbed = new EmbedBuilder()
               .setTitle('📊 Rate Your Support Experience')
               .setDescription(`<@${ticket.user_id}>, please rate the support you received before we close this ticket.`)
               .setColor(0x5865F2)
               .addFields(
-                { name: 'How would you rate your experience?', value: 'Click a star rating below (1-5 stars)' }
+                { name: 'How would you rate your experience?', value: 'Click a rating below (1-10 scale)' }
               );
 
-            const ratingRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-              new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:1`).setLabel('⭐').setStyle(ButtonStyle.Secondary),
-              new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:2`).setLabel('⭐⭐').setStyle(ButtonStyle.Secondary),
-              new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:3`).setLabel('⭐⭐⭐').setStyle(ButtonStyle.Secondary),
-              new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:4`).setLabel('⭐⭐⭐⭐').setStyle(ButtonStyle.Primary),
-              new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:5`).setLabel('⭐⭐⭐⭐⭐').setStyle(ButtonStyle.Success)
+            // Create two rows for 1-10 rating buttons
+            const ratingRow1 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+              new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:1`).setLabel('1').setStyle(ButtonStyle.Danger),
+              new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:2`).setLabel('2').setStyle(ButtonStyle.Danger),
+              new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:3`).setLabel('3').setStyle(ButtonStyle.Secondary),
+              new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:4`).setLabel('4').setStyle(ButtonStyle.Secondary),
+              new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:5`).setLabel('5').setStyle(ButtonStyle.Secondary)
             );
 
-            return interaction.reply({ embeds: [ratingEmbed], components: [ratingRow] });
+            const ratingRow2 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+              new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:6`).setLabel('6').setStyle(ButtonStyle.Primary),
+              new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:7`).setLabel('7').setStyle(ButtonStyle.Primary),
+              new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:8`).setLabel('8').setStyle(ButtonStyle.Success),
+              new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:9`).setLabel('9').setStyle(ButtonStyle.Success),
+              new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:10`).setLabel('10').setStyle(ButtonStyle.Success)
+            );
+
+            return interaction.reply({ embeds: [ratingEmbed], components: [ratingRow1, ratingRow2] });
           }
 
           // Close ticket directly (staff closing or no support interaction)
@@ -985,13 +994,13 @@ client.on("interactionCreate", async (interaction) => {
           return interaction.reply({ content: '❌ This ticket is already closed.', ephemeral: true });
         }
 
-        // End support interaction with rating
+        // End support interaction with rating (updated for 1-10 scale)
         if (ticket.support_interaction_id) {
           try {
             const { endSupportInteraction } = await import('./services/smartSupport');
             endSupportInteraction({
               interactionId: ticket.support_interaction_id,
-              wasResolved: rating >= 3, // 3+ stars = resolved
+              wasResolved: rating >= 6, // 6+ = resolved (adjusted for 1-10 scale)
               satisfactionRating: rating,
               feedbackText: undefined
             });
@@ -1012,18 +1021,37 @@ client.on("interactionCreate", async (interaction) => {
 
         closeTicket(ticket.channel_id, transcript);
 
-        // Post vouch if 4-5 stars and vouch channel configured
+        // Post vouch for ALL ratings (changed from only 4-5 stars) to configured vouch channel
         const config = getTicketConfig(ticket.guild_id);
-        if (config?.vouch_channel_id && rating >= 4) {
+        if (config?.vouch_channel_id) {
           try {
             const vouchChannel = await interaction.guild?.channels.fetch(config.vouch_channel_id) as any;
             const helpers = getTicketHelpers(ticket.channel_id);
             const allStaff = [...new Set([ticket.claimed_by, ...helpers].filter(Boolean))];
 
+            // Determine color and emoji based on rating
+            let color = 0xFF0000; // Red for low ratings
+            let titlePrefix = '❌ Low Rating';
+            let ratingDisplay = `${rating}/10`;
+
+            if (rating >= 8) {
+              color = 0xFFD700; // Gold for excellent (8-10)
+              titlePrefix = '⭐ Excellent Support';
+              ratingDisplay = `${rating}/10 ⭐`;
+            } else if (rating >= 6) {
+              color = 0x00AE86; // Green for good (6-7)
+              titlePrefix = '✅ Good Support';
+              ratingDisplay = `${rating}/10`;
+            } else if (rating >= 4) {
+              color = 0xFFA500; // Orange for average (4-5)
+              titlePrefix = '⚠️ Average Support';
+              ratingDisplay = `${rating}/10`;
+            }
+
             const vouchEmbed = new EmbedBuilder()
-              .setTitle('⭐ Positive Support Vouch')
-              .setColor(rating === 5 ? 0xFFD700 : 0x00AE86)
-              .setDescription(`**Rating:** ${'⭐'.repeat(rating)}\n**Ticket:** #${ticket.id} - ${ticket.category}`)
+              .setTitle(`${titlePrefix} - Ticket Review`)
+              .setColor(color)
+              .setDescription(`**Rating:** ${ratingDisplay}\n**Ticket:** #${ticket.id} - ${ticket.category}`)
               .addFields(
                 { name: 'User', value: `<@${ticket.user_id}>`, inline: true },
                 { name: 'Support Staff', value: allStaff.map(id => `<@${id}>`).join(', ') || 'Unknown', inline: true }
@@ -1059,7 +1087,7 @@ client.on("interactionCreate", async (interaction) => {
         const closeEmbed = new EmbedBuilder()
           .setTitle('✅ Thank You for Your Feedback!')
           .setColor(0x00AE86)
-          .setDescription(`You rated this support ${'⭐'.repeat(rating)}\n\nThis ticket is now closed and will be deleted in 10 seconds.`);
+          .setDescription(`You rated this support **${rating}/10**\n\nThis ticket is now closed and will be deleted in 10 seconds.`);
 
         await interaction.update({ embeds: [closeEmbed], components: [] });
 
@@ -2429,48 +2457,33 @@ client.on("interactionCreate", async (interaction) => {
         return interaction.reply({ content: '❌ Only the ticket owner, assigned staff, or administrators can close this ticket.', ephemeral: true });
       }
 
-      // If ticket has support interaction, ask user to rate before closing
-      if (ticket.support_interaction_id) {
-        const ratingEmbed = new EmbedBuilder()
-          .setTitle('📊 Rate Your Support Experience')
-          .setDescription(`<@${ticket.user_id}>, please rate the support you received before we close this ticket.`)
-          .setColor(0x5865F2)
-          .addFields(
-            { name: 'How would you rate your experience?', value: 'Click a star rating below (1-5 stars)' }
-          );
-
-        const ratingRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-          new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:1`).setLabel('⭐').setStyle(ButtonStyle.Secondary),
-          new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:2`).setLabel('⭐⭐').setStyle(ButtonStyle.Secondary),
-          new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:3`).setLabel('⭐⭐⭐').setStyle(ButtonStyle.Secondary),
-          new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:4`).setLabel('⭐⭐⭐⭐').setStyle(ButtonStyle.Primary),
-          new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:5`).setLabel('⭐⭐⭐⭐⭐').setStyle(ButtonStyle.Success)
+      // Always ask user to rate before closing (changed from only when support_interaction_id exists)
+      const ratingEmbed = new EmbedBuilder()
+        .setTitle('📊 Rate Your Support Experience')
+        .setDescription(`<@${ticket.user_id}>, please rate the support you received before we close this ticket.`)
+        .setColor(0x5865F2)
+        .addFields(
+          { name: 'How would you rate your experience?', value: 'Click a rating below (1-10 scale)' }
         );
 
-        return interaction.reply({ embeds: [ratingEmbed], components: [ratingRow] });
-      }
+      // Create two rows for 1-10 rating buttons
+      const ratingRow1 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:1`).setLabel('1').setStyle(ButtonStyle.Danger),
+        new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:2`).setLabel('2').setStyle(ButtonStyle.Danger),
+        new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:3`).setLabel('3').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:4`).setLabel('4').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:5`).setLabel('5').setStyle(ButtonStyle.Secondary)
+      );
 
-      // If no support interaction, close directly (shouldn't happen with new system)
-      const { closeTicket } = await import('./services/tickets');
-      const messages = await interaction.channel.messages.fetch({ limit: 100 });
-      const transcript = messages.reverse().map(m => 
-        `[${m.createdAt.toLocaleString()}] ${m.author.tag}: ${m.content}`
-      ).join('\n');
+      const ratingRow2 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:6`).setLabel('6').setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:7`).setLabel('7').setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:8`).setLabel('8').setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:9`).setLabel('9').setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:10`).setLabel('10').setStyle(ButtonStyle.Success)
+      );
 
-      closeTicket(interaction.channel.id, transcript);
-
-      const closeEmbed = new EmbedBuilder()
-        .setTitle('🎫 Ticket Closed')
-        .setColor(0xFF0000)
-        .setDescription(`This ticket has been closed by <@${interaction.user.id}>.\nChannel will be deleted in 10 seconds.`);
-
-      await safeReply(interaction, { embeds: [closeEmbed] });
-
-      setTimeout(async () => {
-        try {
-          await (interaction.channel as any).delete();
-        } catch {}
-      }, 10000);
+      return interaction.reply({ embeds: [ratingEmbed], components: [ratingRow1, ratingRow2] });
     }
 
     if (subCmd === "claim") {
