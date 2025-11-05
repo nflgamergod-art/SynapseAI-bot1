@@ -135,9 +135,14 @@ async function generateResponse(t: string, username: string): Promise<string> {
     return DEFAULT_FALLBACK[Math.floor(Math.random() * DEFAULT_FALLBACK.length)];
   }
 
-  // Mentions of the bot wake word
+  // Mentions of the bot wake word - try to be more intelligent about responses
   if (t.includes((process.env.WAKE_WORD ?? "synapseai").toLowerCase())) {
-    return `Hey ${username}! I'm SynapseAI — your friendly server assistant. I can help with moderation, answer questions, check weather, and chat! Try \`${process.env.PREFIX ?? '!'}help\` for commands or just ask me anything.`;
+    // If it's clearly a question, try to answer it rather than giving generic greeting
+    if (t.includes("?") || /\b(what|how|why|when|where|who|can you|tell me|explain)\b/.test(t)) {
+      // Let it fall through to default fallback for questions
+    } else {
+      return `Hey ${username}! I'm SynapseAI — your friendly server assistant. I can help with moderation, answer questions, check weather, and chat! Try \`${process.env.PREFIX ?? '!'}help\` for commands or just ask me anything.`;
+    }
   }
 
   // Default

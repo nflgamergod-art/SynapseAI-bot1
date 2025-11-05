@@ -4414,10 +4414,9 @@ client.on("messageCreate", async (message: Message) => {
 
   // Debugging log for bot mention
   console.log(`[DEBUG] Message content: ${message.content}`);
+  // Removed early return for mentions to allow AI processing
   if (client.user && message.mentions.has(client.user)) {
-    console.log(`[DEBUG] Bot mentioned by ${message.author.username}`);
-    await message.reply(`Hello ${message.author.username}, how can I assist you today?`);
-    return;
+    console.log(`[DEBUG] Bot mentioned by ${message.author.username} - processing with AI`);
   }
 
   // Respond to direct messages to the bot
