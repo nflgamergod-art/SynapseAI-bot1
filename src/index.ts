@@ -5912,39 +5912,6 @@ client.on('interactionCreate', async (interaction) => {
   }
 });
 
-// Integrate ticket system commands
-client.on('interactionCreate', async (interaction) => {
-  if (!interaction.isChatInputCommand()) return;
-
-  const { commandName } = interaction;
-
-  if (commandName === 'ticket') {
-    const subCommand = interaction.options.getSubcommand();
-    const { createTicket, closeTicket } = await import('./services/tickets');
-
-    if (subCommand === 'create') {
-      const category = interaction.options.getString('category');
-      const channelId = interaction.channelId;
-      if (!interaction.guild) {
-        await interaction.reply('This command can only be used in a server.');
-        return;
-      }
-      if (!channelId) {
-        await interaction.reply('Unable to determine the current channel.');
-        return;
-      }
-      const ticketId = createTicket(interaction.guild.id, channelId, interaction.user.id, category || 'general');
-      await interaction.reply(`Ticket #${ticketId} created successfully.`);
-    }
-
-    if (subCommand === 'close') {
-      const channelId = interaction.channelId;
-      const success = closeTicket(channelId);
-      await interaction.reply(success ? 'Ticket closed successfully.' : 'Failed to close ticket.');
-    }
-  }
-});
-
 // Integrate reward system commands
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
