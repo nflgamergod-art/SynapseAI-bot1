@@ -1206,6 +1206,108 @@ client.on("interactionCreate", async (interaction) => {
       }
     }
 
+    // Consolidated Management Command
+    if (interaction.commandName === "manage") {
+      if (!isOwnerId(interaction.user.id)) {
+        return interaction.reply({ content: 'This command is owner-only.', ephemeral: true });
+      }
+
+      const type = interaction.options.getString('type'); // whitelist | blacklist | bypass
+      const action = interaction.options.getString('action'); // add | remove | list
+      const targetType = interaction.options.getString('target_type'); // user | role
+      const id = interaction.options.getString('id');
+      const duration = interaction.options.getString('duration');
+      const reason = interaction.options.getString('reason');
+
+      try {
+        if (type === 'whitelist') {
+          if (action === 'add') {
+            if (!targetType || !id) {
+              return interaction.reply({ content: 'Missing target_type or id for add action.', ephemeral: true });
+            }
+            const idRaw = id.replace(/[<@&>]/g, '');
+            let expiresAt: string | undefined = undefined;
+            if (duration) {
+              const { parseDurationToSeconds } = await import("./utils/parseDuration");
+              const seconds = parseDurationToSeconds(duration);
+              if (seconds) expiresAt = new Date(Date.now() + seconds * 1000).toISOString();
+            }
+            addWhitelistEntry({ id: idRaw, type: targetType as any, expiresAt });
+            return interaction.reply({ content: `Added ${targetType} ${idRaw} to whitelist${duration ? ` (expires in ${duration})` : ''}.`, ephemeral: true });
+          } else if (action === 'remove') {
+            if (!targetType || !id) {
+              return interaction.reply({ content: 'Missing target_type or id for remove action.', ephemeral: true });
+            }
+            const idRaw = id.replace(/[<@&>]/g, '');
+            removeWhitelistEntry(idRaw, targetType as any);
+            return interaction.reply({ content: `Removed ${targetType} ${idRaw} from whitelist.`, ephemeral: true });
+          } else if (action === 'list') {
+            const list = getWhitelist();
+            if (!list.length) return interaction.reply({ content: 'No whitelist entries configured.', ephemeral: true });
+            const out = list.map((i: any) => `${i.type}:${i.id}${i.expiresAt ? ` (expires: ${new Date(i.expiresAt).toLocaleDateString()})` : ''}`).join('\n').slice(0, 1900);
+            return interaction.reply({ content: `Whitelist entries:\n${out}`, ephemeral: true });
+          }
+        } else if (type === 'blacklist') {
+          const { addBlacklistEntry, removeBlacklistEntry, getBlacklist } = await import('./services/blacklistService');
+          if (action === 'add') {
+            if (!targetType || !id) {
+              return interaction.reply({ content: 'Missing target_type or id for add action.', ephemeral: true });
+            }
+            const idRaw = id.replace(/[<@&>]/g, '');
+            addBlacklistEntry({ id: idRaw, type: targetType as any, reason: reason || 'No reason provided', addedAt: Date.now() });
+            return interaction.reply({ content: `Added ${targetType} ${idRaw} to blacklist.`, ephemeral: true });
+          } else if (action === 'remove') {
+            if (!targetType || !id) {
+              return interaction.reply({ content: 'Missing target_type or id for remove action.', ephemeral: true });
+            }
+            const idRaw = id.replace(/[<@&>]/g, '');
+            removeBlacklistEntry(idRaw, targetType as any);
+            return interaction.reply({ content: `Removed ${targetType} ${idRaw} from blacklist.`, ephemeral: true });
+          } else if (action === 'list') {
+            const list = getBlacklist();
+            if (!list.length) return interaction.reply({ content: 'No blacklist entries configured.', ephemeral: true });
+            const out = list.map((i: any) => `${i.type}:${i.id} reason=${i.reason ?? 'none'}`).join('\n').slice(0, 1900);
+            return interaction.reply({ content: `Blacklist entries:\n${out}`, ephemeral: true });
+          }
+        } else if (type === 'bypass') {
+          const { bypass } = await import('./services/bypass');
+          if (action === 'add') {
+            if (!targetType || !id) {
+              return interaction.reply({ content: 'Missing target_type or id for add action.', ephemeral: true });
+            }
+            const idRaw = id.replace(/[<@&>]/g, '');
+            bypass.add(targetType as any, idRaw, interaction.user.id);
+            return interaction.reply({ content: `Added ${targetType} ${idRaw} to bypass list.`, ephemeral: true });
+          } else if (action === 'remove') {
+            if (!targetType || !id) {
+              return interaction.reply({ content: 'Missing target_type or id for remove action.', ephemeral: true });
+            }
+            const idRaw = id.replace(/[<@&>]/g, '');
+            const removed = bypass.remove(targetType as any, idRaw);
+            if (removed) {
+              return interaction.reply({ content: `Removed ${targetType} ${idRaw} from bypass list.`, ephemeral: true });
+            } else {
+              return interaction.reply({ content: `${targetType} ${idRaw} was not in bypass list.`, ephemeral: true });
+            }
+          } else if (action === 'list') {
+            const entries = bypass.list();
+            if (!entries.length) return interaction.reply({ content: 'No bypass entries configured.', ephemeral: true });
+            const users = entries.filter(e => e.type === 'user').map(e => e.id);
+            const roles = entries.filter(e => e.type === 'role').map(e => e.id);
+            const out = [];
+            if (users.length) out.push(`Users: ${users.join(', ')}`);
+            if (roles.length) out.push(`Roles: ${roles.join(', ')}`);
+            return interaction.reply({ content: `Bypass entries:\n${out.join('\n')}`, ephemeral: true });
+          }
+        }
+        
+        return interaction.reply({ content: 'Invalid type or action. Use: whitelist/blacklist/bypass with add/remove/list.', ephemeral: true });
+      } catch (err) {
+        console.error('Failed to execute manage command:', err);
+        return interaction.reply({ content: 'Failed to execute command.', ephemeral: true });
+      }
+    }
+
     // Command Permissions Management
     if (interaction.commandName === "cmdpermissions") {
       if (!interaction.guild) {
