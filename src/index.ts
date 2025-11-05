@@ -1366,6 +1366,10 @@ client.on("interactionCreate", async (interaction) => {
         if (isOwnerId(userId)) {
             console.log(`Owner bypassing whitelist check: userId=${userId}`); // Debug log
             whitelisted = true; // Force whitelist for owner
+        } else if (name === 'appeal') {
+            // Allow appeal command to bypass whitelist check
+            console.log(`Appeal command bypassing whitelist check: userId=${userId}`);
+            whitelisted = true;
         } else {
             if (interaction.replied || interaction.deferred) {
                 console.log('Debug: Interaction already acknowledged. Skipping response.');
