@@ -563,7 +563,8 @@ client.once('clientReady', async () => {
       { name: "addhelper", description: "Add a helper to current ticket", type: 1, options: [
         { name: "user", description: "User who is helping", type: 6, required: true }
       ] },
-      { name: "list", description: "List open tickets", type: 1 }
+      { name: "list", description: "List open tickets", type: 1 },
+      { name: "config", description: "View current ticket system configuration", type: 1 }
     ] },
     // Temporary Channels
     { name: "tempchannels", description: "🔊 Configure temporary channels", options: [
@@ -2660,6 +2661,54 @@ client.on("interactionCreate", async (interaction) => {
       }
 
       return await safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
+    }
+
+    if (subCmd === "config") {
+      if (!(await hasCommandAccess(interaction.member, 'ticket', interaction.guild?.id || null))) {
+        return interaction.reply({ content: '❌ You don\'t have permission to use this command.', flags: MessageFlags.Ephemeral });
+      }
+      if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', flags: MessageFlags.Ephemeral });
+
+      const { getTicketConfig } = await import('./services/tickets');
+      const config = getTicketConfig(interaction.guild.id);
+
+      if (!config) {
+        return interaction.reply({ content: '❌ Ticket system is not configured. Run `/ticket setup` to configure it.', ephemeral: true });
+      }
+
+      const embed = new EmbedBuilder()
+        .setTitle('🎫 Ticket System Configuration')
+        .setColor(0x5865F2)
+        .addFields(
+          { 
+            name: '📁 Ticket Category', 
+            value: `<#${config.category_id}>`, 
+            inline: true 
+          },
+          { 
+            name: '📋 Log Channel', 
+            value: config.log_channel_id ? `<#${config.log_channel_id}>` : 'Not set', 
+            inline: true 
+          },
+          { 
+            name: '👥 Support Role', 
+            value: config.support_role_id ? `<@&${config.support_role_id}>` : 'Not set', 
+            inline: true 
+          },
+          { 
+            name: '⭐ Vouch Channel', 
+            value: config.vouch_channel_id ? `<#${config.vouch_channel_id}>` : 'Not set', 
+            inline: true 
+          },
+          { 
+            name: '✅ Status', 
+            value: config.enabled ? 'Enabled' : 'Disabled', 
+            inline: true 
+          }
+        )
+        .setFooter({ text: 'Use /ticket setup to modify these settings' });
+
+      return interaction.reply({ embeds: [embed], ephemeral: true });
     }
   }
 
