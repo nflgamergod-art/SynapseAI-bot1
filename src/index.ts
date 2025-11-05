@@ -2089,12 +2089,61 @@ client.on("interactionCreate", async (interaction) => {
       if (success) {
         const appeal = getAppeal(appealId);
         if (appeal) {
+          // If approved, automatically reverse the original punishment
+          if (subCmd === 'approve') {
+            try {
+              // Ensure we operate against the correct guild
+              const guild = interaction.guild?.id === appeal.guild_id
+                ? interaction.guild
+                : await client.guilds.fetch(appeal.guild_id).catch(() => null);
+
+              if (guild) {
+                if (appeal.appeal_type === 'ban') {
+                  // Unban the user if currently banned
+                  try {
+                    await guild.bans.remove(appeal.user_id, 'Appeal approved');
+                  } catch (e) {
+                    console.warn(`[Appeals] Unban skipped or failed for ${appeal.user_id}:`, (e as any)?.message ?? e);
+                  }
+                } else if (appeal.appeal_type === 'mute') {
+                  // Remove timeout (unmute)
+                  try {
+                    const member = await guild.members.fetch(appeal.user_id).catch(() => null);
+                    if (member) {
+                      await member.timeout(null, 'Appeal approved: unmute');
+                    } else {
+                      console.warn(`[Appeals] Unmute skipped: member ${appeal.user_id} not found in guild ${guild.id}`);
+                    }
+                  } catch (e) {
+                    console.warn(`[Appeals] Unmute failed for ${appeal.user_id}:`, (e as any)?.message ?? e);
+                  }
+                } else if (appeal.appeal_type === 'blacklist') {
+                  // Remove from blacklist (both JSON and DB-backed if present)
+                  try {
+                    const { removeBlacklistEntry } = await import('./services/blacklistService');
+                    removeBlacklistEntry(appeal.user_id, 'user', appeal.guild_id);
+                  } catch (e) {
+                    console.warn(`[Appeals] Remove blacklist failed for ${appeal.user_id}:`, (e as any)?.message ?? e);
+                  }
+                }
+              } else {
+                console.warn(`[Appeals] Guild ${appeal.guild_id} not found for auto-reversal`);
+              }
+            } catch (e) {
+              console.warn('[Appeals] Auto-reversal encountered an error:', (e as any)?.message ?? e);
+            }
+          }
           // Notify user
           try {
             const user = await client.users.fetch(appeal.user_id);
             const statusMsg = subCmd === "approve" ? '✅ Your appeal has been **approved**!' : '❌ Your appeal has been **denied**.';
+            const autoMsg = subCmd === 'approve'
+              ? (appeal.appeal_type === 'ban' ? '\n\nAction: You have been unbanned.'
+                : appeal.appeal_type === 'mute' ? '\n\nAction: You have been unmuted.'
+                : '\n\nAction: You have been removed from the blacklist.')
+              : '';
             const noteMsg = note ? `\n\n**Note:** ${note}` : '';
-            await user.send(`${statusMsg} (Appeal #${appealId})${noteMsg}`);
+            await user.send(`${statusMsg} (Appeal #${appealId})${autoMsg}${noteMsg}`);
           } catch {}
         }
         return interaction.reply({ content: `✅ Appeal #${appealId} ${subCmd === "approve" ? 'approved' : 'denied'}.`, ephemeral: true });
