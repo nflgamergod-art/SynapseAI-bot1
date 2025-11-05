@@ -764,7 +764,9 @@ async function closeTicketWithFeedback(interaction: any, ticket: any, rating: nu
   const { closeTicket, getTicketConfig, getTicketHelpers } = await import('./services/tickets');
   
   // Close the ticket
-  closeTicket(ticket.channel_id, transcript);
+  console.log(`[DEBUG] Closing ticket ${ticket.id} in database`);
+  const closed = closeTicket(ticket.channel_id, transcript);
+  console.log(`[DEBUG] Ticket close result: ${closed}`);
 
   // Update support interaction with feedback
   if (ticket.support_interaction_id) {
@@ -863,8 +865,15 @@ async function closeTicketWithFeedback(interaction: any, ticket: any, rating: nu
   // Delete channel after delay
   setTimeout(async () => {
     try {
+      console.log(`[DEBUG] Attempting to delete ticket channel ${ticket.channel_id}`);
       const channel = await interaction.guild?.channels.fetch(ticket.channel_id);
-      if (channel) await (channel as any).delete();
+      if (channel) {
+        console.log(`[DEBUG] Channel found, deleting...`);
+        await (channel as any).delete();
+        console.log(`[DEBUG] Channel deleted successfully`);
+      } else {
+        console.log(`[DEBUG] Channel not found for deletion`);
+      }
     } catch (e) {
       console.error('Failed to delete channel:', e);
     }
