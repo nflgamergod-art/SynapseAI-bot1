@@ -1226,11 +1226,11 @@ client.on("interactionCreate", async (interaction) => {
               return interaction.reply({ content: 'Missing target_type or id for add action.', ephemeral: true });
             }
             const idRaw = id.replace(/[<@&>]/g, '');
-            let expiresAt: string | undefined = undefined;
+            let expiresAt: number | undefined = undefined;
             if (duration) {
               const { parseDurationToSeconds } = await import("./utils/parseDuration");
               const seconds = parseDurationToSeconds(duration);
-              if (seconds) expiresAt = new Date(Date.now() + seconds * 1000).toISOString();
+              if (seconds) expiresAt = Date.now() + seconds * 1000;
             }
             addWhitelistEntry({ id: idRaw, type: targetType as any, expiresAt });
             return interaction.reply({ content: `Added ${targetType} ${idRaw} to whitelist${duration ? ` (expires in ${duration})` : ''}.`, ephemeral: true });
