@@ -55,6 +55,41 @@ export function initTicketsSchema() {
     CREATE INDEX IF NOT EXISTS idx_tickets_user ON tickets(user_id);
     CREATE INDEX IF NOT EXISTS idx_tickets_status ON tickets(guild_id, status);
   `);
+  
+  // Migrate existing database if needed
+  migrateTicketsSchema();
+}
+
+// Migrate existing database to new schema
+function migrateTicketsSchema() {
+  const db = getDB();
+  
+  try {
+    // Check if old column exists and new column doesn't
+    const result = db.prepare("PRAGMA table_info(ticket_configs)").all() as any[];
+    const hasOldColumn = result.some(col => col.name === 'support_role_id');
+    const hasNewColumn = result.some(col => col.name === 'support_role_ids');
+    
+    if (hasOldColumn && !hasNewColumn) {
+      console.log('Migrating ticket_configs table to support multiple roles...');
+      
+      // Add the new column
+      db.exec('ALTER TABLE ticket_configs ADD COLUMN support_role_ids TEXT');
+      
+      // Migrate existing data
+      const configs = db.prepare('SELECT * FROM ticket_configs WHERE support_role_id IS NOT NULL').all() as any[];
+      
+      for (const config of configs) {
+        const roleIds = JSON.stringify([config.support_role_id]);
+        db.prepare('UPDATE ticket_configs SET support_role_ids = ? WHERE guild_id = ?')
+          .run(roleIds, config.guild_id);
+      }
+      
+      console.log(`Migrated ${configs.length} ticket configurations to new schema.`);
+    }
+  } catch (error) {
+    console.error('Migration error:', error);
+  }
 }
 
 // Set ticket config
