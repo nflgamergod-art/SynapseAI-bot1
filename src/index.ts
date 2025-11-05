@@ -915,56 +915,33 @@ client.on("interactionCreate", async (interaction) => {
             return interaction.reply({ content: '❌ Only the ticket owner, assigned staff, or administrators can close this ticket.', ephemeral: true });
           }
 
-          // Always ask user to rate before closing (changed to require rating for all tickets)
-          if (isOwner) {
-            const ratingEmbed = new EmbedBuilder()
-              .setTitle('📊 Rate Your Support Experience')
-              .setDescription(`<@${ticket.user_id}>, please rate the support you received before we close this ticket.`)
-              .setColor(0x5865F2)
-              .addFields(
-                { name: 'How would you rate your experience?', value: 'Click a rating below (1-10 scale)' }
-              );
-
-            // Create two rows for 1-10 rating buttons
-            const ratingRow1 = new ActionRowBuilder<ButtonBuilder>().addComponents(
-              new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:1`).setLabel('1').setStyle(ButtonStyle.Danger),
-              new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:2`).setLabel('2').setStyle(ButtonStyle.Danger),
-              new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:3`).setLabel('3').setStyle(ButtonStyle.Secondary),
-              new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:4`).setLabel('4').setStyle(ButtonStyle.Secondary),
-              new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:5`).setLabel('5').setStyle(ButtonStyle.Secondary)
+          // Always ask ticket OWNER to rate before closing (regardless of who initiated the close)
+          const ratingEmbed = new EmbedBuilder()
+            .setTitle('📊 Rate Your Support Experience')
+            .setDescription(`<@${ticket.user_id}>, please rate the support you received before we close this ticket.`)
+            .setColor(0x5865F2)
+            .addFields(
+              { name: 'How would you rate your experience?', value: 'Click a rating below (1-10 scale)' }
             );
 
-            const ratingRow2 = new ActionRowBuilder<ButtonBuilder>().addComponents(
-              new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:6`).setLabel('6').setStyle(ButtonStyle.Primary),
-              new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:7`).setLabel('7').setStyle(ButtonStyle.Primary),
-              new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:8`).setLabel('8').setStyle(ButtonStyle.Success),
-              new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:9`).setLabel('9').setStyle(ButtonStyle.Success),
-              new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:10`).setLabel('10').setStyle(ButtonStyle.Success)
-            );
+          // Create two rows for 1-10 rating buttons
+          const ratingRow1 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:1`).setLabel('1').setStyle(ButtonStyle.Danger),
+            new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:2`).setLabel('2').setStyle(ButtonStyle.Danger),
+            new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:3`).setLabel('3').setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:4`).setLabel('4').setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:5`).setLabel('5').setStyle(ButtonStyle.Secondary)
+          );
 
-            return interaction.reply({ embeds: [ratingEmbed], components: [ratingRow1, ratingRow2] });
-          }
+          const ratingRow2 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:6`).setLabel('6').setStyle(ButtonStyle.Primary),
+            new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:7`).setLabel('7').setStyle(ButtonStyle.Primary),
+            new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:8`).setLabel('8').setStyle(ButtonStyle.Success),
+            new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:9`).setLabel('9').setStyle(ButtonStyle.Success),
+            new ButtonBuilder().setCustomId(`ticket-rate:${ticket.id}:10`).setLabel('10').setStyle(ButtonStyle.Success)
+          );
 
-          // Close ticket directly (staff closing or no support interaction)
-          const messages = await interaction.channel.messages.fetch({ limit: 100 });
-          const transcript = messages.reverse().map((m: any) => 
-            `[${m.createdAt.toLocaleString()}] ${m.author.tag}: ${m.content}`
-          ).join('\n');
-
-          closeTicket(ticket.channel_id, transcript);
-
-          const closeEmbed = new EmbedBuilder()
-            .setTitle('🎫 Ticket Closed')
-            .setColor(0xFF0000)
-            .setDescription(`This ticket has been closed by <@${interaction.user.id}>.\nChannel will be deleted in 10 seconds.`);
-
-          await interaction.reply({ embeds: [closeEmbed] });
-
-          setTimeout(async () => {
-            try {
-              await (interaction.channel as any).delete();
-            } catch {}
-          }, 10000);
+          return interaction.reply({ embeds: [ratingEmbed], components: [ratingRow1, ratingRow2] });
 
         } catch (e) {
           console.error('Failed to close ticket:', e);
@@ -2457,7 +2434,7 @@ client.on("interactionCreate", async (interaction) => {
         return interaction.reply({ content: '❌ Only the ticket owner, assigned staff, or administrators can close this ticket.', ephemeral: true });
       }
 
-      // Always ask user to rate before closing (changed from only when support_interaction_id exists)
+      // Always ask ticket OWNER to rate before closing (regardless of who initiated the close)
       const ratingEmbed = new EmbedBuilder()
         .setTitle('📊 Rate Your Support Experience')
         .setDescription(`<@${ticket.user_id}>, please rate the support you received before we close this ticket.`)
