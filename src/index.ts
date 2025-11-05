@@ -1357,7 +1357,7 @@ client.on("interactionCreate", async (interaction) => {
       }
     }
 
-    // Whitelist check: only respond to whitelisted users/roles
+    // Whitelist check: only respond to whitelisted users/roles (with explicit DM appeal bypass)
     let whitelisted = isWhitelisted(userId, 'user');
     if (!whitelisted && member?.roles) {
       const roles = member.roles.cache ? Array.from(member.roles.cache.keys()) : (member.roles || []);
@@ -1367,6 +1367,11 @@ client.on("interactionCreate", async (interaction) => {
           break;
         }
       }
+    }
+    // Explicit DM bypass for /appeal (user should be able to file even if not whitelisted)
+    if (!whitelisted && name === 'appeal' && !interaction.guild) {
+      console.log(`DM appeal whitelist bypass for user=${userId}`);
+      whitelisted = true;
     }
     if (!whitelisted) {
         if (isOwnerId(userId)) {
@@ -1381,7 +1386,7 @@ client.on("interactionCreate", async (interaction) => {
                 console.log('Debug: Interaction already acknowledged. Skipping response.');
                 return;
             }
-            return await safeReply(interaction, { content: "My owner hasn't whitelisted you. You can either pay to use my services or buy Synapse script to use my commands and have a conversation for free.", flags: MessageFlags.Ephemeral });
+      return await safeReply(interaction, { content: "My owner hasn't whitelisted you. To request access you can purchase Synapse script or a subscription. You can still use /appeal in DMs to submit an appeal.", flags: MessageFlags.Ephemeral });
         }
     }
   // Whitelist admin commands (owner only)
