@@ -1009,83 +1009,140 @@ client.on("interactionCreate", async (interaction) => {
           ).join('\n');
         }
 
-        closeTicket(ticket.channel_id, transcript);
+        // Show feedback prompt and set up collection
+        const feedbackEmbed = new EmbedBuilder()
+          .setTitle(`Thank you for rating ${rating}/10! 📊`)
+          .setDescription(`**Optional:** You can now send a message with feedback about your support experience.\n\n*You have 30 seconds to add feedback, or this ticket will close automatically.*`)
+          .setColor(rating >= 6 ? 0x00AE86 : rating >= 4 ? 0xFFA500 : 0xFF0000)
+          .addFields({ name: 'Next Steps', value: '• Send a message with your feedback (optional)\n• Wait 30 seconds to close without feedback' });
 
-        // Post vouch for ALL ratings (changed from only 4-5 stars) to configured vouch channel
-        const config = getTicketConfig(ticket.guild_id);
-        if (config?.vouch_channel_id) {
-          try {
-            const vouchChannel = await interaction.guild?.channels.fetch(config.vouch_channel_id) as any;
-            const helpers = getTicketHelpers(ticket.channel_id);
-            const allStaff = [...new Set([ticket.claimed_by, ...helpers].filter(Boolean))];
+        await interaction.update({ embeds: [feedbackEmbed], components: [] });
 
-            // Determine color and emoji based on rating
-            let color = 0xFF0000; // Red for low ratings
-            let titlePrefix = '❌ Low Rating';
-            let ratingDisplay = `${rating}/10`;
+        // Set up feedback collection
+        const feedbackCollector = (channel as any)?.createMessageCollector({
+          filter: (m: any) => m.author.id === ticket.user_id && !m.author.bot,
+          time: 30000, // 30 seconds
+          max: 1
+        });
 
-            if (rating >= 8) {
-              color = 0xFFD700; // Gold for excellent (8-10)
-              titlePrefix = '⭐ Excellent Support';
-              ratingDisplay = `${rating}/10 ⭐`;
-            } else if (rating >= 6) {
-              color = 0x00AE86; // Green for good (6-7)
-              titlePrefix = '✅ Good Support';
-              ratingDisplay = `${rating}/10`;
-            } else if (rating >= 4) {
-              color = 0xFFA500; // Orange for average (4-5)
-              titlePrefix = '⚠️ Average Support';
-              ratingDisplay = `${rating}/10`;
+        let feedback: string | undefined;
+
+        feedbackCollector?.on('collect', (msg: any) => {
+          feedback = msg.content;
+          feedbackCollector.stop('feedback_received');
+        });
+
+        feedbackCollector?.on('end', async (collected: any, reason: string) => {
+          // Close the ticket with or without feedback
+          closeTicket(ticket.channel_id, transcript);
+
+          // Update support interaction with feedback
+          if (ticket.support_interaction_id) {
+            try {
+              const { endSupportInteraction } = await import('./services/smartSupport');
+              endSupportInteraction({
+                interactionId: ticket.support_interaction_id,
+                wasResolved: rating >= 6,
+                satisfactionRating: rating,
+                feedbackText: feedback
+              });
+            } catch (e) {
+              console.error('Failed to end support interaction:', e);
             }
-
-            const vouchEmbed = new EmbedBuilder()
-              .setTitle(`${titlePrefix} - Ticket Review`)
-              .setColor(color)
-              .setDescription(`**Rating:** ${ratingDisplay}\n**Ticket:** #${ticket.id} - ${ticket.category}`)
-              .addFields(
-                { name: 'User', value: `<@${ticket.user_id}>`, inline: true },
-                { name: 'Support Staff', value: allStaff.map(id => `<@${id}>`).join(', ') || 'Unknown', inline: true }
-              )
-              .setTimestamp();
-
-            await vouchChannel.send({ embeds: [vouchEmbed] });
-          } catch (e) {
-            console.error('Failed to post vouch:', e);
           }
-        }
 
-        // Log to log channel
-        if (config?.log_channel_id) {
-          try {
-            const logChannel = await interaction.guild?.channels.fetch(config.log_channel_id) as any;
-            const logEmbed = new EmbedBuilder()
-              .setTitle(`🎫 Ticket #${ticket.id} Closed`)
-              .setColor(0xFF0000)
-              .addFields(
-                { name: 'User', value: `<@${ticket.user_id}>`, inline: true },
-                { name: 'Claimed By', value: ticket.claimed_by ? `<@${ticket.claimed_by}>` : 'Unclaimed', inline: true },
-                { name: 'Rating', value: `${'⭐'.repeat(rating)} (${rating}/5)`, inline: true }
-              )
-              .setTimestamp();
+          // Post vouch with feedback if provided
+          const config = getTicketConfig(ticket.guild_id);
+          if (config?.vouch_channel_id) {
+            try {
+              const vouchChannel = await interaction.guild?.channels.fetch(config.vouch_channel_id) as any;
+              const helpers = getTicketHelpers(ticket.channel_id);
+              const allStaff = [...new Set([ticket.claimed_by, ...helpers].filter(Boolean))];
 
-            await logChannel.send({ embeds: [logEmbed], files: transcript ? [{ attachment: Buffer.from(transcript), name: `ticket-${ticket.id}-transcript.txt` }] : [] });
-          } catch (e) {
-            console.error('Failed to log ticket:', e);
+              // Determine color and emoji based on rating
+              let color = 0xFF0000; // Red for low ratings
+              let titlePrefix = '❌ Low Rating';
+              let ratingDisplay = `${rating}/10`;
+
+              if (rating >= 8) {
+                color = 0xFFD700; // Gold for excellent (8-10)
+                titlePrefix = '⭐ Excellent Support';
+                ratingDisplay = `${rating}/10 ⭐`;
+              } else if (rating >= 6) {
+                color = 0x00AE86; // Green for good (6-7)
+                titlePrefix = '✅ Good Support';
+                ratingDisplay = `${rating}/10`;
+              } else if (rating >= 4) {
+                color = 0xFFA500; // Orange for average (4-5)
+                titlePrefix = '⚠️ Average Support';
+                ratingDisplay = `${rating}/10`;
+              }
+
+              const vouchEmbed = new EmbedBuilder()
+                .setTitle(`${titlePrefix} - Ticket Review`)
+                .setColor(color)
+                .setDescription(`**Rating:** ${ratingDisplay}\n**Ticket:** #${ticket.id} - ${ticket.category}`)
+                .addFields(
+                  { name: 'User', value: `<@${ticket.user_id}>`, inline: true },
+                  { name: 'Support Staff', value: allStaff.map(id => `<@${id}>`).join(', ') || 'Unknown', inline: true }
+                )
+                .setTimestamp();
+
+              // Add feedback if provided
+              if (feedback && feedback.trim()) {
+                vouchEmbed.addFields({ name: 'User Feedback', value: feedback.slice(0, 1024) });
+              }
+
+              await vouchChannel.send({ embeds: [vouchEmbed] });
+            } catch (e) {
+              console.error('Failed to post vouch:', e);
+            }
           }
-        }
 
-        const closeEmbed = new EmbedBuilder()
-          .setTitle('✅ Thank You for Your Feedback!')
-          .setColor(0x00AE86)
-          .setDescription(`You rated this support **${rating}/10**\n\nThis ticket is now closed and will be deleted in 10 seconds.`);
+          // Log to log channel with feedback
+          if (config?.log_channel_id) {
+            try {
+              const logChannel = await interaction.guild?.channels.fetch(config.log_channel_id) as any;
+              const logEmbed = new EmbedBuilder()
+                .setTitle('🎫 Ticket Closed')
+                .setColor(0x5865F2)
+                .setDescription(`**Rating:** ${rating}/10`)
+                .addFields(
+                  { name: 'Ticket', value: `#${ticket.id} - ${ticket.category}`, inline: true },
+                  { name: 'User', value: `<@${ticket.user_id}>`, inline: true },
+                  { name: 'Rated By', value: `<@${interaction.user.id}>`, inline: true }
+                );
 
-        await interaction.update({ embeds: [closeEmbed], components: [] });
+              if (feedback && feedback.trim()) {
+                logEmbed.addFields({ name: 'User Feedback', value: feedback.slice(0, 1024) });
+              }
 
-        setTimeout(async () => {
+              await logChannel.send({ embeds: [logEmbed], files: transcript ? [{ attachment: Buffer.from(transcript), name: `ticket-${ticket.id}-transcript.txt` }] : [] });
+            } catch (e) {
+              console.error('Failed to log ticket:', e);
+            }
+          }
+
+          // Final closing message
+          const finalMessage = feedback 
+            ? `✅ Thank you for your ${rating}/10 rating and feedback! This ticket will close in 5 seconds.`
+            : `✅ Thank you for your ${rating}/10 rating! This ticket will close in 5 seconds.`;
+
           try {
-            if (channel) await (channel as any).delete();
-          } catch {}
-        }, 10000);
+            await (channel as any)?.send(finalMessage);
+          } catch (e) {
+            console.error('Failed to send final message:', e);
+          }
+
+          // Delete channel after delay
+          setTimeout(async () => {
+            try {
+              if (channel) await (channel as any).delete();
+            } catch (e) {
+              console.error('Failed to delete channel:', e);
+            }
+          }, 5000);
+        });
 
         return;
       }
@@ -2481,7 +2538,7 @@ client.on("interactionCreate", async (interaction) => {
         .setDescription(`<@${ticket.user_id}>, please rate the support you received before we close this ticket.`)
         .setColor(0x5865F2)
         .addFields(
-          { name: 'How would you rate your experience?', value: 'Click a rating below (1-10 scale)' }
+          { name: 'How would you rate your experience?', value: 'Click a rating below (1-10 scale)\n*After rating, you can send a message with feedback if you\'d like!*' }
         );
 
       // Create two rows for 1-10 rating buttons
