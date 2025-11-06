@@ -61,7 +61,88 @@ export async function handleEnhancedCommands(interaction: ChatInputCommandIntera
             }
 
             case 'kb': {
-                await safeReply(interaction, '📚 Knowledge base command is under development. Stay tuned for updates!', { flags: 64 } as any);
+                const subCommand = interaction.options.getSubcommand();
+                const { searchKnowledge, buildFAQ, getKnowledgeStats } = await import('../services/preventiveSupport');
+                const guildId = interaction.guild?.id || null;
+                
+                if (subCommand === 'search') {
+                    const query = interaction.options.getString('query', true);
+                    const results = searchKnowledge(guildId, query, 5);
+                    
+                    if (results.length === 0) {
+                        await safeReply(interaction, '🔍 No matching knowledge base entries found. The bot learns from conversations automatically!', { flags: 64 } as any);
+                        return true;
+                    }
+                    
+                    const { EmbedBuilder } = await import('discord.js');
+                    const embed = new EmbedBuilder()
+                        .setTitle('📚 Knowledge Base Results')
+                        .setColor(0x5865F2)
+                        .setDescription(`Found ${results.length} result${results.length === 1 ? '' : 's'} for "${query}"`)
+                        .setTimestamp();
+                    
+                    results.slice(0, 3).forEach((entry: any, i: number) => {
+                        embed.addFields({
+                            name: `${i + 1}. ${entry.category.toUpperCase()} - ${entry.question}`,
+                            value: entry.answer.length > 200 ? entry.answer.slice(0, 200) + '...' : entry.answer
+                        });
+                    });
+                    
+                    await safeReply(interaction, { embeds: [embed], flags: 64 } as any);
+                    return true;
+                }
+                
+                if (subCommand === 'list') {
+                    const faqData = buildFAQ(guildId);
+                    
+                    if (faqData.length === 0) {
+                        await safeReply(interaction, '📚 Knowledge base is empty. The bot will automatically learn from conversations!', { flags: 64 } as any);
+                        return true;
+                    }
+                    
+                    const totalEntries = faqData.reduce((sum, cat) => sum + cat.entries.length, 0);
+                    const categoryList = faqData
+                        .map(cat => `• **${cat.category}**: ${cat.entries.length} entries`)
+                        .join('\n');
+                    
+                    const { EmbedBuilder } = await import('discord.js');
+                    const embed = new EmbedBuilder()
+                        .setTitle('📚 Knowledge Base Overview')
+                        .setColor(0x5865F2)
+                        .setDescription(`Total entries: **${totalEntries}**\n\n${categoryList}`)
+                        .setFooter({ text: 'Use /kb search <query> to find specific entries' })
+                        .setTimestamp();
+                    
+                    await safeReply(interaction, { embeds: [embed], flags: 64 } as any);
+                    return true;
+                }
+                
+                if (subCommand === 'stats') {
+                    const stats = getKnowledgeStats(guildId);
+                    
+                    const { EmbedBuilder } = await import('discord.js');
+                    const embed = new EmbedBuilder()
+                        .setTitle('📊 Knowledge Base Statistics')
+                        .setColor(0x00AE86)
+                        .addFields(
+                            { name: 'Total Entries', value: stats.totalEntries.toString(), inline: true },
+                            { name: 'Categories', value: stats.totalCategories.toString(), inline: true },
+                            { name: 'Recent (7d)', value: stats.recentContributions.toString(), inline: true },
+                            { name: 'Avg Helpfulness', value: stats.averageHelpfulness.toFixed(1), inline: true }
+                        )
+                        .setTimestamp();
+                    
+                    if (stats.mostHelpfulEntry) {
+                        embed.addFields({
+                            name: '🏆 Most Helpful Entry',
+                            value: `**Q:** ${stats.mostHelpfulEntry.question}\n**Helpful count:** ${stats.mostHelpfulEntry.times_helpful}`
+                        });
+                    }
+                    
+                    await safeReply(interaction, { embeds: [embed], flags: 64 } as any);
+                    return true;
+                }
+                
                 return true;
             }
 
