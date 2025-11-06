@@ -14,6 +14,171 @@ function nowISO() {
   return new Date().toISOString();
 }
 
+/**
+ * Analyze feedback sentiment using keyword matching
+ * Returns: 'positive', 'neutral', or 'negative'
+ */
+export function analyzeFeedbackSentiment(feedback: string): 'positive' | 'neutral' | 'negative' {
+  if (!feedback || feedback.trim().length === 0) return 'neutral';
+  
+  const text = feedback.toLowerCase();
+  
+  // Positive keywords
+  const positiveWords = [
+    'great', 'excellent', 'amazing', 'awesome', 'fantastic', 'wonderful', 
+    'helpful', 'quick', 'fast', 'thank', 'thanks', 'appreciate', 'perfect',
+    'good', 'nice', 'kind', 'friendly', 'patient', 'professional', 'best',
+    'love', 'impressed', 'satisfied', 'happy', 'pleased', 'outstanding'
+  ];
+  
+  // Negative keywords
+  const negativeWords = [
+    'bad', 'terrible', 'awful', 'horrible', 'poor', 'worst', 'useless',
+    'slow', 'rude', 'unhelpful', 'waste', 'disappointed', 'frustrated',
+    'angry', 'annoyed', 'incompetent', 'lazy', 'ignore', 'ignored', 'sucks'
+  ];
+  
+  let positiveCount = 0;
+  let negativeCount = 0;
+  
+  for (const word of positiveWords) {
+    if (text.includes(word)) positiveCount++;
+  }
+  
+  for (const word of negativeWords) {
+    if (text.includes(word)) negativeCount++;
+  }
+  
+  if (positiveCount > negativeCount && positiveCount > 0) return 'positive';
+  if (negativeCount > positiveCount && negativeCount > 0) return 'negative';
+  return 'neutral';
+}
+
+/**
+ * Calculate points for ticket resolution based on multiple factors
+ */
+export function calculateTicketPoints(params: {
+  wasClaimed: boolean;
+  wasResolved: boolean;
+  rating?: number; // 1-10 scale
+  feedback?: string;
+  claimerId?: string;
+  helpers?: string[];
+}): {
+  totalPoints: number;
+  breakdown: { reason: string; points: number }[];
+  primaryRecipient: string | null;
+  helperPoints: Map<string, number>;
+} {
+  const breakdown: { reason: string; points: number }[] = [];
+  let totalPoints = 0;
+  
+  // Base points for claiming
+  if (params.wasClaimed && params.claimerId) {
+    const claimPoints = 5;
+    breakdown.push({ reason: 'Claimed ticket', points: claimPoints });
+    totalPoints += claimPoints;
+  }
+  
+  // Points for resolving
+  if (params.wasResolved) {
+    const resolvePoints = 10;
+    breakdown.push({ reason: 'Resolved ticket', points: resolvePoints });
+    totalPoints += resolvePoints;
+  }
+  
+  // Rating-based points (1-10 scale)
+  if (params.rating !== undefined && params.rating !== null) {
+    let ratingPoints = 0;
+    if (params.rating >= 9) {
+      ratingPoints = 20; // Excellent
+      breakdown.push({ reason: 'Excellent rating (9-10)', points: ratingPoints });
+    } else if (params.rating >= 7) {
+      ratingPoints = 15; // Good
+      breakdown.push({ reason: 'Good rating (7-8)', points: ratingPoints });
+    } else if (params.rating >= 5) {
+      ratingPoints = 10; // Average
+      breakdown.push({ reason: 'Average rating (5-6)', points: ratingPoints });
+    } else if (params.rating >= 3) {
+      ratingPoints = 5; // Below average
+      breakdown.push({ reason: 'Below average rating (3-4)', points: ratingPoints });
+    } else {
+      ratingPoints = 2; // Poor
+      breakdown.push({ reason: 'Poor rating (1-2)', points: ratingPoints });
+    }
+    totalPoints += ratingPoints;
+  }
+  
+  // Feedback quality bonus
+  if (params.feedback && params.feedback.trim().length > 0) {
+    const sentiment = analyzeFeedbackSentiment(params.feedback);
+    const feedbackLength = params.feedback.trim().length;
+    
+    let feedbackPoints = 0;
+    if (sentiment === 'positive') {
+      if (feedbackLength > 100) {
+        feedbackPoints = 15; // Detailed positive feedback
+        breakdown.push({ reason: 'Detailed positive feedback', points: feedbackPoints });
+      } else {
+        feedbackPoints = 10; // Positive feedback
+        breakdown.push({ reason: 'Positive feedback', points: feedbackPoints });
+      }
+    } else if (sentiment === 'neutral') {
+      if (feedbackLength > 100) {
+        feedbackPoints = 8; // Detailed neutral feedback
+        breakdown.push({ reason: 'Detailed neutral feedback', points: feedbackPoints });
+      } else {
+        feedbackPoints = 5; // Neutral feedback
+        breakdown.push({ reason: 'Neutral feedback', points: feedbackPoints });
+      }
+    } else if (sentiment === 'negative') {
+      // Negative feedback still gets some points for completion but less
+      feedbackPoints = 3;
+      breakdown.push({ reason: 'Feedback provided (negative)', points: feedbackPoints });
+    }
+    totalPoints += feedbackPoints;
+  }
+  
+  // Calculate helper distribution (helpers get 50% of main points)
+  const helperPoints = new Map<string, number>();
+  if (params.helpers && params.helpers.length > 0) {
+    const helperShare = Math.floor(totalPoints * 0.5 / params.helpers.length);
+    for (const helperId of params.helpers) {
+      helperPoints.set(helperId, helperShare);
+    }
+  }
+  
+  return {
+    totalPoints,
+    breakdown,
+    primaryRecipient: params.claimerId || null,
+    helperPoints
+  };
+}
+
+/**
+ * Award points directly to a user (creates a custom achievement entry)
+ */
+export function awardDirectPoints(
+  userId: string,
+  guildId: string | null,
+  points: number,
+  reason: string,
+  category: AchievementCategory = 'support'
+): void {
+  if (points <= 0) return;
+  
+  const db = getDB();
+  const now = nowISO();
+  const achievementId = `direct_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  
+  db.prepare(`
+    INSERT INTO achievements
+    (user_id, guild_id, achievement_id, achievement_name, category, points, context, awarded_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(userId, guildId, achievementId, reason, category, points, reason, now);
+}
+
 export type AchievementCategory = 'support' | 'community' | 'knowledge' | 'social' | 'milestone';
 
 // Define achievement types

@@ -810,6 +810,48 @@ async function closeTicketWithFeedback(interaction: any, ticket: any, rating: nu
     }
   }
 
+  // Award points to claimer and helpers based on rating and feedback
+  try {
+    const { calculateTicketPoints, awardDirectPoints } = await import('./services/rewards');
+    const helpers = getTicketHelpers(ticket.channel_id);
+    
+    const pointsCalc = calculateTicketPoints({
+      wasClaimed: !!ticket.claimed_by,
+      wasResolved: rating >= 6,
+      rating: rating,
+      feedback: feedback,
+      claimerId: ticket.claimed_by,
+      helpers: helpers
+    });
+
+    // Award points to primary claimer
+    if (pointsCalc.primaryRecipient) {
+      awardDirectPoints(
+        pointsCalc.primaryRecipient,
+        ticket.guild_id,
+        pointsCalc.totalPoints,
+        `Ticket #${ticket.id}: ${pointsCalc.breakdown.map(b => b.reason).join(', ')}`,
+        'support'
+      );
+      console.log(`✨ Awarded ${pointsCalc.totalPoints} points to ${pointsCalc.primaryRecipient} for ticket #${ticket.id}`);
+      console.log(`   Breakdown: ${pointsCalc.breakdown.map(b => `${b.reason} (+${b.points})`).join(', ')}`);
+    }
+
+    // Award points to helpers
+    for (const [helperId, helperPoints] of pointsCalc.helperPoints.entries()) {
+      awardDirectPoints(
+        helperId,
+        ticket.guild_id,
+        helperPoints,
+        `Ticket #${ticket.id}: Helper assistance`,
+        'support'
+      );
+      console.log(`✨ Awarded ${helperPoints} points to helper ${helperId} for ticket #${ticket.id}`);
+    }
+  } catch (e) {
+    console.error('Failed to award ticket points:', e);
+  }
+
   // Post vouch with feedback if provided
   const config = getTicketConfig(ticket.guild_id);
   if (config?.vouch_channel_id) {
@@ -2913,6 +2955,21 @@ client.on("interactionCreate", async (interaction) => {
 
       claimTicket(interaction.channel.id, interaction.user.id);
 
+      // Award points for claiming ticket
+      try {
+        const { awardDirectPoints } = await import('./services/rewards');
+        awardDirectPoints(
+          interaction.user.id,
+          interaction.guild!.id,
+          5,
+          'Claimed a support ticket',
+          'support'
+        );
+        console.log(`✨ Awarded 5 points to ${interaction.user.id} for claiming ticket #${ticket.id}`);
+      } catch (e) {
+        console.error('Failed to award claim points:', e);
+      }
+
       // Auto-start support interaction
       try {
         const { startSupportInteraction } = await import('./services/smartSupport');
@@ -2931,7 +2988,7 @@ client.on("interactionCreate", async (interaction) => {
       const claimEmbed = new EmbedBuilder()
         .setTitle('🎫 Ticket Claimed')
         .setColor(0x00AE86)
-        .setDescription(`<@${interaction.user.id}> is now handling this ticket.`);
+        .setDescription(`<@${interaction.user.id}> is now handling this ticket. (+5 points)`);
 
       return await safeReply(interaction, { embeds: [claimEmbed] });
     }
