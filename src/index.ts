@@ -4,7 +4,13 @@ console.log('--- Bot Initialization ---');
 import * as dotenv from "dotenv";
 import * as path from "path";
 // Ensure .env loads reliably in production: dist/ -> project root
-dotenv.config({ path: path.join(__dirname, "../.env") });
+const envPath = path.join(__dirname, "../.env");
+const dotenvResult = dotenv.config({ path: envPath });
+if (dotenvResult.error) {
+  console.warn(`[Env] Failed to load .env at ${envPath}:`, dotenvResult.error.message);
+} else {
+  console.log(`[Env] Loaded .env from ${envPath}. Keys: ${Object.keys(dotenvResult.parsed || {}).join(', ')}`);
+}
 import { Client, GatewayIntentBits, Partials, Message, PermissionsBitField, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, MessageFlags, ChannelType, ColorResolvable, ModalBuilder, TextInputBuilder, TextInputStyle } from "discord.js";
 import { isWakeWord, handleConversationalReply } from "./utils/responder";
 
