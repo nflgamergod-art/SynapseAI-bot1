@@ -4042,22 +4042,11 @@ client.on("interactionCreate", async (interaction) => {
           { name: "stats", description: "📊 Knowledge base analytics (Admin)", type: 1 }
         ] },
         { name: "achievements", description: "🏆 View earned achievements and rewards", options: [ { name: "user", description: "User to view (defaults to you)", type: 6, required: false } ] },
-        { name: "perks", description: "✨ View your unlocked perks and special abilities" },
-        { name: "perkspanel", description: "Owner: post a perks claim panel in this channel" },
-        { name: "claimperk", description: "Claim an unlocked perk", options: [ { name: "perk", description: "custom_color | priority_support | custom_emoji | channel_suggest | voice_priority | exclusive_role", type: 3, required: true } ] },
-        { name: "setcolor", description: "Set your custom role color (requires custom_color perk)", options: [ { name: "hex", description: "Hex color like #FF8800", type: 3, required: true } ] },
-        { name: "requestemoji", description: "Create a custom emoji (requires custom_emoji perk)", options: [ { name: "name", description: "Emoji name (letters, numbers, _)", type: 3, required: true }, { name: "image", description: "Emoji image (PNG/GIF)", type: 11, required: true } ] },
-        { name: "setperkrole", description: "Owner: bind a server role to a perk so claims use it", options: [ { name: "perk", description: "custom_color|priority_support|custom_emoji|channel_suggest|voice_priority|exclusive_role", type: 3, required: true }, { name: "role", description: "Role to bind", type: 8, required: true } ] },
         { name: "patterns", description: "📈 Admin: View detected user behavior patterns" },
         { name: "insights", description: "🔮 Admin: Get AI predictions for best posting times" },
         { name: "checkins", description: "📋 Admin: View scheduled proactive user follow-ups" },
         { name: "sentiment", description: "💭 Admin: Real-time emotional analysis of conversations", options: [ { name: "channel", description: "Channel to analyze (defaults to current)", type: 7, required: false } ] },
         { name: "commonissues", description: "🔍 Admin: Detect recurring support issues", options: [ { name: "hours", description: "Hours to analyze (default 24)", type: 4, required: false } ] },
-        { name: "faq", description: "❓ Quick access to frequently asked questions", options: [ { name: "category", description: "Filter by category", type: 3, required: false } ] },
-        { name: "supportstart", description: "Start tracking a support interaction (ticket)", options: [ { name: "user", description: "User being helped", type: 6, required: true }, { name: "question", description: "What they need help with", type: 3, required: true } ] },
-        { name: "supportend", description: "End a tracked support interaction (ticket)", options: [ { name: "id", description: "Interaction ID from /supportstart", type: 4, required: true }, { name: "resolved", description: "Was it resolved?", type: 5, required: true }, { name: "rating", description: "Satisfaction rating (1-5)", type: 4, required: false }, { name: "feedback", description: "Optional feedback text", type: 3, required: false } ] },
-        { name: "supportrate", description: "Ticket requester: rate your support interaction", options: [ { name: "id", description: "Interaction ID", type: 4, required: true }, { name: "rating", description: "Satisfaction rating (1-5)", type: 4, required: true }, { name: "feedback", description: "Optional feedback text", type: 3, required: false } ] },
-        { name: "supportaddhelper", description: "Support: add a co-helper to a ticket", options: [ { name: "id", description: "Interaction ID", type: 4, required: true }, { name: "member", description: "Helper to add", type: 6, required: true } ] },
         { name: "listopentickets", description: "List all open support tickets" },
         // Auto-Moderation
         { name: "automod", description: "🤖 Configure auto-moderation rules" },
@@ -4065,9 +4054,6 @@ client.on("interactionCreate", async (interaction) => {
         { name: "case", description: "📋 View a moderation case by number", options: [ { name: "number", description: "Case number", type: 4, required: true } ] },
         { name: "cases", description: "📋 View all cases for a user", options: [ { name: "user", description: "User to check cases for", type: 6, required: true } ] },
         { name: "updatecase", description: "📝 Update case reason", options: [ { name: "number", description: "Case number", type: 4, required: true }, { name: "reason", description: "New reason", type: 3, required: true } ] },
-        // Appeals
-        { name: "appeal", description: "📨 Submit an appeal (use in DMs)", dm_permission: true, contexts: [0, 1, 2], integration_types: [0, 1], options: [ { name: "type", description: "ban | mute | blacklist", type: 3, required: true, choices: [ { name: "Ban Appeal", value: "ban" }, { name: "Mute Appeal", value: "mute" }, { name: "Blacklist Appeal", value: "blacklist" } ] }, { name: "reason", description: "Why should your punishment be revoked?", type: 3, required: true } ] },
-        { name: "appeals", description: "📨 Admin: Review pending appeals" },
         // Reminders
         { name: "remind", description: "⏰ Set a reminder", options: [ { name: "time", description: "Time (e.g., 2h, 30m, 1d)", type: 3, required: true }, { name: "message", description: "What to remind you about", type: 3, required: true } ] },
         { name: "reminders", description: "⏰ List your active reminders" },
@@ -5006,7 +4992,7 @@ client.on("messageReactionAdd", async (reaction, user) => {
     
     const guildId = reaction.message.guild?.id;
     
-    // Check whitelist/blacklist
+    // Check blacklist only (removed whitelist requirement so anyone can join)
     if (!isOwnerId(user.id)) {
       if (isBlacklisted(user.id, 'user', guildId)) {
         try {
@@ -5029,26 +5015,7 @@ client.on("messageReactionAdd", async (reaction, user) => {
           }
         }
         
-        // Check whitelist
-        let whitelisted = isWhitelisted(user.id, 'user');
-        if (!whitelisted) {
-          for (const r of roles) {
-            if (isWhitelisted(String(r), 'role')) {
-              whitelisted = true;
-              break;
-            }
-          }
-        }
-        
-        if (!whitelisted) {
-          try {
-            await user.send("My owner hasn't whitelisted you. You can either pay to use my services or buy Synapse script to use my commands and have a conversation for free.");
-          } catch { /* ignore */ }
-          await reaction.users.remove(user.id);
-          return;
-        }
-        
-        // Check requirements
+        // Check requirements (role/message/invite requirements if set)
         if (giveaway.requirements.requiredRoles && giveaway.requirements.requiredRoles.length > 0) {
           const hasRole = giveaway.requirements.requiredRoles.some(roleId => roles.includes(roleId));
           if (!hasRole) {
