@@ -125,7 +125,12 @@ SECURITY RULES:
 
   // Auto: try OpenAI first if configured, else Gemini
   if (process.env.OPENAI_API_KEY) {
-    try { return await generateWithOpenAI(fullPrompt); } catch {/* fall through */}
+    try { 
+      return await generateWithOpenAI(fullPrompt); 
+    } catch (openaiError: any) {
+      console.error('OpenAI generation failed:', openaiError?.message || openaiError);
+      /* fall through to Gemini */
+    }
   }
   if (process.env.GEMINI_API_KEY) {
     try { return await generateWithGemini(fullPrompt); } catch (e) { throw e; }
