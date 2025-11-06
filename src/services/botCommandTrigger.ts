@@ -18,7 +18,7 @@ const BOT_COMMANDS = {
       /\bforce.*reset.*hwid/i
     ],
     description: 'Resets HWID using Luarmor bot',
-    permission: 'everyone' // or 'staff', 'owner'
+    permission: 'staff' // or 'everyone', 'owner'
   }
 };
 
