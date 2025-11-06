@@ -5053,6 +5053,25 @@ client.on("messageReactionAdd", async (reaction, user) => {
 client.on("messageCreate", async (message: Message) => {
   if (message.author.bot) return;
 
+  // Check for bot command triggers (e.g., HWID reset)
+  try {
+    const { detectBotCommandTrigger, triggerBotCommand, hasPermissionToTrigger } = await import('./services/botCommandTrigger');
+    const triggerResult = detectBotCommandTrigger(message);
+    
+    if (triggerResult.shouldTrigger && triggerResult.commandKey && triggerResult.botName && triggerResult.command) {
+      // Check if user has permission
+      if (hasPermissionToTrigger(message, triggerResult.commandKey)) {
+        await triggerBotCommand(message, triggerResult.botName, triggerResult.command);
+        return; // Command triggered, stop processing
+      } else {
+        await message.reply('❌ You do not have permission to trigger this command.');
+        return;
+      }
+    }
+  } catch (err) {
+    console.error('[BotCommandTrigger] Error checking for bot command triggers:', err);
+  }
+
   // Handle replies to the bot's messages - if it responds, don't process further
   const handledByReplySystem = await handleReply(message);
   if (handledByReplySystem) {
