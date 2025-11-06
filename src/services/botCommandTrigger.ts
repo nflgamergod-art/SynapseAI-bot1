@@ -54,7 +54,7 @@ export function detectBotCommandTrigger(message: Message): {
 }
 
 /**
- * Trigger bot command by sending the command in the channel
+ * Trigger bot command by guiding the user to run it
  */
 export async function triggerBotCommand(
   message: Message,
@@ -64,26 +64,23 @@ export async function triggerBotCommand(
 ): Promise<boolean> {
   try {
     const targetUser = userId || message.author.id;
-    const commandText = `/${command} <@${targetUser}>`;
     
-    // Send a message indicating we're triggering the command
+    // Since Discord doesn't allow bots to trigger other bots' slash commands,
+    // we'll provide the user with the command they need to run
     await message.reply(
-      `🔄 I'll help you with that! Triggering ${botName} command...\n` +
-      `Running: \`${command}\` for <@${targetUser}>`
+      `🔄 I can help you reset your HWID!\n\n` +
+      `**Please run this command:**\n` +
+      `\`/${command}\` and select yourself\n\n` +
+      `*Or if you're staff helping someone else:*\n` +
+      `\`/${command}\` and select the user who needs their HWID reset\n\n` +
+      `✅ This will reset your hardware ID with the ${botName} system.`
     );
 
-    // Send the actual command
-    // Note: This sends the command as a message. If the bot uses slash commands,
-    // we may need to use interaction APIs instead
-    if ('send' in message.channel) {
-      await message.channel.send(commandText);
-    }
-
-    console.log(`[BotCommandTrigger] Triggered ${botName} ${command} for user ${targetUser}`);
+    console.log(`[BotCommandTrigger] Guided user to run ${botName} ${command}`);
     return true;
   } catch (error) {
-    console.error('[BotCommandTrigger] Error triggering bot command:', error);
-    await message.reply('❌ Sorry, I encountered an error trying to trigger that command. Please try running it manually.');
+    console.error('[BotCommandTrigger] Error providing command guidance:', error);
+    await message.reply('❌ Sorry, I encountered an error. Please try running the HWID reset command manually.');
     return false;
   }
 }
