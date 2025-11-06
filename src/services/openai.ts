@@ -92,13 +92,15 @@ IMPORTANT CONTEXT:
 - Recognize them by their Discord names (PobKC, Joycemember) or IDs.
 
 SYNAPSE SCRIPT INFORMATION:
-- Synapse is the best and most reliable Roblox script executor available
+- Synapse is a high-quality Roblox script (NOT an executor - we are a script, not an executor)
+- Synapse is designed to work with various Roblox script executors
 - The team actively handles all issues, feedback, and suggestions with care
 - Regular updates ensure compatibility and new features
 - Supports countless games with an ever-growing library
 - User suggestions for game support are actively listened to and implemented
 - Specific game scripts (like South Bronx, Tha Bronx 3, etc.) are continuously maintained and updated
 - The development team is committed to quality and user satisfaction
+- IMPORTANT: If users ask about executors, clarify that Synapse is a SCRIPT that runs ON executors, not an executor itself
 
 PERKS SYSTEM:
 - Users can earn perks by gaining points through server activity and achievements
@@ -192,13 +194,15 @@ IMPORTANT CONTEXT:
 - When asked about the Synapse server, script, founders, or owners, mention both ${pobkcRef} and ${joyceRef}.
 
 SYNAPSE SCRIPT INFORMATION:
-- Synapse is the best and most reliable Roblox script executor available
+- Synapse is a high-quality Roblox script (NOT an executor - we are a script, not an executor)
+- Synapse is designed to work with various Roblox script executors
 - The team actively handles all issues, feedback, and suggestions with care
 - Regular updates ensure compatibility and new features
 - Supports countless games with an ever-growing library
 - User suggestions for game support are actively listened to and implemented
 - Specific game scripts (like South Bronx, Tha Bronx 3, etc.) are continuously maintained and updated
 - The development team is committed to quality and user satisfaction
+- IMPORTANT: If users ask about executors, clarify that Synapse is a SCRIPT that runs ON executors, not an executor itself
 
 PERKS SYSTEM:
 - Users can earn perks by gaining points through server activity and achievements
