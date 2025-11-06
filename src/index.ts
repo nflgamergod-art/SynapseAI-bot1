@@ -248,12 +248,24 @@ client.on('interactionCreate', async (interaction) => {
   }
 })();
 
-// Ensure application_id is set correctly
-const applicationId = process.env.DISCORD_APPLICATION_ID || client.user?.id;
-if (!applicationId || isNaN(Number(applicationId))) {
-  console.error("Application ID is missing or invalid. Please set DISCORD_APPLICATION_ID in the .env file.");
-  process.exit(1);
+// Defer application ID resolution until ready; don't hard exit if env missing.
+let resolvedApplicationId: string | undefined = process.env.DISCORD_APPLICATION_ID;
+if (resolvedApplicationId && isNaN(Number(resolvedApplicationId))) {
+  console.warn(`Provided DISCORD_APPLICATION_ID='${resolvedApplicationId}' is not numeric; will attempt to use client identity after login.`);
+  resolvedApplicationId = undefined;
 }
+
+client.once('ready', async () => {
+  if (!resolvedApplicationId) {
+    // Fallback to client.user.id (discord.js populates this post-login)
+    resolvedApplicationId = client.user?.id;
+  }
+  if (!resolvedApplicationId) {
+    console.error('Unable to resolve application ID even after ready; commands may not register. Set DISCORD_APPLICATION_ID in environment.');
+  } else {
+    console.log(`[Init] Resolved application ID: ${resolvedApplicationId}`);
+  }
+});
 
 // Add logging to confirm bot is ready and connected
 client.once('ready', () => {
