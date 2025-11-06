@@ -1253,7 +1253,7 @@ client.on("interactionCreate", async (interaction) => {
 
         const feedbackInput = new TextInputBuilder()
           .setCustomId('feedback')
-          .setLabel('Share your feedback (what went well/could improve)')
+          .setLabel('What went well or could be improved?')
           .setStyle(TextInputStyle.Paragraph)
           .setPlaceholder('Your feedback helps us improve our support quality!')
           .setRequired(true)
