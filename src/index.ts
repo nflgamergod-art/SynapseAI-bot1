@@ -751,6 +751,9 @@ client.on('interactionCreate', async (interaction) => {
   const customId = interaction.customId;
   
   if (customId.startsWith('ticket-feedback-submit:')) {
+    // CRITICAL: Defer reply immediately to prevent "interaction failed"
+    await interaction.deferReply({ ephemeral: true });
+
     const [, ticketIdStr, ratingStr] = customId.split(':');
     const ticketId = parseInt(ticketIdStr);
     const rating = parseInt(ratingStr);
@@ -760,12 +763,12 @@ client.on('interactionCreate', async (interaction) => {
     const ticket = getTicketById(ticketId);
 
     if (!ticket) {
-      return interaction.reply({ content: '❌ Ticket not found.', ephemeral: true });
+      return interaction.editReply({ content: '❌ Ticket not found.' });
     }
 
     // Only ticket owner can provide feedback
     if (ticket.user_id !== interaction.user.id) {
-      return interaction.reply({ content: '❌ Only the ticket owner can provide feedback.', ephemeral: true });
+      return interaction.editReply({ content: '❌ Only the ticket owner can provide feedback.' });
     }
 
     // Generate transcript
@@ -884,7 +887,12 @@ async function closeTicketWithFeedback(interaction: any, ticket: any, rating: nu
     ? `✅ Thank you for your ${rating}/10 rating and feedback! This ticket will close in 5 seconds.`
     : `✅ Thank you for your ${rating}/10 rating! This ticket will close in 5 seconds.`;
 
-  await interaction.reply({ content: replyMessage, ephemeral: true });
+  // Use editReply if deferred, reply if not
+  if (interaction.deferred) {
+    await interaction.editReply({ content: replyMessage });
+  } else {
+    await interaction.reply({ content: replyMessage, ephemeral: true });
+  }
 
   // Delete channel after delay
   setTimeout(async () => {
