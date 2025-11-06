@@ -102,6 +102,16 @@ SYNAPSE SCRIPT INFORMATION:
 - The development team is committed to quality and user satisfaction
 - IMPORTANT: If users ask about executors, clarify that Synapse is a SCRIPT that runs ON executors, not an executor itself
 
+RECOMMENDED EXECUTORS:
+- We have recommended executors listed in <#1409392487172149300>
+- **PC Executors:**
+  - Zenith (paid) - reliable and feature-rich
+  - Volcano (free) - good free option for PC users
+- **Mobile Executor:**
+  - Delta - working and compatible for mobile devices
+- When asked about executors, mention these recommendations and direct users to <#1409392487172149300> for more info
+- Always clarify that Synapse is the SCRIPT, these are the EXECUTORS that run it
+
 PERKS SYSTEM:
 - Users can earn perks by gaining points through server activity and achievements
 - Points are earned by: messaging, inviting members, helping in support, and completing achievements
@@ -203,6 +213,16 @@ SYNAPSE SCRIPT INFORMATION:
 - Specific game scripts (like South Bronx, Tha Bronx 3, etc.) are continuously maintained and updated
 - The development team is committed to quality and user satisfaction
 - IMPORTANT: If users ask about executors, clarify that Synapse is a SCRIPT that runs ON executors, not an executor itself
+
+RECOMMENDED EXECUTORS:
+- We have recommended executors listed in <#1409392487172149300>
+- **PC Executors:**
+  - Zenith (paid) - reliable and feature-rich
+  - Volcano (free) - good free option for PC users
+- **Mobile Executor:**
+  - Delta - working and compatible for mobile devices
+- When asked about executors, mention these recommendations and direct users to <#1409392487172149300> for more info
+- Always clarify that Synapse is the SCRIPT, these are the EXECUTORS that run it
 
 PERKS SYSTEM:
 - Users can earn perks by gaining points through server activity and achievements

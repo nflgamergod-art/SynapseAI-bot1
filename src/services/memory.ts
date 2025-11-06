@@ -201,16 +201,19 @@ export function trackRecentMessage(userId: string, guildId: string | null, chann
   db.prepare(`DELETE FROM recent_messages WHERE timestamp < ?`).run(now - 60000);
 }
 
-export function detectCorrectionContext(channelId: string, currentMsgTimestamp: number): { isCorrectionContext: boolean; callOutMsg?: string } {
+export function detectCorrectionContext(channelId: string, currentMsgTimestamp: number): { isCorrectionContext: boolean; callOutMsg?: string; isAddition?: boolean } {
   const db = getDB();
   const window = 15000;
   const rows = db.prepare(`SELECT * FROM recent_messages WHERE channel_id = ? AND timestamp >= ? ORDER BY timestamp DESC`)
     .all(channelId, currentMsgTimestamp - window) as any[];
   const liarRe = /(lying|liar|that's not true|cap|capping|stop capping|caught|called out)/i;
+  const additionRe = /(that's correct but|correct but|right but|yes but|also|additionally)/i;
+  
   for (const r of rows) {
-    if (liarRe.test(r.content)) return { isCorrectionContext: true, callOutMsg: r.content };
+    if (liarRe.test(r.content)) return { isCorrectionContext: true, callOutMsg: r.content, isAddition: false };
+    if (additionRe.test(r.content)) return { isCorrectionContext: true, callOutMsg: r.content, isAddition: true };
   }
-  return { isCorrectionContext: false };
+  return { isCorrectionContext: false, isAddition: false };
 }
 
 export function getMemoryHistory(userId: string, key: string, guildId?: string | null, limit = 10) {

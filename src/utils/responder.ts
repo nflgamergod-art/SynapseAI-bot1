@@ -159,6 +159,40 @@ export async function handleConversationalReply(message: Message) {
     }
     
     const corrCtx = detectCorrectionContext(message.channel.id, message.createdTimestamp);
+    
+    // Handle "that's correct but" additions - save to knowledge base
+    if (corrCtx.isAddition && corrCtx.callOutMsg) {
+      try {
+        const { addKnowledgeEntry } = await import('../services/preventiveSupport');
+        
+        // Determine category based on content
+        let category = 'general';
+        const content = message.content.toLowerCase();
+        if (/\b(executor|zenith|volcano|delta|synapse x|krnl)\b/i.test(content)) category = 'executors';
+        else if (/\b(error|crash|bug|broken|fix)\b/i.test(content)) category = 'technical';
+        else if (/\b(how to|tutorial|guide|setup)\b/i.test(content)) category = 'tutorial';
+        else if (/\b(synapse|script|roblox)\b/i.test(content)) category = 'synapse';
+        
+        // Extract the addition part (after "but")
+        const additionMatch = message.content.match(/but\s+(.+)/i);
+        const addition = additionMatch ? additionMatch[1] : message.content;
+        
+        addKnowledgeEntry({
+          guildId,
+          category,
+          question: `Additional info: ${addition.slice(0, 100)}`,
+          answer: addition,
+          tags: content.match(/\b(executor|zenith|volcano|delta|mobile|pc|free|paid)\b/gi) || [],
+          sourceMessageId: message.id,
+          addedBy: message.author.id
+        });
+        
+        console.log(`📝 Saved user addition to KB: "${addition.slice(0, 50)}..."`);
+      } catch (err) {
+        console.warn('Failed to save addition to KB:', err);
+      }
+    }
+    
     const ack = buildMemoryAck(message.content, events, corrCtx.isCorrectionContext);
     const finalReply = ack ? `${reply}\n\n${ack}` : reply;
     await sendChunkedReply(message, finalReply);
