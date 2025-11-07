@@ -487,3 +487,231 @@ export function getUserMessageStats(userId: string, guildId: string | null): {
     lastMessageAt: result?.last_message_at || null
   };
 }
+
+/**
+ * Initialize user stats tracking table
+ */
+function initUserStatsTable() {
+  const db = getDB();
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS user_stats (
+      user_id TEXT NOT NULL,
+      guild_id TEXT,
+      
+      -- Support stats
+      total_assists INTEGER DEFAULT 0,
+      current_streak INTEGER DEFAULT 0,
+      longest_streak INTEGER DEFAULT 0,
+      last_assist_date TEXT,
+      fast_resolutions INTEGER DEFAULT 0,
+      total_cases INTEGER DEFAULT 0,
+      resolved_cases INTEGER DEFAULT 0,
+      
+      -- Community stats
+      welcomed_users INTEGER DEFAULT 0,
+      conversations_started INTEGER DEFAULT 0,
+      
+      -- Knowledge stats
+      knowledge_entries INTEGER DEFAULT 0,
+      qa_pairs INTEGER DEFAULT 0,
+      
+      -- Social stats
+      unique_interactions INTEGER DEFAULT 0,
+      
+      -- Timestamps
+      last_updated TEXT,
+      
+      PRIMARY KEY (user_id, guild_id)
+    )
+  `).run();
+}
+
+/**
+ * Track when a user welcomes a new member
+ */
+export function trackWelcome(userId: string, guildId: string, newMemberId: string): void {
+  const db = getDB();
+  initUserStatsTable();
+  
+  const now = nowISO();
+  
+  db.prepare(`
+    INSERT INTO user_stats (user_id, guild_id, welcomed_users, last_updated)
+    VALUES (?, ?, 1, ?)
+    ON CONFLICT(user_id, guild_id) DO UPDATE SET
+      welcomed_users = welcomed_users + 1,
+      last_updated = ?
+  `).run(userId, guildId, now, now);
+  
+  // Check for welcome achievements
+  const stats = getUserStats(userId, guildId);
+  checkAndAwardAchievements(userId, guildId, stats);
+}
+
+/**
+ * Track when a user starts a conversation
+ */
+export function trackConversationStart(userId: string, guildId: string): void {
+  const db = getDB();
+  initUserStatsTable();
+  
+  const now = nowISO();
+  
+  db.prepare(`
+    INSERT INTO user_stats (user_id, guild_id, conversations_started, last_updated)
+    VALUES (?, ?, 1, ?)
+    ON CONFLICT(user_id, guild_id) DO UPDATE SET
+      conversations_started = conversations_started + 1,
+      last_updated = ?
+  `).run(userId, guildId, now, now);
+  
+  // Check for achievements
+  const stats = getUserStats(userId, guildId);
+  checkAndAwardAchievements(userId, guildId, stats);
+}
+
+/**
+ * Track support case statistics
+ */
+export function trackSupportStats(userId: string, guildId: string, stats: {
+  wasResolved?: boolean;
+  wasFast?: boolean; // Under 5 minutes
+  isNewAssist?: boolean;
+}): void {
+  const db = getDB();
+  initUserStatsTable();
+  
+  const now = nowISO();
+  const today = now.split('T')[0];
+  
+  // Get current stats
+  const current = db.prepare(`
+    SELECT total_assists, current_streak, longest_streak, last_assist_date, 
+           fast_resolutions, total_cases, resolved_cases
+    FROM user_stats
+    WHERE user_id = ? AND guild_id = ?
+  `).get(userId, guildId) as any;
+  
+  let totalAssists = current?.total_assists || 0;
+  let currentStreak = current?.current_streak || 0;
+  let longestStreak = current?.longest_streak || 0;
+  let lastAssistDate = current?.last_assist_date;
+  let fastResolutions = current?.fast_resolutions || 0;
+  let totalCases = current?.total_cases || 0;
+  let resolvedCases = current?.resolved_cases || 0;
+  
+  // Update case counts
+  if (stats.isNewAssist) {
+    totalAssists++;
+    totalCases++;
+    
+    // Update streak
+    if (lastAssistDate) {
+      const lastDate = lastAssistDate.split('T')[0];
+      const daysDiff = Math.floor((new Date(today).getTime() - new Date(lastDate).getTime()) / (1000 * 60 * 60 * 24));
+      
+      if (daysDiff === 1) {
+        // Consecutive day
+        currentStreak++;
+        longestStreak = Math.max(longestStreak, currentStreak);
+      } else if (daysDiff > 1) {
+        // Streak broken
+        currentStreak = 1;
+      }
+      // If same day, streak stays the same
+    } else {
+      // First assist
+      currentStreak = 1;
+      longestStreak = 1;
+    }
+    lastAssistDate = now;
+  }
+  
+  if (stats.wasResolved) {
+    resolvedCases++;
+  }
+  
+  if (stats.wasFast) {
+    fastResolutions++;
+  }
+  
+  // Update database
+  db.prepare(`
+    INSERT INTO user_stats (
+      user_id, guild_id, total_assists, current_streak, longest_streak,
+      last_assist_date, fast_resolutions, total_cases, resolved_cases, last_updated
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(user_id, guild_id) DO UPDATE SET
+      total_assists = ?,
+      current_streak = ?,
+      longest_streak = ?,
+      last_assist_date = ?,
+      fast_resolutions = ?,
+      total_cases = ?,
+      resolved_cases = ?,
+      last_updated = ?
+  `).run(
+    userId, guildId, totalAssists, currentStreak, longestStreak,
+    lastAssistDate, fastResolutions, totalCases, resolvedCases, now,
+    totalAssists, currentStreak, longestStreak, lastAssistDate,
+    fastResolutions, totalCases, resolvedCases, now
+  );
+  
+  // Check for achievements
+  const resolutionRate = totalCases > 0 ? resolvedCases / totalCases : 0;
+  checkAndAwardAchievements(userId, guildId, {
+    totalAssists,
+    currentStreak,
+    fastResolutions,
+    resolutionRate,
+    totalCases
+  });
+}
+
+/**
+ * Get all user statistics
+ */
+export function getUserStats(userId: string, guildId: string | null): {
+  totalAssists: number;
+  currentStreak: number;
+  longestStreak: number;
+  lastAssistDate: string | null;
+  fastResolutions: number;
+  totalCases: number;
+  resolvedCases: number;
+  resolutionRate: number;
+  welcomedUsers: number;
+  conversationsStarted: number;
+  knowledgeEntries: number;
+  qaPairs: number;
+  uniqueInteractions: number;
+  totalMessages: number;
+} {
+  const db = getDB();
+  initUserStatsTable();
+  
+  const stats = db.prepare(`
+    SELECT * FROM user_stats
+    WHERE user_id = ? AND guild_id = ?
+  `).get(userId, guildId) as any;
+  
+  const messageStats = getUserMessageStats(userId, guildId);
+  
+  return {
+    totalAssists: stats?.total_assists || 0,
+    currentStreak: stats?.current_streak || 0,
+    longestStreak: stats?.longest_streak || 0,
+    lastAssistDate: stats?.last_assist_date || null,
+    fastResolutions: stats?.fast_resolutions || 0,
+    totalCases: stats?.total_cases || 0,
+    resolvedCases: stats?.resolved_cases || 0,
+    resolutionRate: stats?.total_cases > 0 ? (stats?.resolved_cases || 0) / stats.total_cases : 0,
+    welcomedUsers: stats?.welcomed_users || 0,
+    conversationsStarted: stats?.conversations_started || 0,
+    knowledgeEntries: stats?.knowledge_entries || 0,
+    qaPairs: stats?.qa_pairs || 0,
+    uniqueInteractions: stats?.unique_interactions || 0,
+    totalMessages: messageStats.messageCount
+  };
+}

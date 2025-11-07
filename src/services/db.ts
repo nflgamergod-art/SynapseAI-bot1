@@ -94,6 +94,17 @@ function initSchema() {
     CREATE INDEX IF NOT EXISTS idx_announcements_guild ON announcements(guild_id);
     CREATE INDEX IF NOT EXISTS idx_announcements_category ON announcements(guild_id, category);
     CREATE INDEX IF NOT EXISTS idx_announcements_active ON announcements(guild_id, is_active);
+
+    CREATE TABLE IF NOT EXISTS user_interactions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id TEXT NOT NULL,
+      guild_id TEXT,
+      interaction_type TEXT NOT NULL,
+      target_user_id TEXT,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_interactions_user ON user_interactions(user_id, guild_id);
+    CREATE INDEX IF NOT EXISTS idx_interactions_type ON user_interactions(interaction_type, created_at);
   `);
 }
 

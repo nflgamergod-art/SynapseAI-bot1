@@ -571,6 +571,7 @@ client.once('clientReady', async () => {
   { name: "supportrate", description: "Ticket requester: rate your support interaction", options: [ { name: "id", description: "Interaction ID", type: 4, required: true }, { name: "rating", description: "Satisfaction rating (1-5)", type: 4, required: true }, { name: "feedback", description: "Optional feedback text", type: 3, required: false } ] },
   { name: "supportaddhelper", description: "Support: add a co-helper to a ticket", options: [ { name: "id", description: "Interaction ID", type: 4, required: true }, { name: "member", description: "Helper to add", type: 6, required: true } ] },
     { name: "perks", description: "✨ View unlocked perks and special abilities", options: [ { name: "user", description: "User to view (defaults to you)", type: 6, required: false } ] },
+  { name: "stats", description: "📊 View your detailed achievement statistics and progress", options: [ { name: "user", description: "User to view (defaults to you)", type: 6, required: false } ] },
   { name: "perkspanel", description: "Owner: post a perks claim panel in this channel" },
   { name: "claimperk", description: "Claim an unlocked perk", options: [ { name: "perk", description: "custom_color|priority_support|custom_emoji|channel_suggest|voice_priority|exclusive_role", type: 3, required: true } ] },
   { name: "setcolor", description: "🎨 Set your custom role color from a dropdown menu" },
@@ -5671,6 +5672,46 @@ client.on("messageCreate", async (message: Message) => {
           });
         } catch (err) {
           console.error('[MessageActivity] Failed to celebrate milestone:', err);
+        }
+      }
+      
+      // Track welcomes - if message contains welcome keywords and mentions a user who joined recently
+      if (message.mentions.users.size > 0) {
+        const welcomeKeywords = ['welcome', 'hello', 'hi', 'hey', 'greetings', 'glad to have', 'nice to see'];
+        const lowerContent = message.content.toLowerCase();
+        const hasWelcomeKeyword = welcomeKeywords.some(kw => lowerContent.includes(kw));
+        
+        if (hasWelcomeKeyword) {
+          try {
+            const db = await import('./services/db').then(m => m.getDB());
+            const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+            
+            // Check if any mentioned users joined recently
+            for (const [userId, user] of message.mentions.users) {
+              if (user.bot) continue;
+              
+              const recentJoin = db.prepare(`
+                SELECT user_id FROM user_interactions
+                WHERE user_id = ? AND guild_id = ? AND interaction_type = 'member_joined'
+                  AND created_at > ?
+                LIMIT 1
+              `).get(userId, message.guild.id, fiveMinutesAgo);
+              
+              if (recentJoin) {
+                // This is a welcome to a new member!
+                const { trackWelcome } = await import('./services/rewards');
+                trackWelcome(message.author.id, message.guild.id, userId);
+                
+                // Mark that this welcome was tracked
+                db.prepare(`
+                  INSERT OR IGNORE INTO user_interactions (user_id, guild_id, interaction_type, target_user_id, created_at)
+                  VALUES (?, ?, 'welcomed_user', ?, ?)
+                `).run(message.author.id, message.guild.id, userId, new Date().toISOString());
+              }
+            }
+          } catch (err) {
+            console.error('[WelcomeTracking] Error tracking welcome:', err);
+          }
         }
       }
     } catch (err) {

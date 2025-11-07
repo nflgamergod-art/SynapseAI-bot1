@@ -204,6 +204,109 @@ export async function handleEnhancedCommands(interaction: ChatInputCommandIntera
                 return true;
             }
 
+            case 'stats': {
+                // Show comprehensive user statistics
+                const { getUserStats, getUserPoints, ACHIEVEMENTS } = await import('../services/rewards');
+                const targetUser = interaction.options.getUser('user') ?? interaction.user;
+                const guildId = interaction.guild?.id || null;
+                
+                const stats = getUserStats(targetUser.id, guildId);
+                const userPoints = getUserPoints(targetUser.id, guildId);
+                
+                const { EmbedBuilder } = await import('discord.js');
+                const embed = new EmbedBuilder()
+                    .setTitle(`📊 ${targetUser.username}'s Statistics`)
+                    .setColor(0x3498DB)
+                    .setThumbnail(targetUser.displayAvatarURL())
+                    .setTimestamp();
+                
+                // Support Statistics
+                const supportStats = [
+                    `**Total Assists:** ${stats.totalAssists}`,
+                    `**Current Streak:** ${stats.currentStreak} day${stats.currentStreak !== 1 ? 's' : ''}`,
+                    `**Longest Streak:** ${stats.longestStreak} day${stats.longestStreak !== 1 ? 's' : ''}`,
+                    `**Total Cases:** ${stats.totalCases}`,
+                    `**Resolved Cases:** ${stats.resolvedCases}`,
+                    `**Resolution Rate:** ${(stats.resolutionRate * 100).toFixed(1)}%`,
+                    `**Fast Resolutions:** ${stats.fastResolutions}`
+                ].join('\n');
+                embed.addFields({ name: '🎯 Support Stats', value: supportStats, inline: false });
+                
+                // Community Statistics
+                const communityStats = [
+                    `**Welcomed Users:** ${stats.welcomedUsers}`,
+                    `**Conversations Started:** ${stats.conversationsStarted}`
+                ].join('\n');
+                embed.addFields({ name: '👥 Community Stats', value: communityStats, inline: true });
+                
+                // Activity Statistics
+                const activityStats = [
+                    `**Messages Sent:** ${stats.totalMessages}`,
+                    `**Next Milestone:** ${Math.ceil(stats.totalMessages / 100) * 100 || 100}`,
+                    `**Progress:** ${stats.totalMessages % 100}/100`
+                ].join('\n');
+                embed.addFields({ name: '📨 Activity Stats', value: activityStats, inline: true });
+                
+                // Achievement Progress
+                const achievementProgress = [];
+                
+                // Check each achievement requirement
+                if (stats.totalAssists < 1) {
+                    achievementProgress.push(`❌ First Assist: Need 1 assist (Have ${stats.totalAssists})`);
+                } else {
+                    achievementProgress.push(`✅ First Assist (10 pts)`);
+                }
+                
+                if (stats.currentStreak < 3) {
+                    achievementProgress.push(`🎯 3-Day Streak: ${stats.currentStreak}/3 days`);
+                } else if (stats.currentStreak < 7) {
+                    achievementProgress.push(`✅ 3-Day Streak (25 pts)\n🎯 Week Warrior: ${stats.currentStreak}/7 days`);
+                } else {
+                    achievementProgress.push(`✅ 3-Day Streak (25 pts)\n✅ Week Warrior (50 pts)`);
+                }
+                
+                if (stats.welcomedUsers < 10) {
+                    achievementProgress.push(`🎯 Welcome Wagon: ${stats.welcomedUsers}/10 users welcomed`);
+                } else {
+                    achievementProgress.push(`✅ Welcome Wagon (20 pts)`);
+                }
+                
+                if (stats.conversationsStarted < 50) {
+                    achievementProgress.push(`🎯 Conversation Starter: ${stats.conversationsStarted}/50 conversations`);
+                } else {
+                    achievementProgress.push(`✅ Conversation Starter (30 pts)`);
+                }
+                
+                if (stats.fastResolutions < 5) {
+                    achievementProgress.push(`🎯 Speed Demon: ${stats.fastResolutions}/5 fast resolutions`);
+                } else {
+                    achievementProgress.push(`✅ Speed Demon (30 pts)`);
+                }
+                
+                if (stats.totalAssists < 100) {
+                    achievementProgress.push(`🎯 Century Club: ${stats.totalAssists}/100 assists`);
+                } else {
+                    achievementProgress.push(`✅ Century Club (100 pts)`);
+                }
+                
+                if (stats.totalMessages < 1000) {
+                    achievementProgress.push(`🎯 Chatterbox Champion: ${stats.totalMessages}/1000 messages`);
+                } else {
+                    achievementProgress.push(`✅ Chatterbox Champion (150 pts)`);
+                }
+                
+                embed.addFields({ 
+                    name: '🏆 Achievement Progress', 
+                    value: achievementProgress.slice(0, 10).join('\n') || 'No progress yet',
+                    inline: false 
+                });
+                
+                embed.setFooter({ text: `Total Points: ${userPoints} 🪙 | Use /achievements to see all unlocked achievements` });
+                
+                await safeReply(interaction, { embeds: [embed], flags: 64 } as any);
+                return true;
+            }
+
             case 'claimperk': {
                 // Simulate processing a perk claim
                 await safeReply(interaction, '✅ Perk claim processed successfully!', { flags: 64 } as any);
