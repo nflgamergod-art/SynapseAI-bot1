@@ -125,9 +125,11 @@ export async function handleConversationalReply(message: Message) {
   
   for (const { pattern, keys } of directQuestions) {
     if (pattern.test(lowerContent)) {
+      console.log(`[Direct Question] Pattern matched: ${pattern}, checking keys: ${keys.join(', ')}`);
       let foundInfo = '';
       for (const key of keys) {
         const memory = getMemoryByKey(message.author.id, key, guildId);
+        console.log(`[Direct Question] Checked key "${key}": ${memory ? `FOUND - ${memory.value}` : 'NOT FOUND'}`);
         if (memory) {
           foundInfo += `${memory.key}: ${memory.value}\n`;
         }
@@ -136,6 +138,9 @@ export async function handleConversationalReply(message: Message) {
       if (foundInfo) {
         // User is asking about info we have - make sure AI sees it clearly
         directAnswerContext = `\n🔍 DIRECT QUESTION DETECTED - User is asking about their own information that you HAVE SAVED:\n${foundInfo}\nYou MUST share this information with them! Don't say you don't have it!\n\n`;
+        console.log(`[Direct Question] Added context to AI: ${directAnswerContext}`);
+      } else {
+        console.log(`[Direct Question] Pattern matched but no saved info found for any of the keys`);
       }
       break;
     }
