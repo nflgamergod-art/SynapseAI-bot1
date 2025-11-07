@@ -154,8 +154,45 @@ export async function handleEnhancedCommands(interaction: ChatInputCommandIntera
             }
 
             case 'perks': {
-                // Restore previous perks
-                await safeReply(interaction, `🎁 Your perks:\n- Custom Role\n- Exclusive Channel Access\n- Priority Support\n- Early Access to Features\n- Beta Tester Role`, { flags: 64 } as any);
+                // Show user's actual points and unlockable perks with progress
+                const { getUserPoints, getUnlockedPerks } = await import('../services/rewards');
+                const targetUser = interaction.options.getUser('user') ?? interaction.user;
+                const guildId = interaction.guild?.id || null;
+                
+                const userPoints = getUserPoints(targetUser.id, guildId);
+                const perks = getUnlockedPerks(targetUser.id, guildId);
+                
+                const { EmbedBuilder } = await import('discord.js');
+                const embed = new EmbedBuilder()
+                    .setTitle(`✨ ${targetUser.username}'s Perks & Progress`)
+                    .setColor(0xFFD700)
+                    .setDescription(`**Current Points:** ${userPoints} 🪙\n\nEarn points by helping others, contributing to the community, and being active!`)
+                    .setTimestamp();
+                
+                // Group perks by status
+                const unlocked = perks.filter(p => p.unlocked);
+                const locked = perks.filter(p => !p.unlocked);
+                
+                if (unlocked.length > 0) {
+                    const unlockedList = unlocked.map(p => 
+                        `✅ **${p.name}** - ${p.description}`
+                    ).join('\n');
+                    embed.addFields({ name: '🎁 Unlocked Perks', value: unlockedList, inline: false });
+                }
+                
+                if (locked.length > 0) {
+                    const lockedList = locked.map(p => {
+                        const needed = (p as any).requiredPoints - userPoints;
+                        const progress = Math.min(100, Math.floor((userPoints / (p as any).requiredPoints) * 100));
+                        const progressBar = '█'.repeat(Math.floor(progress / 10)) + '░'.repeat(10 - Math.floor(progress / 10));
+                        return `🔒 **${p.name}** (${(p as any).requiredPoints} points)\n   ${progressBar} ${progress}% - Need ${needed} more points\n   ${p.description}`;
+                    }).join('\n\n');
+                    embed.addFields({ name: '🎯 Locked Perks', value: lockedList, inline: false });
+                }
+                
+                embed.setFooter({ text: 'Use /claimperk <perk> to claim unlocked perks!' });
+                
+                await safeReply(interaction, { embeds: [embed], flags: 64 } as any);
                 return true;
             }
 
