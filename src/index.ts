@@ -1234,7 +1234,7 @@ client.on("interactionCreate", async (interaction) => {
           const ticketEmbed = new EmbedBuilder()
             .setTitle(`🎫 Ticket #${ticketId}`)
             .setColor(0x00AE86)
-            .setDescription(`Thanks for opening a ticket. Please describe your issue and any details that can help us assist you.`)
+            .setDescription(`**Opened by:** <@${interaction.user.id}>\n\nThanks for opening a ticket. Please describe your issue and any details that can help us assist you.`)
             .setFooter({ text: 'Use the button below or /ticket close to close this ticket' });
 
           const ticketActions = new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -1246,7 +1246,7 @@ client.on("interactionCreate", async (interaction) => {
             : 'New ticket!';
 
           await (ticketChannel as any).send({ 
-            content: supportMentions, 
+            content: `${supportMentions} - <@${interaction.user.id}>`, 
             embeds: [ticketEmbed],
             components: [ticketActions]
           });
@@ -3145,7 +3145,7 @@ client.on("interactionCreate", async (interaction) => {
       const ticketEmbed = new EmbedBuilder()
         .setTitle(`🎫 Ticket #${ticketId}`)
         .setColor(0x00AE86)
-        .setDescription(`**Category:** ${category}\n**Description:** ${description}\n\nSupport will be with you shortly!`)
+        .setDescription(`**Opened by:** <@${interaction.user.id}>\n**Category:** ${category}\n**Description:** ${description}\n\nSupport will be with you shortly!`)
         .setFooter({ text: 'Use the button below or /ticket close to close this ticket' });
 
       const ticketActions = new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -3157,7 +3157,7 @@ client.on("interactionCreate", async (interaction) => {
         : 'New ticket!';
 
       await ticketChannel.send({ 
-        content: supportMentions, 
+        content: `${supportMentions} - <@${interaction.user.id}>`, 
         embeds: [ticketEmbed],
         components: [ticketActions]
       });
