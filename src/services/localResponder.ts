@@ -189,6 +189,71 @@ export async function handleReply(message: Message): Promise<boolean> {
     console.log(`[handleReply] Replying to message ID: ${repliedTo.id}, Author: ${repliedTo.author.username}`);
     if (repliedTo.author.id === message.client.user?.id) {
       try {
+        // Check if user is asking about specific saved information
+        const { getMemoryByKey } = await import('./memory');
+        const lowerContent = message.content.toLowerCase();
+        let directAnswerContext: string | undefined;
+        
+        // Direct question patterns - check for saved info first
+        const directQuestions: { pattern: RegExp; keys: string[] }[] = [
+          { pattern: /what'?s my (birthday|bday|birth date)/i, keys: ['birthday'] },
+          { pattern: /when is my (birthday|bday)/i, keys: ['birthday'] },
+          { pattern: /what'?s my (name|full name)/i, keys: ['name'] },
+          { pattern: /how old am i|what'?s my age/i, keys: ['age'] },
+          { pattern: /where (do i live|am i from|is my location)/i, keys: ['location'] },
+          { pattern: /what'?s my (timezone|time zone)/i, keys: ['timezone'] },
+          { pattern: /what'?s my (job|occupation|work|career)/i, keys: ['occupation', 'job_title', 'company'] },
+          { pattern: /where do i work|what company/i, keys: ['company', 'job_title'] },
+          { pattern: /what'?s my (major|degree|field of study)/i, keys: ['major', 'school'] },
+          { pattern: /what school|where do i study/i, keys: ['school', 'major'] },
+          { pattern: /what'?s my (spouse|partner|wife|husband)'?s? name/i, keys: ['spouse_name', 'partner_name'] },
+          { pattern: /what are my (kids|children)'?s? names?/i, keys: ['kids_names', 'children_names'] },
+          { pattern: /what (pets|pet) do i have/i, keys: ['pet_name', 'pet_type'] },
+          { pattern: /what'?s my (pet|dog|cat)'?s? name/i, keys: ['pet_name', 'pet_type'] },
+          { pattern: /what'?s my (favorite|fav) (team|game|food|music|book|movie|show)/i, keys: ['favorite_team', 'favorite_game', 'favorite_food', 'favorite_music', 'favorite_book', 'favorite_movie'] },
+          { pattern: /what are my (hobbies|interests)/i, keys: ['hobbies', 'interests'] },
+          { pattern: /what do i like|what are my likes/i, keys: ['likes', 'interests', 'hobbies'] },
+          { pattern: /what do i dislike|what are my dislikes/i, keys: ['dislikes'] },
+          { pattern: /what (programming |coding )?languages? do i know/i, keys: ['programming_languages', 'languages_known'] },
+          { pattern: /what'?s my (tech stack|stack|frameworks?)/i, keys: ['tech_stack', 'frameworks'] },
+          { pattern: /what (projects?|am i (working|building) on)/i, keys: ['current_project', 'projects'] },
+          { pattern: /what'?s my (favorite |preferred )?(code )?editor/i, keys: ['favorite_editor', 'code_editor'] },
+          { pattern: /what am i (learning|studying)/i, keys: ['learning_goals', 'currently_learning', 'major'] },
+          { pattern: /what are my (career |personal )?goals?/i, keys: ['career_goals', 'personal_goals', 'goals'] },
+          { pattern: /what'?s my (dream location|dream place|where do i want to (live|go|visit))/i, keys: ['dream_location', 'travel_goals'] },
+          { pattern: /what are my (dietary restrictions|allergies)/i, keys: ['dietary_restrictions', 'allergies'] },
+          { pattern: /am i (allergic|vegetarian|vegan)/i, keys: ['allergies', 'dietary_restrictions'] },
+          { pattern: /what are my (work hours|working hours|availability)/i, keys: ['work_hours', 'availability'] },
+          { pattern: /when am i (available|free)/i, keys: ['availability', 'work_hours'] },
+          { pattern: /what'?s my (email|phone|contact)/i, keys: ['email', 'phone'] },
+          { pattern: /what'?s my (twitter|instagram|github|linkedin|social media)/i, keys: ['twitter', 'instagram', 'github', 'linkedin', 'social_media'] },
+        ];
+        
+        const guildId = message.guild?.id ?? null;
+        for (const { pattern, keys } of directQuestions) {
+          if (pattern.test(lowerContent)) {
+            console.log(`[Direct Question] Pattern matched: ${pattern}, checking keys: ${keys.join(', ')}`);
+            let foundInfo = '';
+            for (const key of keys) {
+              const memory = getMemoryByKey(message.author.id, key, guildId);
+              console.log(`[Direct Question] Checked key "${key}": ${memory ? `FOUND - ${memory.value}` : 'NOT FOUND'}`);
+              if (memory) {
+                foundInfo += `${memory.key}: ${memory.value}\n`;
+              }
+            }
+            
+            if (foundInfo) {
+              // User is asking about info we have - respond directly with it
+              console.log(`[Direct Question] Found saved info, responding directly`);
+              await message.reply(`Here's what I have saved about you:\n\n${foundInfo}`);
+              return true;
+            } else {
+              console.log(`[Direct Question] Pattern matched but no saved info found for any of the keys`);
+            }
+            break;
+          }
+        }
+        
         const response = await generateReply(message.content, message.guild?.id);
         console.log(`[handleReply] Generated response: ${response}`);
         await message.reply(response);

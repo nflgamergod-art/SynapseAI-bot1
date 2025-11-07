@@ -675,6 +675,9 @@ client.once('clientReady', async () => {
         { name: "user", description: "User to check (defaults to you)", type: 6, required: false },
         { name: "limit", description: "Number of shifts to show (default 10)", type: 4, required: false }
       ] },
+      { name: "detail", description: "View detailed shift breakdown (with breaks)", type: 1, options: [
+        { name: "shift_id", description: "Shift ID to view details for", type: 4, required: true }
+      ] },
       { name: "panel", description: "Post a live shift tracker panel in this channel", type: 1 }
     ] },
     { name: "shiftstats", description: "📊 View shift statistics", options: [
@@ -2944,7 +2947,8 @@ client.on("interactionCreate", async (interaction) => {
 
       const embed = new EmbedBuilder()
         .setTitle(`🕒 Shift History - ${user.tag}`)
-        .setColor(0x5865F2);
+        .setColor(0x5865F2)
+        .setDescription(`Use \`/shifts detail shift_id:<ID>\` to see break details for a specific shift.`);
 
       for (const shift of shifts) {
         const clockIn = new Date(shift.clock_in);
@@ -2959,6 +2963,56 @@ client.on("interactionCreate", async (interaction) => {
         });
       }
 
+      return await safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
+    }
+
+    if (subCmd === "detail") {
+      const shiftId = interaction.options.getInteger('shift_id', true);
+      const { getDB } = await import('./services/db');
+      const { getShiftBreaks } = await import('./services/payroll');
+      
+      const db = getDB();
+      const shift = db.prepare(`SELECT * FROM shifts WHERE id = ?`).get(shiftId) as any;
+      
+      if (!shift) {
+        return interaction.reply({ content: '❌ Shift not found.', ephemeral: true });
+      }
+      
+      if (shift.guild_id !== interaction.guild.id) {
+        return interaction.reply({ content: '❌ That shift is not in this server.', ephemeral: true });
+      }
+      
+      const breaks = getShiftBreaks(shiftId);
+      const clockIn = new Date(shift.clock_in);
+      const clockOut = shift.clock_out ? new Date(shift.clock_out) : null;
+      
+      // Calculate totals
+      const totalElapsedMinutes = clockOut ? Math.floor((clockOut.getTime() - clockIn.getTime()) / 60000) : 0;
+      const totalBreakMinutes = breaks.filter(b => b.break_end).reduce((sum, b) => sum + (b.duration_minutes || 0), 0);
+      const netWorkedMinutes = totalElapsedMinutes - totalBreakMinutes;
+      
+      const embed = new EmbedBuilder()
+        .setTitle(`🕒 Shift #${shiftId} - Detailed Breakdown`)
+        .setColor(0x5865F2)
+        .addFields(
+          { name: '⏰ Clock In', value: clockIn.toLocaleString(), inline: true },
+          { name: '⏰ Clock Out', value: clockOut ? clockOut.toLocaleString() : '❌ Still active', inline: true },
+          { name: '📊 Total Elapsed', value: `${Math.floor(totalElapsedMinutes / 60)}h ${totalElapsedMinutes % 60}m`, inline: true },
+          { name: '☕ Break Time', value: `${Math.floor(totalBreakMinutes / 60)}h ${totalBreakMinutes % 60}m (${breaks.length} breaks)`, inline: true },
+          { name: '💼 Net Worked', value: `${Math.floor(netWorkedMinutes / 60)}h ${netWorkedMinutes % 60}m`, inline: true },
+          { name: '💰 Paid Hours', value: `${(netWorkedMinutes / 60).toFixed(2)} hours`, inline: true }
+        );
+      
+      if (breaks.length > 0) {
+        const breakList = breaks.map((b, idx) => {
+          const start = new Date(b.break_start);
+          const end = b.break_end ? new Date(b.break_end) : null;
+          const duration = b.duration_minutes || 0;
+          return `**Break ${idx + 1}:** ${start.toLocaleTimeString()} - ${end ? end.toLocaleTimeString() : '⏳ Ongoing'} (${duration}m)`;
+        }).join('\n');
+        embed.addFields({ name: '☕ Break Details', value: breakList || 'No breaks', inline: false });
+      }
+      
       return await safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
     }
 
