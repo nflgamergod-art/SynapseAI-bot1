@@ -197,7 +197,7 @@ export async function handleReply(message: Message): Promise<boolean> {
         // Direct question patterns - check for saved info first
         const directQuestions: { pattern: RegExp; keys: string[] }[] = [
           { pattern: /what'?s my (birthday|bday|birth date)/i, keys: ['birthday'] },
-          { pattern: /when'?s? (is )?my (birthday|bday)/i, keys: ['birthday'] },
+          { pattern: /when'?s?\s*(is\s+)?my (birthday|bday)/i, keys: ['birthday'] },
           { pattern: /what'?s my (name|full name)/i, keys: ['name'] },
           { pattern: /how old am i|what'?s my age/i, keys: ['age'] },
           { pattern: /where (do i live|am i from|is my location)/i, keys: ['location'] },
@@ -233,7 +233,9 @@ export async function handleReply(message: Message): Promise<boolean> {
         console.log(`[Direct Question] Checking ${directQuestions.length} patterns against: "${lowerContent}"`);
         
         for (const { pattern, keys } of directQuestions) {
-          if (pattern.test(lowerContent)) {
+          const testResult = pattern.test(lowerContent);
+          console.log(`[Direct Question] Testing pattern ${pattern} against "${lowerContent}" => ${testResult}`);
+          if (testResult) {
             console.log(`[Direct Question] Pattern matched: ${pattern}, checking keys: ${keys.join(', ')}`);
             console.log(`[Direct Question] User ID: ${message.author.id}, Guild ID: ${guildId}`);
             let foundInfo = '';
