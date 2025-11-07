@@ -203,24 +203,49 @@ export async function handleEnhancedCommands(interaction: ChatInputCommandIntera
             }
 
             case 'setcolor': {
+                // Full list of Discord colors
                 const colors = [
-                    { label: 'Red', value: '#FF0000' },
-                    { label: 'Green', value: '#00FF00' },
-                    { label: 'Blue', value: '#0000FF' },
-                    { label: 'Yellow', value: '#FFFF00' },
-                    { label: 'Purple', value: '#800080' },
-                    { label: 'Default', value: 'default' },
+                    { label: '🔴 Red', value: '#ED4245', emoji: '🔴' },
+                    { label: '🟠 Orange', value: '#F26522', emoji: '🟠' },
+                    { label: '🟡 Yellow', value: '#FEE75C', emoji: '🟡' },
+                    { label: '🟢 Green', value: '#57F287', emoji: '🟢' },
+                    { label: '🔵 Blue', value: '#5865F2', emoji: '🔵' },
+                    { label: '🟣 Purple', value: '#9B59B6', emoji: '🟣' },
+                    { label: '🟤 Brown', value: '#8B4513', emoji: '🟤' },
+                    { label: '⚫ Black', value: '#23272A', emoji: '⚫' },
+                    { label: '⚪ White', value: '#FFFFFF', emoji: '⚪' },
+                    { label: '🩷 Pink', value: '#EB459E', emoji: '🩷' },
+                    { label: '💚 Dark Green', value: '#2ECC71', emoji: '💚' },
+                    { label: '💙 Dark Blue', value: '#3498DB', emoji: '💙' },
+                    { label: '🧡 Dark Orange', value: '#E67E22', emoji: '🧡' },
+                    { label: '💛 Gold', value: '#F1C40F', emoji: '💛' },
+                    { label: '💜 Dark Purple', value: '#8E44AD', emoji: '💜' },
+                    { label: '🩶 Gray', value: '#95A5A6', emoji: '🩶' },
+                    { label: '🖤 Dark Gray', value: '#607D8B', emoji: '🖤' },
+                    { label: '❤️ Crimson', value: '#DC143C', emoji: '❤️' },
+                    { label: '🟦 Blurple', value: '#5865F2', emoji: '🟦' },
+                    { label: '🔶 Fuchsia', value: '#EB459E', emoji: '🔶' },
+                    { label: '💎 Aqua', value: '#1ABC9C', emoji: '💎' },
+                    { label: '🌟 Light Gray', value: '#BCC0C0', emoji: '🌟' },
+                    { label: '🌊 Navy', value: '#34495E', emoji: '🌊' },
+                    { label: '🔥 Dark Red', value: '#992D22', emoji: '🔥' },
+                    { label: '✨ Default', value: 'default', emoji: '✨' },
                 ];
 
                 const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
                     new StringSelectMenuBuilder()
                         .setCustomId('setcolor-menu')
-                        .setPlaceholder('Select a color')
-                        .addOptions(colors)
+                        .setPlaceholder('🎨 Choose your color')
+                        .setMaxValues(1)
+                        .addOptions(colors.map(c => ({
+                            label: c.label,
+                            value: c.value,
+                            description: c.value === 'default' ? 'Remove custom color' : `Hex: ${c.value}`
+                        })))
                 );
 
                 await interaction.reply({
-                    content: '🎨 Please select a color from the dropdown menu:',
+                    content: '🎨 **Select your custom color:**\nChoose a color from the dropdown menu below to customize your role color!',
                     components: [row],
                     flags: 64,
                 });

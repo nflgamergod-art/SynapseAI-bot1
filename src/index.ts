@@ -434,7 +434,7 @@ client.once('clientReady', async () => {
     { name: "perks", description: "✨ View unlocked perks and special abilities", options: [ { name: "user", description: "User to view (defaults to you)", type: 6, required: false } ] },
   { name: "perkspanel", description: "Owner: post a perks claim panel in this channel" },
   { name: "claimperk", description: "Claim an unlocked perk", options: [ { name: "perk", description: "custom_color|priority_support|custom_emoji|channel_suggest|voice_priority|exclusive_role", type: 3, required: true } ] },
-  { name: "setcolor", description: "Set your custom role color (requires custom_color perk)", options: [ { name: "hex", description: "Hex color like #FF8800", type: 3, required: true } ] },
+  { name: "setcolor", description: "🎨 Set your custom role color from a dropdown menu" },
   { name: "requestemoji", description: "Create a custom emoji (requires custom_emoji perk)", options: [ { name: "name", description: "Emoji name (letters, numbers, _)", type: 3, required: true }, { name: "image", description: "Emoji image (PNG/GIF)", type: 11, required: true } ] },
   { name: "setperkrole", description: "Owner: bind a server role to a perk so claims use it", options: [ { name: "perk", description: "Perk name (see /claimperk for options)", type: 3, required: true }, { name: "role", description: "Role to bind", type: 8, required: true } ] },
     { name: "faq", description: "❓ Quick access to frequently asked questions", options: [ { name: "category", description: "Filter by category", type: 3, required: false } ] },
@@ -1019,7 +1019,7 @@ client.on("interactionCreate", async (interaction) => {
             return interaction.reply({ content: `✅ Perk claimed: ${perkId.replace('_',' ')}`, ephemeral: true });
           }
           if (perkId === 'custom_color') {
-            return interaction.reply({ content: 'Use /setcolor hex:#RRGGBB to choose your color.', ephemeral: true });
+            return interaction.reply({ content: 'Use /setcolor to choose your color from a dropdown menu.', ephemeral: true });
           }
           if (perkId === 'custom_emoji') {
             return interaction.reply({ content: 'Use /requestemoji name:<short_name> image:<attachment> to request your emoji.', ephemeral: true });
