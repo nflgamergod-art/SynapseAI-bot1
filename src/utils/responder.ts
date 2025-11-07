@@ -71,12 +71,16 @@ export async function handleConversationalReply(message: Message) {
   const relevant = findRelevantMemories(message.content, message.author.id, guildId, 5);
   const similar = findSimilarQA(message.content, message.author.id, guildId);
   let memoryContext = '';
+  
+  // CRITICAL: Always include user's Discord username/tag as primary identifier
+  memoryContext += `User Info (ALWAYS REFERENCE THIS):\n- Discord Username: ${message.author.username}\n- Discord User ID: ${message.author.id}\n- Discord Tag: ${message.author.tag}\n\n`;
+  
   if (relevant.length) {
     const lines = relevant.map(m => `- (${m.type}) ${m.key}: ${m.value}`);
-    memoryContext += `Known user facts/preferences (from past interactions):\n${lines.join('\n')}\n\n`;
+    memoryContext += `Known user facts/preferences (from past interactions with THIS user ${message.author.username}):\n${lines.join('\n')}\n\n`;
   }
   if (similar) {
-    memoryContext += `Previously, when asked a similar question, your answer was: "${similar.answer}". You may reference or improve upon it if still accurate.\n\n`;
+    memoryContext += `Previously, when THIS user (${message.author.username}) asked a similar question, your answer was: "${similar.answer}". You may reference or improve upon it if still accurate.\n\n`;
   }
 
   // Add enhanced context from new features
@@ -84,6 +88,7 @@ export async function handleConversationalReply(message: Message) {
     const { getFullUserContext } = await import('../services/enhancedIntegration');
     const { searchKnowledge } = await import('../services/preventiveSupport');
     const { getUserAchievements } = await import('../services/rewards');
+    const { searchAnnouncements } = await import('../services/announcements');
     
     const enhancedData = getFullUserContext(message.author.id, guildId);
     
@@ -109,6 +114,15 @@ export async function handleConversationalReply(message: Message) {
         `Q: ${k.question}\nA: ${k.answer}`
       ).join('\n\n');
       memoryContext += `Relevant knowledge base entries:\n${kbAnswers}\n\n`;
+    }
+    
+    // Search for relevant announcements from owner
+    const announcements = searchAnnouncements(guildId || '', message.content, 3);
+    if (announcements.length > 0) {
+      const announcementInfo = announcements.map(a => 
+        `[${a.category.toUpperCase()}] ${a.title}:\n${a.content}`
+      ).join('\n\n');
+      memoryContext += `\n📢 IMPORTANT OWNER ANNOUNCEMENTS (Reference these when relevant):\n${announcementInfo}\n\n`;
     }
     
     // Check for recent achievements
@@ -159,6 +173,17 @@ export async function handleConversationalReply(message: Message) {
     }
     
     const corrCtx = detectCorrectionContext(message.channel.id, message.createdTimestamp);
+    
+    // Check if owner is correcting the bot about someone else's name
+    const ownerCorrectionRe = /(that'?s not|that isn'?t|wrong|incorrect|no,?\s+that'?s)\s+(?:my|someone else|another|not me|not my name)/i;
+    const mentionsOtherUser = message.mentions.users.size > 0 && !message.mentions.has(message.client.user!);
+    
+    if (ownerCorrectionRe.test(message.content) && !events.some(e => e.key.toLowerCase() === 'name' && e.action === 'updated')) {
+      // Owner is correcting but no name was extracted yet - ask the other user
+      const finalReply = `${reply}\n\n🤔 I apologize for the mix-up! Could you please tell me your correct name so I can update my records?`;
+      await sendChunkedReply(message, finalReply);
+      return;
+    }
     
     // Handle "that's correct but" additions - save to knowledge base
     if (corrCtx.isAddition && corrCtx.callOutMsg) {
@@ -235,7 +260,10 @@ export async function handleConversationalReply(message: Message) {
 
 function buildMemoryAck(userMessage: string, events: Array<{ key: string; action: string; oldValue?: string; newValue: string }>, isCorrectionContext: boolean): string {
   if (!events || !events.length) return '';
-  const liarRe = /(lying|liar|that's not true|cap|capping|stop capping)/i;
+  const liarRe = /(lying|liar|that's not true|cap|capping|stop capping|that'?s not|that isn'?t|wrong|incorrect|not (my|their|his|her) name)/i;
+  const correctionRe = /(actually|no,?\s|nope,?\s|false|incorrect|that'?s wrong)/i;
+  const isCorrection = liarRe.test(userMessage) || correctionRe.test(userMessage) || isCorrectionContext;
+  
   const lines: string[] = [];
   const maxLines = 2;
   for (const e of events) {
@@ -251,8 +279,9 @@ function buildMemoryAck(userMessage: string, events: Array<{ key: string; action
       if (k === 'name') lines.push(`Got it — I'll use ${e.newValue} and remember ${e.oldValue} as an alternate spelling.`);
       else lines.push(`Saved an alternate for ${k}.`);
     } else if (e.action === 'updated') {
-      if (liarRe.test(userMessage) || isCorrectionContext) lines.push(`Caught in 4K — updating my notes: ${k} → ${e.newValue}.`);
-      else if (k === 'name') lines.push(`Thanks for the correction — updating your name to ${e.newValue}.`);
+      if (isCorrection && k === 'name') lines.push(`My apologies for the confusion! I've corrected my records — ${e.oldValue} → ${e.newValue}.`);
+      else if (isCorrection) lines.push(`Sorry for the error! Correcting my notes: ${k} → ${e.newValue}.`);
+      else if (k === 'name') lines.push(`Thanks for the update — your name is now ${e.newValue}.`);
       else lines.push(`Updated ${k} to ${e.newValue}.`);
     }
   }

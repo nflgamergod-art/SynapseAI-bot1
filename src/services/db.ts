@@ -76,6 +76,24 @@ function initSchema() {
       timestamp INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_recmsg_channel ON recent_messages(channel_id, timestamp);
+
+    CREATE TABLE IF NOT EXISTS announcements (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      guild_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      category TEXT NOT NULL,
+      title TEXT NOT NULL,
+      content TEXT NOT NULL,
+      keywords TEXT,
+      message_id TEXT,
+      channel_id TEXT,
+      created_at TEXT NOT NULL,
+      expires_at TEXT,
+      is_active INTEGER NOT NULL DEFAULT 1
+    );
+    CREATE INDEX IF NOT EXISTS idx_announcements_guild ON announcements(guild_id);
+    CREATE INDEX IF NOT EXISTS idx_announcements_category ON announcements(guild_id, category);
+    CREATE INDEX IF NOT EXISTS idx_announcements_active ON announcements(guild_id, is_active);
   `);
 }
 

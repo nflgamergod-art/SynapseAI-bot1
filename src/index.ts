@@ -3064,7 +3064,25 @@ client.on("interactionCreate", async (interaction) => {
         console.error('Failed to add helper to support interaction:', e);
       }
 
-      return await safeReply(interaction, `✅ Added <@${helper.id}> as a helper to this ticket.`, { flags: MessageFlags.Ephemeral });
+      // Grant channel permissions to the helper
+      try {
+        const channel = interaction.channel as any;
+        if (channel.permissionOverwrites) {
+          await channel.permissionOverwrites.create(helper.id, {
+            ViewChannel: true,
+            SendMessages: true,
+            ReadMessageHistory: true,
+            AttachFiles: true,
+            EmbedLinks: true
+          });
+          console.log(`✅ Granted channel permissions to helper ${helper.id} in ticket ${ticket.id}`);
+        }
+      } catch (e) {
+        console.error('Failed to grant channel permissions to helper:', e);
+        // Continue even if permissions fail - helper was still added to database
+      }
+
+      return await safeReply(interaction, `✅ Added <@${helper.id}> as a helper to this ticket and granted them access.`, { flags: MessageFlags.Ephemeral });
     }
 
     if (subCmd === "unclaim") {
@@ -5167,6 +5185,33 @@ client.on("messageCreate", async (message: Message) => {
   // Removed early return for mentions to allow AI processing
   if (client.user && message.mentions.has(client.user)) {
     console.log(`[DEBUG] Bot mentioned by ${message.author.username} - processing with AI`);
+  }
+
+  // Auto-detect and save owner announcements
+  if (isOwnerId(message.author.id) && message.guild) {
+    try {
+      const { autoDetectAnnouncement } = await import('./services/announcements');
+      const hasEveryoneMention = message.content.includes('@everyone') || message.content.includes('@here');
+      const hasRoleMention = message.mentions.roles.size > 0;
+      const isLongMessage = message.content.length > 100;
+      
+      // Only auto-save if it's a significant announcement (has @everyone/@role and is substantial)
+      if ((hasEveryoneMention || hasRoleMention) && isLongMessage) {
+        const announcementId = autoDetectAnnouncement(
+          message.guild.id,
+          message.author.id,
+          message.content,
+          message.id,
+          message.channel.id
+        );
+        
+        if (announcementId) {
+          console.log(`📢 Auto-saved owner announcement: ID ${announcementId}`);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to auto-detect announcement:', err);
+    }
   }
 
   // Respond to direct messages to the bot
