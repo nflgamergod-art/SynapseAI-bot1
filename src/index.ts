@@ -145,6 +145,25 @@ client.on('interactionCreate', async (interaction) => {
       return interaction.reply({ content: 'This interaction can only be used in a server.', ephemeral: true });
     }
 
+    // Check if user has the custom_color perk unlocked
+    const { getUserPoints, getUnlockedPerks } = await import('./services/rewards');
+    const guildId = guild.id;
+    const userPoints = getUserPoints(interaction.user.id, guildId);
+    const perks = getUnlockedPerks(interaction.user.id, guildId);
+    const customColorPerk = perks.find(p => p.id === 'custom_color');
+
+    if (!customColorPerk || !customColorPerk.unlocked) {
+      const pointsNeeded = 50 - userPoints;
+      return interaction.reply({ 
+        content: `🔒 You need to unlock the **Custom Color** perk first!\n\n` +
+                 `**Required:** 50 points\n` +
+                 `**Your Points:** ${userPoints} 🪙\n` +
+                 `**Points Needed:** ${pointsNeeded > 0 ? pointsNeeded : 0}\n\n` +
+                 `Use \`/perks\` to see your progress and \`/claimperk custom_color\` once you have enough points!`,
+        ephemeral: true 
+      });
+    }
+
     const member = await guild.members.fetch(interaction.user.id);
 
     if (selectedColor === 'default') {
