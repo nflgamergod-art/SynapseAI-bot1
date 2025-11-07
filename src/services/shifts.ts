@@ -37,7 +37,7 @@ export function initShiftsSchema() {
 }
 
 // Clock in
-export function clockIn(guildId: string, userId: string): { success: boolean; message: string } {
+export function clockIn(guildId: string, userId: string): { success: boolean; message: string; shiftId?: number } {
   const db = getDB();
   
   // Check if already clocked in
@@ -51,12 +51,14 @@ export function clockIn(guildId: string, userId: string): { success: boolean; me
   }
   
   const now = new Date().toISOString();
-  db.prepare(`
+  const result = db.prepare(`
     INSERT INTO shifts (guild_id, user_id, clock_in)
     VALUES (?, ?, ?)
   `).run(guildId, userId, now);
   
-  return { success: true, message: 'Clocked in successfully!' };
+  const shiftId = result.lastInsertRowid as number;
+  
+  return { success: true, message: 'Clocked in successfully!', shiftId };
 }
 
 // Clock out

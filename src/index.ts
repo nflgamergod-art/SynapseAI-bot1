@@ -85,9 +85,37 @@ function parseDuration(durationStr: string): number {
   }
 }
 
+// Helper to update all shift panels in a guild
+async function updateShiftPanels(client: Client, guildId: string) {
+  try {
+    const { getShiftPanels } = await import('./services/shifts');
+    const panels = getShiftPanels(guildId);
+    const embed = await buildShiftPanelEmbed(guildId, client);
+    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId('shifts-refresh').setLabel('🔄 Refresh').setStyle(ButtonStyle.Secondary)
+    );
+
+    const guild = await client.guilds.fetch(guildId);
+    for (const panel of panels) {
+      try {
+        const channel = await guild.channels.fetch(panel.channel_id);
+        if (channel?.isTextBased()) {
+          const message = await (channel as any).messages.fetch(panel.message_id);
+          await message.edit({ embeds: [embed], components: [row] });
+        }
+      } catch (e) {
+        // Panel message may have been deleted
+      }
+    }
+  } catch (err) {
+    console.error('Failed to update shift panels:', err);
+  }
+}
+
 // Helper to build shift panel embed
 async function buildShiftPanelEmbed(guildId: string, client: Client): Promise<EmbedBuilder> {
   const { getActiveStaff } = await import('./services/shifts');
+  const { getActiveBreak } = await import('./services/payroll');
   const activeStaff = getActiveStaff(guildId);
   
   const embed = new EmbedBuilder()
@@ -103,10 +131,18 @@ async function buildShiftPanelEmbed(guildId: string, client: Client): Promise<Em
       const duration = Math.floor((Date.now() - clockIn.getTime()) / 60000);
       const hours = Math.floor(duration / 60);
       const mins = duration % 60;
-      return `✅ <@${shift.user_id}> — ${hours}h ${mins}m (since <t:${Math.floor(clockIn.getTime() / 1000)}:t>)`;
+      
+      // Check if on break
+      const activeBreak = getActiveBreak(shift.id);
+      const status = activeBreak ? '☕ On Break' : '✅ Active';
+      
+      return `${status} <@${shift.user_id}> — ${hours}h ${mins}m (since <t:${Math.floor(clockIn.getTime() / 1000)}:t>)`;
     });
     embed.setDescription(staffLines.join('\n'));
-    embed.setFooter({ text: `${activeStaff.length} staff member${activeStaff.length === 1 ? '' : 's'} on duty` });
+    
+    const onBreak = activeStaff.filter(shift => getActiveBreak(shift.id)).length;
+    const active = activeStaff.length - onBreak;
+    embed.setFooter({ text: `${active} active, ${onBreak} on break | Total: ${activeStaff.length} staff` });
   }
   
   return embed;
@@ -319,6 +355,45 @@ client.once('clientReady', async () => {
   // Start achievement cron jobs for periodic checks
   const { startAchievementCron } = await import('./services/achievementCron');
   startAchievementCron();
+  
+  // Start payroll auto-break checker (runs every 2 minutes)
+  const { checkAndAutoBreak } = await import('./services/payroll');
+  setInterval(async () => {
+    try {
+      // Get all guilds and check for inactive clocked-in users
+      for (const [guildId, guild] of client.guilds.cache) {
+        const autoBrokenUsers = checkAndAutoBreak(guildId);
+        
+        if (autoBrokenUsers.length > 0) {
+          console.log(`☕ Auto-break triggered for ${autoBrokenUsers.length} users in guild ${guild.name}`);
+          
+          // Notify users who were auto-broken
+          for (const { userId, shiftId } of autoBrokenUsers) {
+            try {
+              const user = await client.users.fetch(userId);
+              await user.send({
+                embeds: [{
+                  color: 0xFFA500,
+                  title: '☕ Auto-Break Started',
+                  description: `You've been inactive for 10+ minutes while clocked in. You're now on break.\n\nSend any message in the server to automatically resume your shift.`,
+                  timestamp: new Date().toISOString()
+                }]
+              });
+            } catch (err) {
+              console.error(`Failed to notify user ${userId} of auto-break:`, err);
+            }
+          }
+          
+          // Update shift panels to reflect break status
+          await updateShiftPanels(client, guildId);
+        }
+      }
+    } catch (err) {
+      console.error('Auto-break check failed:', err);
+    }
+  }, 2 * 60 * 1000); // Every 2 minutes
+  
+  console.log('✅ Payroll auto-break system started (checks every 2 minutes)');
   
   // Register slash commands. If GUILD_ID is set, register for that guild (instant); otherwise register globally.
   const guildId = process.env.GUILD_ID;
@@ -567,6 +642,32 @@ client.once('clientReady', async () => {
       { name: "days", description: "Days to analyze (default 30)", type: 4, required: false }
     ] },
     { name: "whosonduty", description: "👥 View currently clocked-in staff" },
+    // Payroll System
+    { name: "payroll", description: "💰 Payroll system management", options: [
+      { name: "config", description: "Configure payroll settings", type: 1, options: [
+        { name: "hourly_rate", description: "Hourly pay rate", type: 10, required: false },
+        { name: "max_hours_day", description: "Max hours per day (default 5)", type: 4, required: false },
+        { name: "max_days_week", description: "Max days per week (default 5)", type: 4, required: false },
+        { name: "auto_break_minutes", description: "Auto-break after inactivity (default 10)", type: 4, required: false }
+      ] },
+      { name: "view", description: "View payroll configuration", type: 1 },
+      { name: "calculate", description: "Calculate pay for a period", type: 1, options: [
+        { name: "user", description: "User to calculate for", type: 6, required: true },
+        { name: "start_date", description: "Start date (YYYY-MM-DD)", type: 3, required: true },
+        { name: "end_date", description: "End date (YYYY-MM-DD)", type: 3, required: true }
+      ] },
+      { name: "unpaid", description: "View unpaid pay periods", type: 1, options: [
+        { name: "user", description: "Filter by user (optional)", type: 6, required: false }
+      ] },
+      { name: "markpaid", description: "Mark a pay period as paid", type: 1, options: [
+        { name: "period_id", description: "Pay period ID", type: 4, required: true }
+      ] },
+      { name: "history", description: "View pay period history", type: 1, options: [
+        { name: "user", description: "User to check", type: 6, required: false }
+      ] },
+      { name: "enable", description: "Enable the clock-in system", type: 1 },
+      { name: "disable", description: "Disable the clock-in system", type: 1 }
+    ] },
     // Server Stats Channels
     { name: "statschannels", description: "📊 Configure auto-updating stats channels", options: [
       { name: "set", description: "Set a stats channel", type: 1, options: [
@@ -2442,12 +2543,158 @@ client.on("interactionCreate", async (interaction) => {
     }
   }
 
+  // Payroll System
+  if (name === "payroll") {
+    if (!interaction.guild) return await safeReply(interaction, 'This command can only be used in a server.', { flags: MessageFlags.Ephemeral });
+    if (!isOwnerId(interaction.user.id)) {
+      return await safeReply(interaction, '❌ Only the owner can manage payroll settings.', { flags: MessageFlags.Ephemeral });
+    }
+
+    const subCmd = interaction.options.getSubcommand();
+    const { getPayrollConfig, updatePayrollConfig, calculatePay, createPayPeriod, getUnpaidPayPeriods, markPayPeriodPaid, getUserPayPeriods } = await import('./services/payroll');
+
+    if (subCmd === "config") {
+      const hourlyRate = interaction.options.getNumber('hourly_rate');
+      const maxHoursDay = interaction.options.getInteger('max_hours_day');
+      const maxDaysWeek = interaction.options.getInteger('max_days_week');
+      const autoBreakMinutes = interaction.options.getInteger('auto_break_minutes');
+
+      const updates: any = {};
+      if (hourlyRate !== null) updates.hourly_rate = hourlyRate;
+      if (maxHoursDay !== null) updates.max_hours_per_day = maxHoursDay;
+      if (maxDaysWeek !== null) updates.max_days_per_week = maxDaysWeek;
+      if (autoBreakMinutes !== null) updates.auto_break_minutes = autoBreakMinutes;
+
+      updatePayrollConfig(interaction.guild.id, updates);
+      const config = getPayrollConfig(interaction.guild.id);
+
+      return await safeReply(interaction, `✅ Payroll configuration updated!\n\n**Hourly Rate:** $${config.hourly_rate}\n**Max Hours/Day:** ${config.max_hours_per_day}\n**Max Days/Week:** ${config.max_days_per_week}\n**Auto-Break After:** ${config.auto_break_minutes} minutes`, { flags: MessageFlags.Ephemeral });
+    }
+
+    if (subCmd === "view") {
+      const config = getPayrollConfig(interaction.guild.id);
+      const status = config.is_enabled ? '🟢 Enabled' : '🔴 Disabled';
+
+      const embed = new EmbedBuilder()
+        .setTitle('💰 Payroll Configuration')
+        .setColor(0x00AE86)
+        .addFields(
+          { name: 'Status', value: status, inline: true },
+          { name: 'Hourly Rate', value: `$${config.hourly_rate}`, inline: true },
+          { name: 'Max Hours/Day', value: `${config.max_hours_per_day}h`, inline: true },
+          { name: 'Max Days/Week', value: `${config.max_days_per_week} days`, inline: true },
+          { name: 'Auto-Break After', value: `${config.auto_break_minutes} min`, inline: true }
+        );
+
+      return await safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
+    }
+
+    if (subCmd === "calculate") {
+      const user = interaction.options.getUser('user', true);
+      const startDate = interaction.options.getString('start_date', true);
+      const endDate = interaction.options.getString('end_date', true);
+
+      const payData = calculatePay(interaction.guild.id, user.id, startDate, endDate);
+      const periodId = createPayPeriod(interaction.guild.id, user.id, startDate, endDate);
+
+      const embed = new EmbedBuilder()
+        .setTitle(`💰 Pay Calculation - ${user.tag}`)
+        .setColor(0x57F287)
+        .addFields(
+          { name: 'Period', value: `${startDate} to ${endDate}`, inline: false },
+          { name: 'Total Hours', value: `${payData.totalHours}h`, inline: true },
+          { name: 'Total Shifts', value: `${payData.shifts}`, inline: true },
+          { name: 'Total Pay', value: `$${payData.totalPay}`, inline: true }
+        )
+        .setFooter({ text: `Pay Period ID: ${periodId} | Use /payroll markpaid to mark as paid` });
+
+      return await safeReply(interaction, { embeds: [embed] });
+    }
+
+    if (subCmd === "unpaid") {
+      const user = interaction.options.getUser('user');
+      const periods = getUnpaidPayPeriods(interaction.guild.id, user?.id);
+
+      if (periods.length === 0) {
+        return await safeReply(interaction, '✅ No unpaid pay periods!', { flags: MessageFlags.Ephemeral });
+      }
+
+      const embed = new EmbedBuilder()
+        .setTitle('💰 Unpaid Pay Periods')
+        .setColor(0xED4245);
+
+      for (const period of periods.slice(0, 10)) {
+        embed.addFields({
+          name: `#${period.id} - <@${period.user_id}>`,
+          value: `**Period:** ${period.start_date} to ${period.end_date}\n**Hours:** ${period.total_hours}h\n**Pay:** $${period.total_pay}`,
+          inline: false
+        });
+      }
+
+      return await safeReply(interaction, { embeds: [embed] });
+    }
+
+    if (subCmd === "markpaid") {
+      const periodId = interaction.options.getInteger('period_id', true);
+      markPayPeriodPaid(periodId);
+      return await safeReply(interaction, `✅ Pay period #${periodId} marked as paid!`, { flags: MessageFlags.Ephemeral });
+    }
+
+    if (subCmd === "history") {
+      const user = interaction.options.getUser('user') || interaction.user;
+      const periods = getUserPayPeriods(interaction.guild.id, user.id, 10);
+
+      if (periods.length === 0) {
+        return await safeReply(interaction, `${user.id === interaction.user.id ? 'You have' : user.tag + ' has'} no pay period history.`, { flags: MessageFlags.Ephemeral });
+      }
+
+      const embed = new EmbedBuilder()
+        .setTitle(`💰 Pay History - ${user.tag}`)
+        .setColor(0x57F287);
+
+      for (const period of periods) {
+        const status = period.paid ? '✅ Paid' : '⏳ Unpaid';
+        embed.addFields({
+          name: `#${period.id} - ${status}`,
+          value: `**Period:** ${period.start_date} to ${period.end_date}\n**Hours:** ${period.total_hours}h | **Pay:** $${period.total_pay}${period.paid_at ? `\n**Paid:** ${new Date(period.paid_at).toLocaleDateString()}` : ''}`,
+          inline: false
+        });
+      }
+
+      return await safeReply(interaction, { embeds: [embed] });
+    }
+
+    if (subCmd === "enable") {
+      updatePayrollConfig(interaction.guild.id, { is_enabled: true });
+      return await safeReply(interaction, '✅ Clock-in system enabled!', { flags: MessageFlags.Ephemeral });
+    }
+
+    if (subCmd === "disable") {
+      updatePayrollConfig(interaction.guild.id, { is_enabled: false });
+      return await safeReply(interaction, '⏸️ Clock-in system disabled! Staff will not be able to clock in until re-enabled.', { flags: MessageFlags.Ephemeral });
+    }
+  }
+
   // Staff Shifts
   if (name === "clockin") {
     if (!interaction.guild) return await safeReply(interaction, 'This command can only be used in a server.', { flags: MessageFlags.Ephemeral });
 
+    const { canClockIn } = await import('./services/payroll');
     const { clockIn, getShiftPanels } = await import('./services/shifts');
+    
+    // Check if user can clock in (payroll limits)
+    const canClock = canClockIn(interaction.guild.id, interaction.user.id);
+    if (!canClock.canClock) {
+      return await safeReply(interaction, `❌ ${canClock.reason}`, { flags: MessageFlags.Ephemeral });
+    }
+    
     const result = clockIn(interaction.guild.id, interaction.user.id);
+
+    // Initialize activity tracking for payroll/break system
+    if (result.success && result.shiftId) {
+      const { trackActivity } = await import('./services/payroll');
+      trackActivity(interaction.guild.id, interaction.user.id, result.shiftId);
+    }
 
     // Auto-update all shift panels
     if (result.success) {
@@ -2476,7 +2723,16 @@ client.on("interactionCreate", async (interaction) => {
   if (name === "clockout") {
     if (!interaction.guild) return await safeReply(interaction, 'This command can only be used in a server.', { flags: MessageFlags.Ephemeral });
 
-    const { clockOut, getShiftPanels } = await import('./services/shifts');
+    const { clockOut, getShiftPanels, getActiveShift } = await import('./services/shifts');
+    const activeShift = getActiveShift(interaction.guild.id, interaction.user.id);
+    
+    if (activeShift) {
+      // End any active break before clocking out
+      const { endAutoBreak, cleanupActivityTracker } = await import('./services/payroll');
+      endAutoBreak(activeShift.id);
+      cleanupActivityTracker(activeShift.id);
+    }
+    
     const result = clockOut(interaction.guild.id, interaction.user.id);
 
     // Auto-update all shift panels
@@ -5513,6 +5769,32 @@ client.on("messageCreate", async (message: Message) => {
       }
     }
   }
+  // Track activity for payroll system (must be after blacklist/whitelist checks)
+  if (!message.author.bot && message.guild) {
+    try {
+      const { getActiveShift } = await import('./services/shifts');
+      const { trackActivity, endAutoBreak, getActiveBreak } = await import('./services/payroll');
+      
+      const activeShift = getActiveShift(message.guild.id, message.author.id);
+      if (activeShift) {
+        // Check if user is on break - if so, end the break
+        const activeBreak = getActiveBreak(activeShift.id);
+        if (activeBreak) {
+          endAutoBreak(activeShift.id);
+          console.log(`📥 ${message.author.tag} returned from break (shift ${activeShift.id})`);
+          
+          // Update shift panels to show resumed status
+          await updateShiftPanels(client, message.guild.id);
+        }
+        
+        // Track activity for auto-break detection
+        trackActivity(message.guild.id, message.author.id, activeShift.id);
+      }
+    } catch (err) {
+      console.error('Payroll activity tracking failed:', err);
+    }
+  }
+  
   // Decide if the message is trying to interact with the bot (prefix, wake word, or direct mention)
   // Accept both ! and . as command prefixes
   const tryingToUse = message.content.startsWith(prefix)
