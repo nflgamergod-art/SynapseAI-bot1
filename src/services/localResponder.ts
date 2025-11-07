@@ -197,7 +197,7 @@ export async function handleReply(message: Message): Promise<boolean> {
         // Direct question patterns - check for saved info first
         const directQuestions: { pattern: RegExp; keys: string[] }[] = [
           { pattern: /what'?s my (birthday|bday|birth date)/i, keys: ['birthday'] },
-          { pattern: /when is my (birthday|bday)/i, keys: ['birthday'] },
+          { pattern: /when'?s? (is )?my (birthday|bday)/i, keys: ['birthday'] },
           { pattern: /what'?s my (name|full name)/i, keys: ['name'] },
           { pattern: /how old am i|what'?s my age/i, keys: ['age'] },
           { pattern: /where (do i live|am i from|is my location)/i, keys: ['location'] },
