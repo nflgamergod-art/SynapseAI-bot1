@@ -357,11 +357,14 @@ client.once('clientReady', async () => {
   startAchievementCron();
   
   // Start payroll auto-break checker (runs every 2 minutes)
-  const { checkAndAutoBreak } = await import('./services/payroll');
+  const { checkAndAutoBreak, checkDailyLimitReached, forceClockOut, set24HourCooldown } = await import('./services/payroll');
+  const { getActiveStaff } = await import('./services/shifts');
+  
   setInterval(async () => {
     try {
       // Get all guilds and check for inactive clocked-in users
       for (const [guildId, guild] of client.guilds.cache) {
+        // Check for auto-break (inactivity)
         const autoBrokenUsers = checkAndAutoBreak(guildId);
         
         if (autoBrokenUsers.length > 0) {
@@ -387,9 +390,43 @@ client.once('clientReady', async () => {
           // Update shift panels to reflect break status
           await updateShiftPanels(client, guildId);
         }
+        
+        // Check for users who reached daily limit (auto clock-out)
+        const activeStaff = getActiveStaff(guildId);
+        for (const shift of activeStaff) {
+          if (checkDailyLimitReached(guildId, shift.user_id, shift.id)) {
+            console.log(`⏰ Auto-clocking out ${shift.user_id} - daily limit reached`);
+            
+            const result = forceClockOut(guildId, shift.user_id);
+            if (result.success) {
+              // Set 24h cooldown
+              set24HourCooldown(guildId, shift.user_id);
+              
+              // Notify user
+              try {
+                const user = await client.users.fetch(shift.user_id);
+                const hours = Math.floor(result.duration! / 60);
+                const mins = result.duration! % 60;
+                await user.send({
+                  embeds: [{
+                    color: 0xFF0000,
+                    title: '⏰ Auto Clock-Out: Daily Limit Reached',
+                    description: `You've been automatically clocked out after reaching your daily hour limit.\n\n**Shift Duration:** ${hours}h ${mins}m\n**Cooldown:** 24 hours\n\nYou can clock in again in 24 hours.`,
+                    timestamp: new Date().toISOString()
+                  }]
+                });
+              } catch (err) {
+                console.error(`Failed to notify user ${shift.user_id} of auto-clockout:`, err);
+              }
+              
+              // Update shift panels
+              await updateShiftPanels(client, guildId);
+            }
+          }
+        }
       }
     } catch (err) {
-      console.error('Auto-break check failed:', err);
+      console.error('Payroll auto-check failed:', err);
     }
   }, 2 * 60 * 1000); // Every 2 minutes
   
@@ -630,6 +667,9 @@ client.once('clientReady', async () => {
     // Staff Shifts
     { name: "clockin", description: "🕒 Clock in for your shift" },
     { name: "clockout", description: "🕒 Clock out from your shift" },
+    { name: "forceclockout", description: "👑 Owner: Force clock out a user", options: [
+      { name: "user", description: "User to force clock out", type: 6, required: true }
+    ] },
     { name: "shifts", description: "🕒 Shift management system", options: [
       { name: "history", description: "View shift history", type: 1, options: [
         { name: "user", description: "User to check (defaults to you)", type: 6, required: false },
@@ -2777,6 +2817,65 @@ client.on("interactionCreate", async (interaction) => {
     }
 
     return await safeReply(interaction, { content: result.message, flags: MessageFlags.Ephemeral });
+  }
+
+  if (name === "forceclockout") {
+    if (!interaction.guild) return await safeReply(interaction, 'This command can only be used in a server.', { flags: MessageFlags.Ephemeral });
+    
+    if (!isOwnerId(interaction.user.id)) {
+      return await safeReply(interaction, '❌ This command is owner-only.', { flags: MessageFlags.Ephemeral });
+    }
+    
+    const targetUser = interaction.options.getUser('user', true);
+    const { forceClockOut } = await import('./services/payroll');
+    const { getShiftPanels } = await import('./services/shifts');
+    
+    const result = forceClockOut(interaction.guild.id, targetUser.id);
+    
+    // Update shift panels if successful
+    if (result.success) {
+      const panels = getShiftPanels(interaction.guild.id);
+      const embed = await buildShiftPanelEmbed(interaction.guild.id, interaction.client);
+      const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId('shifts-refresh').setLabel('🔄 Refresh').setStyle(ButtonStyle.Secondary)
+      );
+
+      for (const panel of panels) {
+        try {
+          const channel = await interaction.guild.channels.fetch(panel.channel_id);
+          if (channel?.isTextBased()) {
+            const message = await (channel as any).messages.fetch(panel.message_id);
+            await message.edit({ embeds: [embed], components: [row] });
+          }
+        } catch (e) {
+          // Panel message may have been deleted
+        }
+      }
+      
+      // Try to notify the user
+      try {
+        const hours = Math.floor(result.duration! / 60);
+        const mins = result.duration! % 60;
+        await targetUser.send({
+          embeds: [{
+            color: 0xFF6B00,
+            title: '⚠️ Force Clock-Out',
+            description: `You have been clocked out by an administrator.\n\n**Shift Duration:** ${hours}h ${mins}m`,
+            timestamp: new Date().toISOString()
+          }]
+        });
+      } catch (err) {
+        // User has DMs disabled
+      }
+    }
+    
+    if (result.success && result.duration) {
+      const hours = Math.floor(result.duration / 60);
+      const mins = result.duration % 60;
+      return await safeReply(interaction, `✅ Clocked out ${targetUser.tag}. Duration: **${hours}h ${mins}m**`, { flags: MessageFlags.Ephemeral });
+    }
+    
+    return await safeReply(interaction, result.message, { flags: MessageFlags.Ephemeral });
   }
 
   if (name === "shifts") {

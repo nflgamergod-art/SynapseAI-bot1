@@ -79,6 +79,14 @@ export function initPayrollSchema() {
       FOREIGN KEY (shift_id) REFERENCES shifts(id)
     );
     CREATE INDEX IF NOT EXISTS idx_activity_tracker ON activity_tracker(guild_id, user_id);
+    
+    CREATE TABLE IF NOT EXISTS payroll_cooldowns (
+      guild_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      cooldown_until TEXT NOT NULL,
+      PRIMARY KEY (guild_id, user_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_payroll_cooldowns ON payroll_cooldowns(guild_id, user_id, cooldown_until);
   `);
 }
 
@@ -153,6 +161,12 @@ export function canClockIn(guildId: string, userId: string): { canClock: boolean
   
   if (!config.is_enabled) {
     return { canClock: false, reason: 'Clock-in system is currently disabled by administration.' };
+  }
+  
+  // Check if user is on cooldown
+  const cooldownCheck = isOnCooldown(guildId, userId);
+  if (cooldownCheck.onCooldown) {
+    return { canClock: false, reason: `You're on cooldown for ${cooldownCheck.remainingTime}. You reached your daily limit.` };
   }
   
   const db = getDB();
@@ -430,6 +444,106 @@ export function getUserPayPeriods(guildId: string, userId: string, limit: number
 export function cleanupActivityTracker(shiftId: number): void {
   const db = getDB();
   db.prepare(`DELETE FROM activity_tracker WHERE shift_id = ?`).run(shiftId);
+}
+
+// Force clock out a user (owner command)
+export function forceClockOut(guildId: string, userId: string): { success: boolean; message: string; duration?: number } {
+  const db = getDB();
+  
+  const active = db.prepare(`
+    SELECT id, clock_in FROM shifts
+    WHERE guild_id = ? AND user_id = ? AND clock_out IS NULL
+  `).get(guildId, userId) as any;
+  
+  if (!active) {
+    return { success: false, message: 'User is not clocked in!' };
+  }
+  
+  // End any active break first
+  endAutoBreak(active.id);
+  
+  const now = new Date();
+  const clockIn = new Date(active.clock_in);
+  const durationMs = now.getTime() - clockIn.getTime();
+  const durationMinutes = Math.floor(durationMs / 60000);
+  
+  db.prepare(`
+    UPDATE shifts
+    SET clock_out = ?, duration_minutes = ?
+    WHERE id = ?
+  `).run(now.toISOString(), durationMinutes, active.id);
+  
+  // Clean up activity tracker
+  cleanupActivityTracker(active.id);
+  
+  return { success: true, message: 'User clocked out successfully!', duration: durationMinutes };
+}
+
+// Check if user has reached daily limit and should be auto-clocked-out
+export function checkDailyLimitReached(guildId: string, userId: string, currentShiftId: number): boolean {
+  const config = getPayrollConfig(guildId);
+  const db = getDB();
+  const now = new Date();
+  
+  // Get current shift info
+  const shift = db.prepare(`
+    SELECT clock_in FROM shifts WHERE id = ? AND clock_out IS NULL
+  `).get(currentShiftId) as any;
+  
+  if (!shift) return false;
+  
+  // Calculate current shift duration
+  const clockIn = new Date(shift.clock_in);
+  const currentDurationMs = now.getTime() - clockIn.getTime();
+  const currentDurationHours = currentDurationMs / (1000 * 60 * 60);
+  
+  // Check if current shift has reached the limit
+  if (currentDurationHours >= config.max_hours_per_day) {
+    return true;
+  }
+  
+  return false;
+}
+
+// Set 24h clock-in cooldown
+export function set24HourCooldown(guildId: string, userId: string): void {
+  const db = getDB();
+  const cooldownUntil = new Date();
+  cooldownUntil.setHours(cooldownUntil.getHours() + 24);
+  
+  db.prepare(`
+    INSERT INTO payroll_cooldowns (guild_id, user_id, cooldown_until)
+    VALUES (?, ?, ?)
+    ON CONFLICT(guild_id, user_id)
+    DO UPDATE SET cooldown_until = ?
+  `).run(guildId, userId, cooldownUntil.toISOString(), cooldownUntil.toISOString());
+}
+
+// Check if user is on cooldown
+export function isOnCooldown(guildId: string, userId: string): { onCooldown: boolean; remainingTime?: string } {
+  const db = getDB();
+  const now = new Date();
+  
+  const cooldown = db.prepare(`
+    SELECT cooldown_until FROM payroll_cooldowns
+    WHERE guild_id = ? AND user_id = ?
+  `).get(guildId, userId) as any;
+  
+  if (!cooldown) return { onCooldown: false };
+  
+  const cooldownUntil = new Date(cooldown.cooldown_until);
+  if (now >= cooldownUntil) {
+    // Cooldown expired, clean up
+    db.prepare(`DELETE FROM payroll_cooldowns WHERE guild_id = ? AND user_id = ?`).run(guildId, userId);
+    return { onCooldown: false };
+  }
+  
+  const remainingMs = cooldownUntil.getTime() - now.getTime();
+  const remainingHours = Math.floor(remainingMs / (1000 * 60 * 60));
+  const remainingMinutes = Math.floor((remainingMs % (1000 * 60 * 60)) / (1000 * 60));
+  const remainingTime = `${remainingHours}h ${remainingMinutes}m`;
+  
+  return { onCooldown: true, remainingTime };
 }
 
 // Initialize on import
