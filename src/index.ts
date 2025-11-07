@@ -151,41 +151,49 @@ client.on('interactionCreate', async (interaction) => {
       // Remove all color roles
       const colorRoles = member.roles.cache.filter(role => role.name.startsWith('Color:'));
       for (const role of colorRoles.values()) {
-        await role.delete('User selected default color');
+        await role.delete('User selected default color').catch(() => {});
       }
-      return interaction.reply({ content: 'Your color has been reset to default.', ephemeral: true });
+      return interaction.reply({ content: '✅ Your color has been reset to default.', ephemeral: true });
     }
 
-    // Remove existing color roles
-    const existingColorRoles = member.roles.cache.filter(role => role.name.startsWith('Color:'));
-    for (const role of existingColorRoles.values()) {
-      await role.delete('Replacing with new color role');
-    }
-
-    // Create a new role with the selected color
-    const highestRolePosition = Math.max(...member.roles.cache.map(role => role.position));
-    const roleName = `Color: ${selectedColor}`;
-    let colorRole;
     try {
-      colorRole = await guild.roles.create({
+      // Remove existing color roles
+      const existingColorRoles = member.roles.cache.filter(role => role.name.startsWith('Color:'));
+      for (const role of existingColorRoles.values()) {
+        await role.delete('Replacing with new color role').catch(() => {});
+      }
+
+      // Get the bot's highest role position to ensure we don't exceed it
+      const botMember = await guild.members.fetchMe();
+      const botHighestRole = botMember.roles.highest;
+      
+      // Get user's highest role position
+      const userHighestRole = member.roles.highest;
+      
+      // Position the new role just above the user's highest role, but below bot's highest role
+      let targetPosition = Math.min(userHighestRole.position + 1, botHighestRole.position - 1);
+      
+      // Create the color role
+      const roleName = `Color: ${interaction.user.username}`;
+      const colorRole = await guild.roles.create({
         name: roleName,
         color: selectedColor as ColorResolvable,
-        position: highestRolePosition + 1, // Place the role above the user's highest role
-        permissions: [], // No permissions, purely cosmetic
-        reason: 'User selected a new color',
+        permissions: '0', // No permissions, purely cosmetic
+        reason: 'User color customization',
       });
-    } catch (error) {
-      console.error('Failed to create color role:', error);
-      return interaction.reply({ content: 'An error occurred while creating your color role. Please try again later.', flags: 64 });
-    }
 
-    // Assign the new role to the user
-    try {
+      // Move the role to the correct position
+      await colorRole.setPosition(targetPosition, { reason: 'Position color role for visibility' }).catch(() => {
+        // If positioning fails, that's okay - role still works
+      });
+
+      // Assign the new role to the user
       await member.roles.add(colorRole);
-      await interaction.reply({ content: `Your color has been set to ${selectedColor}.`, flags: 64 }); // Replace `ephemeral` with `flags`
+      
+      await interaction.reply({ content: `✅ Your color has been set! Your new color role is now active.`, ephemeral: true });
     } catch (error) {
-      console.error('Failed to assign color role:', error);
-      return interaction.reply({ content: 'An error occurred while assigning your color role. Please try again later.', ephemeral: true });
+      console.error('Failed to create/assign color role:', error);
+      return interaction.reply({ content: '❌ An error occurred while setting your color. Please try again or contact an admin.', ephemeral: true });
     }
   }
 });
