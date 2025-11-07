@@ -1180,12 +1180,20 @@ client.on("interactionCreate", async (interaction) => {
             return interaction.reply({ content: '❌ This ticket is already closed.', ephemeral: true });
           }
 
-          // Check permissions - only ticket owner, claimer, or admins can close
+          // Check permissions - only ticket owner, claimer, support staff, or admins can close
           const isOwner = ticket.user_id === interaction.user.id;
           const isClaimer = ticket.claimed_by === interaction.user.id;
           const hasManageChannels = (interaction.member as any)?.permissions?.has('ManageChannels');
           
-          if (!isOwner && !isClaimer && !hasManageChannels) {
+          // Check if user has any support roles
+          const { getSupportRoleIds } = await import('./services/tickets');
+          const supportRoleIds = getSupportRoleIds(interaction.guild.id);
+          const memberRoles = (interaction.member as any)?.roles?.cache 
+            ? Array.from((interaction.member as any).roles.cache.keys()) 
+            : [];
+          const hasAnySupportRole = supportRoleIds.some(roleId => memberRoles.includes(roleId));
+          
+          if (!isOwner && !isClaimer && !hasManageChannels && !hasAnySupportRole) {
             return interaction.reply({ content: '❌ Only the ticket owner, assigned staff, or administrators can close this ticket.', ephemeral: true });
           }
 
@@ -2826,25 +2834,40 @@ client.on("interactionCreate", async (interaction) => {
         return interaction.reply({ content: `❌ You already have an open ticket: <#${openTicket.channel_id}>`, ephemeral: true });
       }
 
-      // Create ticket channel
+      // Get support roles to grant them access
+      const { getSupportRoleIds } = await import('./services/tickets');
+      const supportRoleIds = getSupportRoleIds(interaction.guild.id);
+
+      // Create permission overwrites array
+      const permissionOverwrites: any[] = [
+        {
+          id: interaction.guild.id,
+          deny: ['ViewChannel']
+        },
+        {
+          id: interaction.user.id,
+          allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory']
+        },
+        {
+          id: client.user!.id,
+          allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory', 'ManageChannels']
+        }
+      ];
+
+      // Add permissions for all support roles
+      for (const roleId of supportRoleIds) {
+        permissionOverwrites.push({
+          id: roleId,
+          allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory', 'AttachFiles', 'EmbedLinks']
+        });
+      }
+
+      // Create ticket channel with support role permissions
       const ticketChannel = await interaction.guild.channels.create({
         name: `ticket-${interaction.user.username}`,
         type: 0, // Text channel
         parent: config.category_id,
-        permissionOverwrites: [
-          {
-            id: interaction.guild.id,
-            deny: ['ViewChannel']
-          },
-          {
-            id: interaction.user.id,
-            allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory']
-          },
-          {
-            id: client.user!.id,
-            allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory', 'ManageChannels']
-          }
-        ]
+        permissionOverwrites
       });
 
       const ticketId = createTicket(interaction.guild.id, ticketChannel.id, interaction.user.id, category);
@@ -2859,8 +2882,6 @@ client.on("interactionCreate", async (interaction) => {
         new ButtonBuilder().setCustomId(`ticket-close:${ticketId}`).setLabel('🔒 Close Ticket').setStyle(ButtonStyle.Danger)
       );
 
-      const { getSupportRoleIds } = await import('./services/tickets');
-      const supportRoleIds = getSupportRoleIds(interaction.guild.id);
       const supportMentions = supportRoleIds.length > 0 
         ? supportRoleIds.map(id => `<@&${id}>`).join(' ')
         : 'New ticket!';
@@ -2890,12 +2911,20 @@ client.on("interactionCreate", async (interaction) => {
         return interaction.reply({ content: '❌ This ticket is already closed.', ephemeral: true });
       }
 
-      // Only the ticket owner or staff who claimed it can initiate close
+      // Check if user can close the ticket
       const isOwner = ticket.user_id === interaction.user.id;
       const isClaimer = ticket.claimed_by === interaction.user.id;
       const hasManageChannels = (interaction.member as any)?.permissions?.has('ManageChannels');
       
-      if (!isOwner && !isClaimer && !hasManageChannels) {
+      // Check if user has any support roles
+      const { getSupportRoleIds } = await import('./services/tickets');
+      const supportRoleIds = interaction.guild ? getSupportRoleIds(interaction.guild.id) : [];
+      const memberRoles = (interaction.member as any)?.roles?.cache 
+        ? Array.from((interaction.member as any).roles.cache.keys()) 
+        : [];
+      const hasAnySupportRole = supportRoleIds.some(roleId => memberRoles.includes(roleId));
+      
+      if (!isOwner && !isClaimer && !hasManageChannels && !hasAnySupportRole) {
         return interaction.reply({ content: '❌ Only the ticket owner, assigned staff, or administrators can close this ticket.', ephemeral: true });
       }
 
