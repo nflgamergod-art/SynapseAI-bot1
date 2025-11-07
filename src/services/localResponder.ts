@@ -230,13 +230,16 @@ export async function handleReply(message: Message): Promise<boolean> {
         ];
         
         const guildId = message.guild?.id ?? null;
+        console.log(`[Direct Question] Checking ${directQuestions.length} patterns against: "${lowerContent}"`);
+        
         for (const { pattern, keys } of directQuestions) {
           if (pattern.test(lowerContent)) {
             console.log(`[Direct Question] Pattern matched: ${pattern}, checking keys: ${keys.join(', ')}`);
+            console.log(`[Direct Question] User ID: ${message.author.id}, Guild ID: ${guildId}`);
             let foundInfo = '';
             for (const key of keys) {
               const memory = getMemoryByKey(message.author.id, key, guildId);
-              console.log(`[Direct Question] Checked key "${key}": ${memory ? `FOUND - ${memory.value}` : 'NOT FOUND'}`);
+              console.log(`[Direct Question] Checked key "${key}": ${memory ? `FOUND - ${JSON.stringify(memory)}` : 'NOT FOUND'}`);
               if (memory) {
                 foundInfo += `${memory.key}: ${memory.value}\n`;
               }
