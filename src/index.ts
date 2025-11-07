@@ -1203,16 +1203,32 @@ client.on("interactionCreate", async (interaction) => {
           if (openTicket) {
             return interaction.reply({ content: `❌ You already have an open ticket: <#${openTicket.channel_id}>`, ephemeral: true });
           }
-          // Create ticket channel
+          
+          // Get support roles to grant them access
+          const { getSupportRoleIds } = await import('./services/tickets');
+          const supportRoleIds = getSupportRoleIds(interaction.guild.id);
+          
+          // Create permission overwrites array using PermissionsBitField
+          const permissionOverwrites: any[] = [
+            { id: interaction.guild.id, deny: [PermissionsBitField.Flags.ViewChannel] },
+            { id: interaction.user.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory] },
+            { id: interaction.client.user!.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.ManageChannels] }
+          ];
+          
+          // Add permissions for all support roles
+          for (const roleId of supportRoleIds) {
+            permissionOverwrites.push({
+              id: roleId,
+              allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.AttachFiles, PermissionsBitField.Flags.EmbedLinks]
+            });
+          }
+          
+          // Create ticket channel with support role permissions
           const ticketChannel = await interaction.guild.channels.create({
             name: `ticket-${interaction.user.username}`,
             type: 0,
             parent: config.category_id,
-            permissionOverwrites: [
-              { id: interaction.guild.id, deny: ['ViewChannel'] },
-              { id: interaction.user.id, allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory'] },
-              { id: interaction.client.user!.id, allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory', 'ManageChannels'] }
-            ]
+            permissionOverwrites
           });
           const ticketId = createTicket(interaction.guild.id, (ticketChannel as any).id, interaction.user.id, 'general');
           const ticketEmbed = new EmbedBuilder()
@@ -1225,8 +1241,6 @@ client.on("interactionCreate", async (interaction) => {
             new ButtonBuilder().setCustomId(`ticket-close:${ticketId}`).setLabel('🔒 Close Ticket').setStyle(ButtonStyle.Danger)
           );
 
-          const { getSupportRoleIds } = await import('./services/tickets');
-          const supportRoleIds = getSupportRoleIds(interaction.guild.id);
           const supportMentions = supportRoleIds.length > 0 
             ? supportRoleIds.map(id => `<@&${id}>`).join(' ')
             : 'New ticket!';
@@ -3094,19 +3108,19 @@ client.on("interactionCreate", async (interaction) => {
       const { getSupportRoleIds } = await import('./services/tickets');
       const supportRoleIds = getSupportRoleIds(interaction.guild.id);
 
-      // Create permission overwrites array
+      // Create permission overwrites array using PermissionsBitField
       const permissionOverwrites: any[] = [
         {
           id: interaction.guild.id,
-          deny: ['ViewChannel']
+          deny: [PermissionsBitField.Flags.ViewChannel]
         },
         {
           id: interaction.user.id,
-          allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory']
+          allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory]
         },
         {
           id: client.user!.id,
-          allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory', 'ManageChannels']
+          allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.ManageChannels]
         }
       ];
 
@@ -3114,7 +3128,7 @@ client.on("interactionCreate", async (interaction) => {
       for (const roleId of supportRoleIds) {
         permissionOverwrites.push({
           id: roleId,
-          allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory', 'AttachFiles', 'EmbedLinks']
+          allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.AttachFiles, PermissionsBitField.Flags.EmbedLinks]
         });
       }
 
