@@ -229,6 +229,14 @@ export async function handleEnhancedCommands(interaction: ChatInputCommandIntera
                     { label: '🌟 Light Gray', value: '#BCC0C0', emoji: '🌟' },
                     { label: '🌊 Navy', value: '#34495E', emoji: '🌊' },
                     { label: '🔥 Dark Red', value: '#992D22', emoji: '🔥' },
+                    { label: '🌈 Gradient Sunset', value: '#FF6B35', emoji: '🌈' },
+                    { label: '🌸 Gradient Rose', value: '#FF66B2', emoji: '🌸' },
+                    { label: '🌅 Gradient Ocean', value: '#00D9FF', emoji: '🌅' },
+                    { label: '🍇 Gradient Purple', value: '#B565D8', emoji: '🍇' },
+                    { label: '✨ Holographic Silver', value: '#C0C0C0', emoji: '✨' },
+                    { label: '💫 Holographic Blue', value: '#7DF9FF', emoji: '💫' },
+                    { label: '🔮 Holographic Purple', value: '#DA70D6', emoji: '🔮' },
+                    { label: '⭐ Holographic Gold', value: '#FFD700', emoji: '⭐' },
                     { label: '✨ Default', value: 'default', emoji: '✨' },
                 ];
 
