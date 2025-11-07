@@ -546,5 +546,59 @@ export function isOnCooldown(guildId: string, userId: string): { onCooldown: boo
   return { onCooldown: true, remainingTime };
 }
 
+// Reset user's payroll hours (delete shifts within time period)
+export function resetPayrollHours(guildId: string, userId: string, days: number = 30): { deletedShifts: number; deletedHours: number } {
+  const db = getDB();
+  const now = new Date();
+  const startDate = new Date(now);
+  startDate.setDate(now.getDate() - days);
+  
+  // Get total hours before deletion
+  const totalMinutes = db.prepare(`
+    SELECT COALESCE(SUM(duration_minutes), 0) as total
+    FROM shifts
+    WHERE guild_id = ? AND user_id = ? AND clock_in >= ? AND clock_out IS NOT NULL
+  `).get(guildId, userId, startDate.toISOString()) as any;
+  
+  // Count shifts to be deleted
+  const shiftCount = db.prepare(`
+    SELECT COUNT(*) as count
+    FROM shifts
+    WHERE guild_id = ? AND user_id = ? AND clock_in >= ?
+  `).get(guildId, userId, startDate.toISOString()) as any;
+  
+  // Get shift IDs to delete breaks
+  const shiftIds = db.prepare(`
+    SELECT id FROM shifts
+    WHERE guild_id = ? AND user_id = ? AND clock_in >= ?
+  `).all(guildId, userId, startDate.toISOString()) as any[];
+  
+  // Delete breaks associated with these shifts
+  for (const shift of shiftIds) {
+    db.prepare(`DELETE FROM breaks WHERE shift_id = ?`).run(shift.id);
+    db.prepare(`DELETE FROM activity_tracker WHERE shift_id = ?`).run(shift.id);
+  }
+  
+  // Delete shifts
+  db.prepare(`
+    DELETE FROM shifts
+    WHERE guild_id = ? AND user_id = ? AND clock_in >= ?
+  `).run(guildId, userId, startDate.toISOString());
+  
+  // Delete unpaid pay periods for this user in this time range
+  db.prepare(`
+    DELETE FROM pay_periods
+    WHERE guild_id = ? AND user_id = ? AND paid = 0 AND start_date >= ?
+  `).run(guildId, userId, startDate.toISOString());
+  
+  // Clear cooldown if exists
+  db.prepare(`DELETE FROM payroll_cooldowns WHERE guild_id = ? AND user_id = ?`).run(guildId, userId);
+  
+  return {
+    deletedShifts: shiftCount.count,
+    deletedHours: Math.round((totalMinutes.total / 60) * 100) / 100
+  };
+}
+
 // Initialize on import
 initPayrollSchema();

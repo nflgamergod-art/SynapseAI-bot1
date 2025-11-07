@@ -705,6 +705,10 @@ client.once('clientReady', async () => {
       { name: "history", description: "View pay period history", type: 1, options: [
         { name: "user", description: "User to check", type: 6, required: false }
       ] },
+      { name: "reset", description: "👑 Reset user's payroll hours", type: 1, options: [
+        { name: "user", description: "User to reset", type: 6, required: true },
+        { name: "days", description: "Days to reset (default 30)", type: 4, required: false }
+      ] },
       { name: "enable", description: "Enable the clock-in system", type: 1 },
       { name: "disable", description: "Disable the clock-in system", type: 1 }
     ] },
@@ -2715,6 +2719,50 @@ client.on("interactionCreate", async (interaction) => {
         });
       }
 
+      return await safeReply(interaction, { embeds: [embed] });
+    }
+
+    if (subCmd === "reset") {
+      const targetUser = interaction.options.getUser('user', true);
+      const days = interaction.options.getInteger('days') || 30;
+      
+      const { resetPayrollHours } = await import('./services/payroll');
+      const { forceClockOut } = await import('./services/payroll');
+      const { getActiveShift } = await import('./services/shifts');
+      
+      // Force clock out if currently clocked in
+      const activeShift = getActiveShift(interaction.guild.id, targetUser.id);
+      if (activeShift) {
+        forceClockOut(interaction.guild.id, targetUser.id);
+      }
+      
+      const result = resetPayrollHours(interaction.guild.id, targetUser.id, days);
+      
+      const embed = new EmbedBuilder()
+        .setTitle('🔄 Payroll Hours Reset')
+        .setColor(0xFF6B00)
+        .setDescription(`Reset payroll data for ${targetUser.tag}`)
+        .addFields(
+          { name: '📅 Time Period', value: `Last ${days} days`, inline: true },
+          { name: '🗑️ Shifts Deleted', value: result.deletedShifts.toString(), inline: true },
+          { name: '⏱️ Hours Removed', value: `${result.deletedHours}h`, inline: true }
+        )
+        .setTimestamp();
+      
+      // Try to notify the user
+      try {
+        await targetUser.send({
+          embeds: [{
+            color: 0xFF6B00,
+            title: '⚠️ Payroll Hours Reset',
+            description: `Your payroll hours have been reset by an administrator.\n\n**Time Period:** Last ${days} days\n**Shifts Deleted:** ${result.deletedShifts}\n**Hours Removed:** ${result.deletedHours}h`,
+            timestamp: new Date().toISOString()
+          }]
+        });
+      } catch (err) {
+        // User has DMs disabled
+      }
+      
       return await safeReply(interaction, { embeds: [embed] });
     }
 
