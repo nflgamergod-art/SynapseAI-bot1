@@ -155,18 +155,26 @@ export async function handleEnhancedCommands(interaction: ChatInputCommandIntera
 
             case 'perks': {
                 // Show user's actual points and unlockable perks with progress
-                const { getUserPoints, getUnlockedPerks } = await import('../services/rewards');
+                const { getUserPoints, getUnlockedPerks, getUserMessageStats } = await import('../services/rewards');
                 const targetUser = interaction.options.getUser('user') ?? interaction.user;
                 const guildId = interaction.guild?.id || null;
                 
                 const userPoints = getUserPoints(targetUser.id, guildId);
                 const perks = getUnlockedPerks(targetUser.id, guildId);
+                const messageStats = getUserMessageStats(targetUser.id, guildId);
                 
                 const { EmbedBuilder } = await import('discord.js');
                 const embed = new EmbedBuilder()
                     .setTitle(`✨ ${targetUser.username}'s Perks & Progress`)
                     .setColor(0xFFD700)
-                    .setDescription(`**Current Points:** ${userPoints} 🪙\n\nEarn points by helping others, contributing to the community, and being active!`)
+                    .setDescription(
+                        `**Current Points:** ${userPoints} 🪙\n\n` +
+                        `**Activity Stats:**\n` +
+                        `📨 Messages Sent: ${messageStats.messageCount}\n` +
+                        `🎯 Next Milestone: ${messageStats.nextMilestone} messages (+10 points)\n` +
+                        `📊 Progress: ${messageStats.messageCount}/${messageStats.nextMilestone} (${messageStats.messagesToNextMilestone} to go)\n\n` +
+                        `Earn points by helping others, contributing to the community, and being active!`
+                    )
                     .setTimestamp();
                 
                 // Group perks by status

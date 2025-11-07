@@ -381,3 +381,109 @@ export function getRecentAchievements(guildId: string | null, hours = 24, limit 
     LIMIT ?
   `).all(guildId, since, limit) as any[];
 }
+
+/**
+ * Track user message activity and award points for milestones
+ * Awards points every 100 messages
+ */
+export function trackMessageActivity(userId: string, guildId: string | null): {
+  messagesCount: number;
+  pointsAwarded: number;
+  milestone?: number;
+} {
+  const db = getDB();
+  
+  // Initialize or get current message count
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS message_activity (
+      user_id TEXT NOT NULL,
+      guild_id TEXT,
+      message_count INTEGER DEFAULT 0,
+      last_message_at TEXT,
+      PRIMARY KEY (user_id, guild_id)
+    )
+  `).run();
+  
+  const now = nowISO();
+  
+  // Get current count
+  const existing = db.prepare(`
+    SELECT message_count FROM message_activity
+    WHERE user_id = ? AND guild_id = ?
+  `).get(userId, guildId) as { message_count: number } | undefined;
+  
+  const currentCount = existing?.message_count || 0;
+  const newCount = currentCount + 1;
+  
+  // Update message count
+  db.prepare(`
+    INSERT INTO message_activity (user_id, guild_id, message_count, last_message_at)
+    VALUES (?, ?, 1, ?)
+    ON CONFLICT(user_id, guild_id) DO UPDATE SET
+      message_count = message_count + 1,
+      last_message_at = ?
+  `).run(userId, guildId, now, now);
+  
+  // Check if we hit a milestone (every 100 messages)
+  let pointsAwarded = 0;
+  let milestone: number | undefined = undefined;
+  
+  if (newCount % 100 === 0) {
+    // Award 10 points for every 100 messages
+    pointsAwarded = 10;
+    milestone = newCount;
+    
+    awardDirectPoints(
+      userId,
+      guildId,
+      pointsAwarded,
+      `Reached ${newCount} messages milestone`,
+      'social'
+    );
+  }
+  
+  return {
+    messagesCount: newCount,
+    pointsAwarded,
+    milestone
+  };
+}
+
+/**
+ * Get user's message statistics
+ */
+export function getUserMessageStats(userId: string, guildId: string | null): {
+  messageCount: number;
+  nextMilestone: number;
+  messagesToNextMilestone: number;
+  lastMessageAt: string | null;
+} {
+  const db = getDB();
+  
+  // Ensure table exists
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS message_activity (
+      user_id TEXT NOT NULL,
+      guild_id TEXT,
+      message_count INTEGER DEFAULT 0,
+      last_message_at TEXT,
+      PRIMARY KEY (user_id, guild_id)
+    )
+  `).run();
+  
+  const result = db.prepare(`
+    SELECT message_count, last_message_at FROM message_activity
+    WHERE user_id = ? AND guild_id = ?
+  `).get(userId, guildId) as { message_count: number; last_message_at: string } | undefined;
+  
+  const messageCount = result?.message_count || 0;
+  const nextMilestone = Math.ceil(messageCount / 100) * 100;
+  const messagesToNextMilestone = nextMilestone - messageCount;
+  
+  return {
+    messageCount,
+    nextMilestone: nextMilestone || 100,
+    messagesToNextMilestone: messagesToNextMilestone || 100,
+    lastMessageAt: result?.last_message_at || null
+  };
+}

@@ -5655,6 +5655,29 @@ client.on("messageReactionAdd", async (reaction, user) => {
 client.on("messageCreate", async (message: Message) => {
   if (message.author.bot) return;
 
+  // Track message activity and award points for milestones (every 100 messages)
+  if (message.guild) {
+    try {
+      const { trackMessageActivity } = await import('./services/rewards');
+      const activityResult = trackMessageActivity(message.author.id, message.guild.id);
+      
+      // If user hit a milestone, celebrate!
+      if (activityResult.milestone) {
+        try {
+          await message.react('🎉');
+          await message.reply({
+            content: `🎉 Congratulations! You've reached **${activityResult.milestone} messages** and earned **${activityResult.pointsAwarded} points**! Keep being active! 🪙`,
+            allowedMentions: { repliedUser: true }
+          });
+        } catch (err) {
+          console.error('[MessageActivity] Failed to celebrate milestone:', err);
+        }
+      }
+    } catch (err) {
+      console.error('[MessageActivity] Error tracking message activity:', err);
+    }
+  }
+
   // Check for bot command triggers (e.g., HWID reset)
   try {
     const { detectBotCommandTrigger, triggerBotCommand, hasPermissionToTrigger } = await import('./services/botCommandTrigger');
