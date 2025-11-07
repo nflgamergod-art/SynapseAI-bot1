@@ -19,7 +19,11 @@ export type ExtractedMemory = {
   confidence?: number;
 };
 
-const UNIQUE_KEYS = new Set(['name', 'timezone', 'favorite_team', 'birthday', 'location']);
+const UNIQUE_KEYS = new Set([
+  'name', 'age', 'birthday', 'location', 'timezone', 'occupation', 'job_title', 'company', 
+  'school', 'major', 'email', 'phone', 'favorite_team', 'favorite_game', 'favorite_food',
+  'spouse_name', 'pet_name', 'pet_type'
+]);
 
 function levenshtein(a: string, b: string): number {
   a = a || '';
