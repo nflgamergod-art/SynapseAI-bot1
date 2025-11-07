@@ -1,4 +1,5 @@
 import { getDB } from './db';
+import { endAutoBreak } from './payroll';
 
 export interface Shift {
   id: number;
@@ -74,6 +75,9 @@ export function clockOut(guildId: string, userId: string): { success: boolean; m
     return { success: false, message: 'You are not clocked in!' };
   }
   
+  // Ensure any active break is ended so its duration is recorded (unpaid)
+  try { endAutoBreak(active.id); } catch {}
+
   const now = new Date();
   const clockIn = new Date(active.clock_in);
   const durationMs = now.getTime() - clockIn.getTime();

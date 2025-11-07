@@ -174,13 +174,22 @@ export function canClockIn(guildId: string, userId: string): { canClock: boolean
   
   // Check hours today
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
-  const todayMinutes = db.prepare(`
-    SELECT COALESCE(SUM(duration_minutes), 0) as total
+  // Sum net minutes for today's completed shifts (duration - breaks)
+  const todayShifts = db.prepare(`
+    SELECT id, COALESCE(duration_minutes, 0) as duration_minutes
     FROM shifts
     WHERE guild_id = ? AND user_id = ? AND clock_in >= ? AND clock_out IS NOT NULL
-  `).get(guildId, userId, todayStart) as any;
-  
-  const todayHours = todayMinutes.total / 60;
+  `).all(guildId, userId, todayStart) as any[];
+  let workedMinutesToday = 0;
+  for (const s of todayShifts) {
+    const b = db.prepare(`
+      SELECT COALESCE(SUM(duration_minutes), 0) as total
+      FROM breaks
+      WHERE shift_id = ? AND break_end IS NOT NULL
+    `).get(s.id) as any;
+    workedMinutesToday += Math.max(0, s.duration_minutes - (b?.total || 0));
+  }
+  const todayHours = workedMinutesToday / 60;
   if (todayHours >= config.max_hours_per_day) {
     return { canClock: false, reason: `You've reached the daily limit of ${config.max_hours_per_day} hours.` };
   }
@@ -492,13 +501,21 @@ export function checkDailyLimitReached(guildId: string, userId: string, currentS
   
   if (!shift) return false;
   
-  // Calculate current shift duration
+  // Calculate net working time for the current shift (exclude breaks)
   const clockIn = new Date(shift.clock_in);
-  const currentDurationMs = now.getTime() - clockIn.getTime();
-  const currentDurationHours = currentDurationMs / (1000 * 60 * 60);
-  
-  // Check if current shift has reached the limit
-  if (currentDurationHours >= config.max_hours_per_day) {
+  const elapsedMinutes = Math.floor((now.getTime() - clockIn.getTime()) / 60000);
+  const completedBreaks = db.prepare(`
+    SELECT COALESCE(SUM(duration_minutes), 0) as total FROM breaks WHERE shift_id = ? AND break_end IS NOT NULL
+  `).get(currentShiftId) as any;
+  const activeBreak = db.prepare(`
+    SELECT break_start FROM breaks WHERE shift_id = ? AND break_end IS NULL
+  `).get(currentShiftId) as any;
+  const activeBreakMinutes = activeBreak ? Math.floor((now.getTime() - new Date(activeBreak.break_start).getTime()) / 60000) : 0;
+  const netMinutes = Math.max(0, elapsedMinutes - (completedBreaks?.total || 0) - activeBreakMinutes);
+  const netHours = netMinutes / 60;
+
+  // Check if current shift has reached the limit based on net hours (no breaks)
+  if (netHours >= config.max_hours_per_day) {
     return true;
   }
   
