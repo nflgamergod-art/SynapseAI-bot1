@@ -5714,6 +5714,42 @@ client.on("messageCreate", async (message: Message) => {
           }
         }
       }
+      
+      // Track conversation starts - if someone starts a conversation by mentioning another user (not in a support channel)
+      if (message.mentions.users.size > 0 && message.content.length > 20) {
+        try {
+          // Check if this is a new conversation (first message mentioning someone in the last hour)
+          const db = await import('./services/db').then(m => m.getDB());
+          const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+          
+          for (const [mentionedUserId, mentionedUser] of message.mentions.users) {
+            if (mentionedUser.bot || mentionedUserId === message.author.id) continue;
+            
+            // Check if author has mentioned this user recently in this channel
+            const recentMention = db.prepare(`
+              SELECT id FROM user_interactions
+              WHERE user_id = ? AND guild_id = ? AND interaction_type = 'conversation_start'
+                AND target_user_id = ? AND created_at > ?
+              LIMIT 1
+            `).get(message.author.id, message.guild.id, mentionedUserId, oneHourAgo);
+            
+            if (!recentMention) {
+              // New conversation!
+              const { trackConversationStart } = await import('./services/rewards');
+              trackConversationStart(message.author.id, message.guild.id);
+              
+              // Mark conversation as tracked
+              db.prepare(`
+                INSERT INTO user_interactions (user_id, guild_id, interaction_type, target_user_id, created_at)
+                VALUES (?, ?, 'conversation_start', ?, ?)
+              `).run(message.author.id, message.guild.id, mentionedUserId, new Date().toISOString());
+              break; // Only track once per message
+            }
+          }
+        } catch (err) {
+          console.error('[ConversationTracking] Error tracking conversation:', err);
+        }
+      }
     } catch (err) {
       console.error('[MessageActivity] Error tracking message activity:', err);
     }

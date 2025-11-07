@@ -63,14 +63,15 @@ export function endSupportInteraction(opts: {
   
   // Get start time to calculate duration
   const interaction = db.prepare(`
-    SELECT started_at FROM support_interactions WHERE id = ?
-  `).get(interactionId) as { started_at: string } | undefined;
+    SELECT started_at, support_member_id, guild_id, helpers FROM support_interactions WHERE id = ?
+  `).get(interactionId) as { started_at: string; support_member_id: string; guild_id: string; helpers?: string } | undefined;
   
   if (!interaction) return;
   
   const startTime = new Date(interaction.started_at).getTime();
   const endTime = Date.now();
   const durationSeconds = Math.floor((endTime - startTime) / 1000);
+  const wasFast = durationSeconds <= 300; // Under 5 minutes
   
   db.prepare(`
     UPDATE support_interactions 
@@ -78,6 +79,34 @@ export function endSupportInteraction(opts: {
         satisfaction_rating = ?, feedback_text = ?
     WHERE id = ?
   `).run(now, durationSeconds, wasResolved ? 1 : 0, satisfactionRating ?? null, feedbackText ?? null, interactionId);
+  
+  // Track support stats for achievements and streaks
+  try {
+    const { trackSupportStats } = require('./rewards');
+    trackSupportStats(interaction.support_member_id, interaction.guild_id, {
+      wasResolved,
+      wasFast,
+      isNewAssist: true
+    });
+    
+    // Track helpers too
+    if (interaction.helpers) {
+      try {
+        const helpers: string[] = JSON.parse(interaction.helpers);
+        for (const helperId of helpers) {
+          trackSupportStats(helperId, interaction.guild_id, {
+            wasResolved,
+            wasFast,
+            isNewAssist: true
+          });
+        }
+      } catch (e) {
+        console.error('Failed to parse helpers:', e);
+      }
+    }
+  } catch (e) {
+    console.error('Failed to track support stats:', e);
+  }
   
   // Update expertise stats
   const full = db.prepare(`SELECT * FROM support_interactions WHERE id = ?`).get(interactionId) as SupportInteraction;
