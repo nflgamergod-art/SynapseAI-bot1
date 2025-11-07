@@ -278,7 +278,8 @@ function buildExtractionPrompt(userMessage: string, assistantMessage?: string) {
   const instructions = `Extract durable, re-usable personal facts or preferences explicitly stated by the USER that would be helpful to remember for future conversations.
 Return ONLY a JSON array of objects with keys: key (short label), value (concise content), type ('fact'|'preference'|'note'), confidence (0.0-1.0).
 Only include items clearly implied or stated by the user. Do not invent.
-Examples of keys: 'name', 'timezone', 'favorite_team', 'project_stack', 'role', 'likes', 'dislikes'.
+Examples of keys: 'name', 'timezone', 'birthday', 'location', 'favorite_team', 'project_stack', 'role', 'likes', 'dislikes'.
+For birthdays, extract in format: "Month Day" or "Month Day, Year" (e.g., "November 17th" or "November 17th, 1990").
 Limit to at most 5 items.
 `;
   const convo = `USER: ${userMessage}\nASSISTANT: ${assistantMessage ?? ''}`.trim();
@@ -325,12 +326,17 @@ export async function extractMemories(userMessage: string, assistantMessage?: st
     }
   } catch {/* ignore */}
 
-  // Fallback: simple regex-based heuristics for name and timezone
+  // Fallback: simple regex-based heuristics for name, timezone, and birthday
   const out: ExtractedMemory[] = [];
   const mName = userMessage.match(/my name is\s+([A-Za-z][A-Za-z\-\s]{1,30})/i);
   if (mName) out.push({ key: 'name', value: mName[1].trim(), type: 'fact', confidence: 0.6 });
   const mTz = userMessage.match(/\b(gmt|utc|pst|pdt|est|edt|cst|cdt|mst|mdt)\b/i);
   if (mTz) out.push({ key: 'timezone', value: mTz[1].toUpperCase(), type: 'fact', confidence: 0.55 });
+  
+  // Birthday extraction patterns
+  const mBirthday = userMessage.match(/my birthday is\s+((?:january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2}(?:st|nd|rd|th)?(?:,?\s+\d{4})?)/i);
+  if (mBirthday) out.push({ key: 'birthday', value: mBirthday[1].trim(), type: 'fact', confidence: 0.75 });
+  
   return out;
 }
 
