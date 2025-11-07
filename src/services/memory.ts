@@ -190,6 +190,16 @@ export function listMemories(userId: string, guildId?: string | null, limit = 20
   return rows;
 }
 
+export function getMemoryByKey(userId: string, key: string, guildId?: string | null): MemoryRow | null {
+  const db = getDB();
+  const row = db.prepare(`
+    SELECT * FROM memories 
+    WHERE user_id = ? AND (guild_id IS NULL OR guild_id = ?) AND lower(key) = lower(?)
+    ORDER BY updated_at DESC LIMIT 1
+  `).get(userId, guildId ?? null, key) as MemoryRow | undefined;
+  return row || null;
+}
+
 export function deleteMemoryByKey(userId: string, key: string, guildId?: string | null) {
   const db = getDB();
   const stmt = db.prepare(`DELETE FROM memories WHERE user_id = ? AND (guild_id IS NULL OR guild_id = ?) AND lower(key) = lower(?)`);

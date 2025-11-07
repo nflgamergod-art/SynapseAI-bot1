@@ -67,6 +67,42 @@ export async function handleConversationalReply(message: Message) {
   const guildId = message.guild?.id ?? null;
   trackRecentMessage(message.author.id, guildId, message.channel.id, message.id, message.content);
 
+  // Check if user is asking about specific saved information
+  const { getMemoryByKey } = await import('../services/memory');
+  const lowerContent = message.content.toLowerCase();
+  
+  let directAnswerContext: string | undefined;
+  
+  // Direct question patterns - check for saved info first
+  const directQuestions: { pattern: RegExp; keys: string[] }[] = [
+    { pattern: /what'?s my (birthday|bday|birth date)/i, keys: ['birthday'] },
+    { pattern: /when is my (birthday|bday)/i, keys: ['birthday'] },
+    { pattern: /what'?s my (name|full name)/i, keys: ['name'] },
+    { pattern: /where (do i live|am i from|is my location)/i, keys: ['location'] },
+    { pattern: /what'?s my (job|occupation|work)/i, keys: ['occupation', 'job_title'] },
+    { pattern: /what'?s my (favorite|fav) (team|game|food|music)/i, keys: ['favorite_team', 'favorite_game', 'favorite_food', 'favorite_music'] },
+    { pattern: /what (pets|pet) do i have/i, keys: ['pet_name', 'pet_type'] },
+    { pattern: /what am i (learning|studying)/i, keys: ['learning_goals', 'major'] },
+  ];
+  
+  for (const { pattern, keys } of directQuestions) {
+    if (pattern.test(lowerContent)) {
+      let foundInfo = '';
+      for (const key of keys) {
+        const memory = getMemoryByKey(message.author.id, key, guildId);
+        if (memory) {
+          foundInfo += `${memory.key}: ${memory.value}\n`;
+        }
+      }
+      
+      if (foundInfo) {
+        // User is asking about info we have - make sure AI sees it clearly
+        directAnswerContext = `\n🔍 DIRECT QUESTION DETECTED - User is asking about their own information that you HAVE SAVED:\n${foundInfo}\nYou MUST share this information with them! Don't say you don't have it!\n\n`;
+      }
+      break;
+    }
+  }
+
   // Fetch relevant long-term memories and prior Q&A
   const relevant = findRelevantMemories(message.content, message.author.id, guildId, 5);
   const similar = findSimilarQA(message.content, message.author.id, guildId);
@@ -74,6 +110,11 @@ export async function handleConversationalReply(message: Message) {
   
   // CRITICAL: Always include user's Discord username/tag as primary identifier
   memoryContext += `User Info (ALWAYS REFERENCE THIS):\n- Discord Username: ${message.author.username}\n- Discord User ID: ${message.author.id}\n- Discord Tag: ${message.author.tag}\n\n`;
+  
+  // Add direct answer context if detected
+  if (typeof directAnswerContext !== 'undefined') {
+    memoryContext += directAnswerContext;
+  }
   
   if (relevant.length) {
     const lines = relevant.map(m => `- (${m.type}) ${m.key}: ${m.value}`);
