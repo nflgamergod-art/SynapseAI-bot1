@@ -513,6 +513,148 @@ client.once('clientReady', async () => {
   
   console.log('✅ Ticket inactivity system started (checks every hour)');
   
+  // Check for inactive staff every hour and auto-demote
+  setInterval(async () => {
+    try {
+      const {
+        getStaffActivityConfig,
+        getInactiveStaff,
+        getNextDemotionRole,
+        updateStaffActivity,
+        logDemotion,
+        removeStaffTracking
+      } = await import('./services/staffActivity');
+
+      for (const [guildId, guild] of client.guilds.cache) {
+        const config = getStaffActivityConfig(guildId);
+        if (!config || !config.enabled) continue;
+
+        const inactiveStaff = getInactiveStaff(guildId, config.inactivity_days);
+
+        for (const staff of inactiveStaff) {
+          try {
+            const member = await guild.members.fetch(staff.user_id).catch(() => null);
+            if (!member) {
+              removeStaffTracking(guildId, staff.user_id);
+              continue;
+            }
+
+            const currentRoleId = 
+              staff.current_role === 'head_support' ? config.head_support_role_id :
+              staff.current_role === 'support' ? config.support_role_id :
+              staff.current_role === 'trial_support' ? config.trial_support_role_id : null;
+
+            const nextRole = getNextDemotionRole(staff.current_role);
+
+            if (!currentRoleId) continue;
+
+            // Remove current role
+            if (member.roles.cache.has(currentRoleId)) {
+              await member.roles.remove(currentRoleId);
+            }
+
+            if (nextRole) {
+              // Add next role in hierarchy
+              const nextRoleId = 
+                nextRole === 'support' ? config.support_role_id :
+                nextRole === 'trial_support' ? config.trial_support_role_id : null;
+
+              if (nextRoleId) {
+                await member.roles.add(nextRoleId);
+                updateStaffActivity(guildId, staff.user_id, nextRole);
+              }
+
+              logDemotion(
+                guildId,
+                staff.user_id,
+                staff.current_role,
+                nextRole,
+                `Auto-demoted: Inactive for ${config.inactivity_days}+ days`
+              );
+
+              // Notify user
+              try {
+                await member.send({
+                  embeds: [{
+                    color: 0xFF6B6B,
+                    title: '📉 Staff Demotion Notice',
+                    description: `You have been automatically demoted in **${guild.name}** due to inactivity.`,
+                    fields: [
+                      { name: 'From', value: staff.current_role.replace('_', ' ').toUpperCase(), inline: true },
+                      { name: 'To', value: nextRole.replace('_', ' ').toUpperCase(), inline: true },
+                      { name: 'Reason', value: `Inactive for ${config.inactivity_days}+ days` }
+                    ],
+                    timestamp: new Date().toISOString()
+                  }]
+                });
+              } catch (err) {
+                console.error(`Failed to DM user ${staff.user_id}:`, err);
+              }
+            } else {
+              // Remove from staff completely
+              removeStaffTracking(guildId, staff.user_id);
+
+              logDemotion(
+                guildId,
+                staff.user_id,
+                staff.current_role,
+                'removed',
+                `Auto-removed: Inactive for ${config.inactivity_days}+ days`
+              );
+
+              // Notify user
+              try {
+                await member.send({
+                  embeds: [{
+                    color: 0xFF6B6B,
+                    title: '❌ Removed from Staff',
+                    description: `You have been removed from the staff team in **${guild.name}** due to inactivity.`,
+                    fields: [
+                      { name: 'Previous Role', value: staff.current_role.replace('_', ' ').toUpperCase() },
+                      { name: 'Reason', value: `Inactive for ${config.inactivity_days}+ days` }
+                    ],
+                    timestamp: new Date().toISOString()
+                  }]
+                });
+              } catch (err) {
+                console.error(`Failed to DM user ${staff.user_id}:`, err);
+              }
+            }
+
+            // Log to mod channel
+            const modLogChannelId = getModLogChannelId();
+            if (modLogChannelId) {
+              const modLogChannel = await guild.channels.fetch(modLogChannelId).catch(() => null) as any;
+              if (modLogChannel) {
+                await modLogChannel.send({
+                  embeds: [{
+                    color: 0xFF6B6B,
+                    title: '📉 Staff Auto-Demotion',
+                    fields: [
+                      { name: 'User', value: `<@${staff.user_id}>`, inline: true },
+                      { name: 'From', value: staff.current_role.replace('_', ' '), inline: true },
+                      { name: 'To', value: nextRole ? nextRole.replace('_', ' ') : 'Removed', inline: true },
+                      { name: 'Reason', value: `Inactive for ${config.inactivity_days}+ days` }
+                    ],
+                    timestamp: new Date().toISOString()
+                  }]
+                });
+              }
+            }
+
+            console.log(`📉 Auto-demoted ${staff.user_id} from ${staff.current_role} to ${nextRole || 'removed'} in guild ${guild.name}`);
+          } catch (err) {
+            console.error(`Failed to auto-demote staff ${staff.user_id}:`, err);
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Staff activity check failed:', err);
+    }
+  }, 60 * 60 * 1000); // Every hour
+
+  console.log('✅ Staff activity auto-demotion system started (checks every hour)');
+  
   // Register slash commands. If GUILD_ID is set, register for that guild (instant); otherwise register globally.
   const guildId = process.env.GUILD_ID;
 
@@ -872,6 +1014,53 @@ client.once('clientReady', async () => {
     { name: "unban", description: "Unban a user from the server", options: [
       { name: "user_id", description: "User ID to unban", type: 3, required: true },
       { name: "reason", description: "Reason for unbanning", type: 3, required: false }
+    ] },
+    // Staff Activity Tracking
+    { name: "staffactivity", description: "⏰ Manage staff activity tracking and auto-demotion", options: [
+      { name: "setup", description: "Configure staff activity system", type: 1, options: [
+        { name: "head_support_role", description: "Head Support role", type: 8, required: true },
+        { name: "support_role", description: "Support role", type: 8, required: true },
+        { name: "trial_support_role", description: "Trial Support role", type: 8, required: true },
+        { name: "inactivity_days", description: "Days before demotion (default: 2)", type: 4, required: false }
+      ] },
+      { name: "exempt", description: "Exempt staff from auto-demotion", type: 1, options: [
+        { name: "user", description: "Staff member to exempt", type: 6, required: true },
+        { name: "reason", description: "Reason for exemption", type: 3, required: true }
+      ] },
+      { name: "unexempt", description: "Remove staff exemption", type: 1, options: [
+        { name: "user", description: "Staff member to unexempt", type: 6, required: true }
+      ] },
+      { name: "check", description: "Check staff activity status", type: 1, options: [
+        { name: "user", description: "Staff member to check (optional)", type: 6, required: false }
+      ] },
+      { name: "history", description: "View demotion history", type: 1, options: [
+        { name: "user", description: "Filter by user (optional)", type: 6, required: false }
+      ] },
+      { name: "toggle", description: "Enable/disable the system", type: 1, options: [
+        { name: "enabled", description: "Enable or disable", type: 5, required: true }
+      ] }
+    ] },
+    // Anti-Nuke System
+    { name: "antinuke", description: "🛡️ Anti-nuke protection system", options: [
+      { name: "setup", description: "Configure anti-nuke protection", type: 1, options: [
+        { name: "max_channel_deletes", description: "Max channel deletes in time window (default: 3)", type: 4, required: false },
+        { name: "max_role_deletes", description: "Max role deletes in time window (default: 3)", type: 4, required: false },
+        { name: "max_bans", description: "Max bans in time window (default: 5)", type: 4, required: false },
+        { name: "time_window", description: "Time window in seconds (default: 60)", type: 4, required: false }
+      ] },
+      { name: "whitelist", description: "Add user/role to whitelist", type: 1, options: [
+        { name: "user", description: "User to whitelist", type: 6, required: false },
+        { name: "role", description: "Role to whitelist", type: 8, required: false }
+      ] },
+      { name: "unwhitelist", description: "Remove user/role from whitelist", type: 1, options: [
+        { name: "user", description: "User to remove", type: 6, required: false },
+        { name: "role", description: "Role to remove", type: 8, required: false }
+      ] },
+      { name: "status", description: "View anti-nuke configuration", type: 1 },
+      { name: "triggers", description: "View recent anti-nuke triggers", type: 1 },
+      { name: "toggle", description: "Enable/disable anti-nuke", type: 1, options: [
+        { name: "enabled", description: "Enable or disable", type: 5, required: true }
+      ] }
     ] },
     // Temporary Channels
     { name: "tempchannels", description: "🔊 Configure temporary channels", options: [
@@ -5869,6 +6058,347 @@ client.on("interactionCreate", async (interaction) => {
     }
   }
 
+  // Staff Activity Tracking System
+  if (name === 'staffactivity') {
+    if (!adminOrBypass(interaction.member)) {
+      return interaction.reply({ content: '❌ Only server administrators can use this command.', ephemeral: true });
+    }
+
+    const {
+      setStaffActivityConfig,
+      getStaffActivityConfig,
+      updateStaffActivity,
+      getStaffActivity,
+      getAllStaffActivity,
+      getInactiveStaff,
+      exemptStaffFromDemotion,
+      removeStaffExemption,
+      getDemotionHistory
+    } = await import('./services/staffActivity');
+
+    const subCmd = interaction.options.getSubcommand();
+
+    if (subCmd === 'setup') {
+      const headSupportRole = interaction.options.getRole('head_support_role', true);
+      const supportRole = interaction.options.getRole('support_role', true);
+      const trialSupportRole = interaction.options.getRole('trial_support_role', true);
+      const inactivityDays = interaction.options.getInteger('inactivity_days') || 2;
+
+      setStaffActivityConfig({
+        guild_id: interaction.guild!.id,
+        head_support_role_id: headSupportRole.id,
+        support_role_id: supportRole.id,
+        trial_support_role_id: trialSupportRole.id,
+        inactivity_days: inactivityDays,
+        enabled: true
+      });
+
+      const embed = new EmbedBuilder()
+        .setColor(0x51CF66)
+        .setTitle('✅ Staff Activity System Configured')
+        .addFields(
+          { name: 'Head Support Role', value: `<@&${headSupportRole.id}>`, inline: true },
+          { name: 'Support Role', value: `<@&${supportRole.id}>`, inline: true },
+          { name: 'Trial Support Role', value: `<@&${trialSupportRole.id}>`, inline: true },
+          { name: 'Inactivity Period', value: `${inactivityDays} days`, inline: false },
+          { name: 'Demotion Hierarchy', value: 'Head Support → Support → Trial Support → Removed', inline: false }
+        )
+        .setFooter({ text: 'Staff will be automatically demoted after inactivity period' });
+
+      return interaction.reply({ embeds: [embed], ephemeral: true });
+    }
+
+    if (subCmd === 'exempt') {
+      const user = interaction.options.getUser('user', true);
+      const reason = interaction.options.getString('reason', true);
+
+      exemptStaffFromDemotion(interaction.guild!.id, user.id, reason);
+
+      return interaction.reply({ 
+        content: `✅ <@${user.id}> has been exempted from auto-demotion.\n**Reason:** ${reason}`, 
+        ephemeral: true 
+      });
+    }
+
+    if (subCmd === 'unexempt') {
+      const user = interaction.options.getUser('user', true);
+
+      removeStaffExemption(interaction.guild!.id, user.id);
+
+      return interaction.reply({ 
+        content: `✅ <@${user.id}> is no longer exempted from auto-demotion.`, 
+        ephemeral: true 
+      });
+    }
+
+    if (subCmd === 'check') {
+      const user = interaction.options.getUser('user');
+
+      if (user) {
+        const activity = getStaffActivity(interaction.guild!.id, user.id);
+
+        if (!activity) {
+          return interaction.reply({ content: `❌ ${user.tag} is not being tracked in the staff activity system.`, ephemeral: true });
+        }
+
+        const lastActivityDate = new Date(activity.last_activity_at);
+        const daysSinceActivity = Math.floor((Date.now() - lastActivityDate.getTime()) / (1000 * 60 * 60 * 24));
+
+        const embed = new EmbedBuilder()
+          .setColor(activity.exempted ? 0x51CF66 : (daysSinceActivity >= 2 ? 0xFF6B6B : 0x3498DB))
+          .setTitle(`📊 Staff Activity: ${user.tag}`)
+          .addFields(
+            { name: 'Current Role', value: activity.current_role.replace('_', ' ').toUpperCase(), inline: true },
+            { name: 'Last Activity', value: `<t:${Math.floor(lastActivityDate.getTime() / 1000)}:R>`, inline: true },
+            { name: 'Days Inactive', value: `${daysSinceActivity} days`, inline: true },
+            { name: 'Exempted', value: activity.exempted ? '✅ Yes' : '❌ No', inline: true }
+          );
+
+        if (activity.exempted && activity.exemption_reason) {
+          embed.addFields({ name: 'Exemption Reason', value: activity.exemption_reason, inline: false });
+        }
+
+        return interaction.reply({ embeds: [embed], ephemeral: true });
+      } else {
+        // Show all staff
+        const allActivity = getAllStaffActivity(interaction.guild!.id);
+
+        if (allActivity.length === 0) {
+          return interaction.reply({ content: '❌ No staff members are being tracked.', ephemeral: true });
+        }
+
+        const config = getStaffActivityConfig(interaction.guild!.id);
+        const inactivityDays = config?.inactivity_days || 2;
+
+        const embed = new EmbedBuilder()
+          .setColor(0x3498DB)
+          .setTitle(`📊 All Staff Activity (${allActivity.length} members)`)
+          .setDescription(`Tracking staff activity with ${inactivityDays} day inactivity limit`);
+
+        for (const activity of allActivity.slice(0, 10)) {
+          const lastActivityDate = new Date(activity.last_activity_at);
+          const daysSinceActivity = Math.floor((Date.now() - lastActivityDate.getTime()) / (1000 * 60 * 60 * 24));
+          const status = activity.exempted ? '🟢 Exempted' : (daysSinceActivity >= inactivityDays ? '🔴 Inactive' : '🟢 Active');
+
+          embed.addFields({
+            name: `<@${activity.user_id}>`,
+            value: `**Role:** ${activity.current_role.replace('_', ' ')}\n**Last Activity:** ${daysSinceActivity}d ago\n**Status:** ${status}`,
+            inline: true
+          });
+        }
+
+        if (allActivity.length > 10) {
+          embed.setFooter({ text: `Showing first 10 of ${allActivity.length} staff members` });
+        }
+
+        return interaction.reply({ embeds: [embed], ephemeral: true });
+      }
+    }
+
+    if (subCmd === 'history') {
+      const user = interaction.options.getUser('user');
+      const history = getDemotionHistory(interaction.guild!.id, user?.id);
+
+      if (history.length === 0) {
+        return interaction.reply({ 
+          content: user ? `❌ No demotion history for ${user.tag}.` : '❌ No demotion history found.', 
+          ephemeral: true 
+        });
+      }
+
+      const embed = new EmbedBuilder()
+        .setColor(0xFF6B6B)
+        .setTitle(`📜 Demotion History${user ? ` - ${user.tag}` : ''}`)
+        .setDescription(`Showing ${history.length} demotion${history.length > 1 ? 's' : ''}`);
+
+      for (const log of history.slice(0, 10)) {
+        const demotedDate = new Date(log.demoted_at!);
+        embed.addFields({
+          name: `<@${log.user_id}>`,
+          value: `**From:** ${log.from_role.replace('_', ' ')}\n**To:** ${log.to_role === 'removed' ? 'Removed from Staff' : log.to_role.replace('_', ' ')}\n**Reason:** ${log.reason}\n**Date:** <t:${Math.floor(demotedDate.getTime() / 1000)}:R>`,
+          inline: false
+        });
+      }
+
+      if (history.length > 10) {
+        embed.setFooter({ text: `Showing first 10 of ${history.length} demotions` });
+      }
+
+      return interaction.reply({ embeds: [embed], ephemeral: true });
+    }
+
+    if (subCmd === 'toggle') {
+      const enabled = interaction.options.getBoolean('enabled', true);
+      const config = getStaffActivityConfig(interaction.guild!.id);
+
+      if (!config) {
+        return interaction.reply({ content: '❌ Please run `/staffactivity setup` first.', ephemeral: true });
+      }
+
+      config.enabled = enabled;
+      setStaffActivityConfig(config);
+
+      return interaction.reply({ 
+        content: `✅ Staff activity system ${enabled ? 'enabled' : 'disabled'}.`, 
+        ephemeral: true 
+      });
+    }
+  }
+
+  // Anti-Nuke System
+  if (name === 'antinuke') {
+    if (!adminOrBypass(interaction.member)) {
+      return interaction.reply({ content: '❌ Only server administrators can use this command.', ephemeral: true });
+    }
+
+    const {
+      setAntiNukeConfig,
+      getAntiNukeConfig,
+      addToWhitelist,
+      removeFromWhitelist,
+      addRoleToWhitelist,
+      removeRoleFromWhitelist,
+      getAntiNukeTriggers
+    } = await import('./services/antiNuke');
+
+    const subCmd = interaction.options.getSubcommand();
+
+    if (subCmd === 'setup') {
+      const maxChannelDeletes = interaction.options.getInteger('max_channel_deletes') || 3;
+      const maxRoleDeletes = interaction.options.getInteger('max_role_deletes') || 3;
+      const maxBans = interaction.options.getInteger('max_bans') || 5;
+      const timeWindow = interaction.options.getInteger('time_window') || 60;
+
+      const currentConfig = getAntiNukeConfig(interaction.guild!.id);
+
+      setAntiNukeConfig({
+        guild_id: interaction.guild!.id,
+        enabled: true,
+        max_channel_deletes: maxChannelDeletes,
+        max_role_deletes: maxRoleDeletes,
+        max_bans: maxBans,
+        time_window_seconds: timeWindow,
+        whitelist_role_ids: currentConfig?.whitelist_role_ids || [],
+        whitelist_user_ids: currentConfig?.whitelist_user_ids || [],
+        lockdown_on_trigger: true
+      });
+
+      const embed = new EmbedBuilder()
+        .setColor(0x51CF66)
+        .setTitle('🛡️ Anti-Nuke Protection Configured')
+        .addFields(
+          { name: 'Max Channel Deletes', value: `${maxChannelDeletes} in ${timeWindow}s`, inline: true },
+          { name: 'Max Role Deletes', value: `${maxRoleDeletes} in ${timeWindow}s`, inline: true },
+          { name: 'Max Bans', value: `${maxBans} in ${timeWindow}s`, inline: true },
+          { name: 'Protection', value: '🟢 Active', inline: false },
+          { name: 'Action on Trigger', value: '• Remove permissions\n• Ban user\n• Log to modlog', inline: false }
+        )
+        .setFooter({ text: 'Whitelisted users/roles are exempt' });
+
+      return interaction.reply({ embeds: [embed], ephemeral: true });
+    }
+
+    if (subCmd === 'whitelist') {
+      const user = interaction.options.getUser('user');
+      const role = interaction.options.getRole('role');
+
+      if (!user && !role) {
+        return interaction.reply({ content: '❌ Please provide a user or role to whitelist.', ephemeral: true });
+      }
+
+      if (user) {
+        addToWhitelist(interaction.guild!.id, user.id);
+        return interaction.reply({ content: `✅ <@${user.id}> has been whitelisted from anti-nuke.`, ephemeral: true });
+      }
+
+      if (role) {
+        addRoleToWhitelist(interaction.guild!.id, role.id);
+        return interaction.reply({ content: `✅ <@&${role.id}> has been whitelisted from anti-nuke.`, ephemeral: true });
+      }
+    }
+
+    if (subCmd === 'unwhitelist') {
+      const user = interaction.options.getUser('user');
+      const role = interaction.options.getRole('role');
+
+      if (!user && !role) {
+        return interaction.reply({ content: '❌ Please provide a user or role to remove from whitelist.', ephemeral: true });
+      }
+
+      if (user) {
+        removeFromWhitelist(interaction.guild!.id, user.id);
+        return interaction.reply({ content: `✅ <@${user.id}> has been removed from anti-nuke whitelist.`, ephemeral: true });
+      }
+
+      if (role) {
+        removeRoleFromWhitelist(interaction.guild!.id, role.id);
+        return interaction.reply({ content: `✅ <@&${role.id}> has been removed from anti-nuke whitelist.`, ephemeral: true });
+      }
+    }
+
+    if (subCmd === 'status') {
+      const config = getAntiNukeConfig(interaction.guild!.id);
+
+      if (!config) {
+        return interaction.reply({ content: '❌ Anti-nuke is not configured. Run `/antinuke setup` first.', ephemeral: true });
+      }
+
+      const embed = new EmbedBuilder()
+        .setColor(config.enabled ? 0x51CF66 : 0xFF6B6B)
+        .setTitle(`🛡️ Anti-Nuke Status: ${config.enabled ? '🟢 Active' : '🔴 Disabled'}`)
+        .addFields(
+          { name: 'Max Channel Deletes', value: `${config.max_channel_deletes} in ${config.time_window_seconds}s`, inline: true },
+          { name: 'Max Role Deletes', value: `${config.max_role_deletes} in ${config.time_window_seconds}s`, inline: true },
+          { name: 'Max Bans', value: `${config.max_bans} in ${config.time_window_seconds}s`, inline: true },
+          { name: 'Whitelisted Users', value: config.whitelist_user_ids.length > 0 ? config.whitelist_user_ids.map(id => `<@${id}>`).join(', ') : 'None', inline: false },
+          { name: 'Whitelisted Roles', value: config.whitelist_role_ids.length > 0 ? config.whitelist_role_ids.map(id => `<@&${id}>`).join(', ') : 'None', inline: false }
+        );
+
+      return interaction.reply({ embeds: [embed], ephemeral: true });
+    }
+
+    if (subCmd === 'triggers') {
+      const triggers = getAntiNukeTriggers(interaction.guild!.id, 10);
+
+      if (triggers.length === 0) {
+        return interaction.reply({ content: '✅ No anti-nuke triggers have been recorded.', ephemeral: true });
+      }
+
+      const embed = new EmbedBuilder()
+        .setColor(0xFF6B6B)
+        .setTitle('🚨 Recent Anti-Nuke Triggers')
+        .setDescription(`Showing ${triggers.length} most recent trigger${triggers.length > 1 ? 's' : ''}`);
+
+      for (const trigger of triggers) {
+        const triggerDate = new Date(trigger.triggered_at!);
+        embed.addFields({
+          name: `<@${trigger.user_id}>`,
+          value: `**Type:** ${trigger.trigger_type.replace('_', ' ')}\n**Actions:** ${trigger.actions_count}\n**Action Taken:** ${trigger.action_taken}\n**Date:** <t:${Math.floor(triggerDate.getTime() / 1000)}:R>`,
+          inline: true
+        });
+      }
+
+      return interaction.reply({ embeds: [embed], ephemeral: true });
+    }
+
+    if (subCmd === 'toggle') {
+      const enabled = interaction.options.getBoolean('enabled', true);
+      const config = getAntiNukeConfig(interaction.guild!.id);
+
+      if (!config) {
+        return interaction.reply({ content: '❌ Please run `/antinuke setup` first.', ephemeral: true });
+      }
+
+      config.enabled = enabled;
+      setAntiNukeConfig(config);
+
+      return interaction.reply({ 
+        content: `✅ Anti-nuke protection ${enabled ? 'enabled' : 'disabled'}.`, 
+        ephemeral: true 
+      });
+    }
+  }
+
   if (name === 'announce') {
     if (!(await hasCommandAccess(interaction.member, 'announce', interaction.guild?.id || null))) {
       return interaction.reply({ content: '❌ You don\'t have permission to use this command.', ephemeral: true });
@@ -6212,6 +6742,28 @@ client.on("messageCreate", async (message: Message) => {
       }
     } catch (err) {
       console.error('[Tickets] Failed to update last message timestamp:', err);
+    }
+    
+    // Track staff activity for auto-demotion system
+    try {
+      const { getStaffActivityConfig, updateStaffActivity } = await import('./services/staffActivity');
+      const config = getStaffActivityConfig(message.guild.id);
+      
+      if (config && config.enabled) {
+        const member = message.member;
+        if (member) {
+          // Check which staff role they have and update activity
+          if (config.head_support_role_id && member.roles.cache.has(config.head_support_role_id)) {
+            updateStaffActivity(message.guild.id, message.author.id, 'head_support');
+          } else if (config.support_role_id && member.roles.cache.has(config.support_role_id)) {
+            updateStaffActivity(message.guild.id, message.author.id, 'support');
+          } else if (config.trial_support_role_id && member.roles.cache.has(config.trial_support_role_id)) {
+            updateStaffActivity(message.guild.id, message.author.id, 'trial_support');
+          }
+        }
+      }
+    } catch (err) {
+      console.error('[StaffActivity] Failed to update staff activity:', err);
     }
     
     try {
@@ -7293,6 +7845,239 @@ client.on('interactionCreate', async (interaction) => {
     if (interaction.isRepliable()) {
       try { await interaction.reply({ content: 'Something went wrong updating the match.', ephemeral: true }); } catch {}
     }
+  }
+});
+
+// Anti-Nuke Protection - Channel Delete
+client.on('channelDelete', async (channel) => {
+  if (!('guild' in channel) || !channel.guild) return;
+
+  try {
+    const {
+      getAntiNukeConfig,
+      trackAntiNukeAction,
+      getRecentActions,
+      isWhitelisted,
+      logAntiNukeTrigger
+    } = await import('./services/antiNuke');
+
+    const config = getAntiNukeConfig(channel.guild.id);
+    if (!config || !config.enabled) return;
+
+    // Get audit log to find who deleted the channel
+    const auditLogs = await channel.guild.fetchAuditLogs({
+      type: 12, // CHANNEL_DELETE
+      limit: 1
+    });
+
+    const deleteLog = auditLogs.entries.first();
+    if (!deleteLog || !deleteLog.executor) return;
+
+    const executor = deleteLog.executor;
+    const member = await channel.guild.members.fetch(executor.id).catch(() => null);
+    if (!member) return;
+
+    // Check if whitelisted
+    const userRoles = Array.from(member.roles.cache.keys()) as string[];
+    if (isWhitelisted(config, executor.id, userRoles)) return;
+
+    // Track the action
+    trackAntiNukeAction(channel.guild.id, executor.id, 'channel_delete');
+
+    // Check if threshold exceeded
+    const recentDeletes = getRecentActions(
+      channel.guild.id,
+      executor.id,
+      'channel_delete',
+      config.time_window_seconds
+    );
+
+    if (recentDeletes >= config.max_channel_deletes) {
+      // TRIGGER ANTI-NUKE
+      console.log(`🚨 Anti-nuke triggered: ${executor.tag} deleted ${recentDeletes} channels`);
+
+      // Ban the user
+      try {
+        await member.ban({ reason: `Anti-nuke: Deleted ${recentDeletes} channels in ${config.time_window_seconds}s` });
+        logAntiNukeTrigger(channel.guild.id, executor.id, 'channel_delete', recentDeletes, 'banned');
+      } catch (err) {
+        console.error('Failed to ban nuke user:', err);
+        logAntiNukeTrigger(channel.guild.id, executor.id, 'channel_delete', recentDeletes, 'failed_to_ban');
+      }
+
+      // Alert admins
+      const modLogChannelId = getModLogChannelId();
+      if (modLogChannelId) {
+        const modLogChannel = await channel.guild.channels.fetch(modLogChannelId).catch(() => null) as any;
+        if (modLogChannel) {
+          await modLogChannel.send({
+            content: '@everyone',
+            embeds: [{
+              color: 0xFF0000,
+              title: '🚨 ANTI-NUKE TRIGGERED',
+              description: `**User:** <@${executor.id}> (${executor.tag})\n**Action:** Mass Channel Deletion\n**Channels Deleted:** ${recentDeletes} in ${config.time_window_seconds}s\n**Response:** User has been banned`,
+              timestamp: new Date().toISOString()
+            }]
+          });
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Anti-nuke channel delete handler error:', err);
+  }
+});
+
+// Anti-Nuke Protection - Role Delete
+client.on('roleDelete', async (role) => {
+  try {
+    const {
+      getAntiNukeConfig,
+      trackAntiNukeAction,
+      getRecentActions,
+      isWhitelisted,
+      logAntiNukeTrigger
+    } = await import('./services/antiNuke');
+
+    const config = getAntiNukeConfig(role.guild.id);
+    if (!config || !config.enabled) return;
+
+    // Get audit log to find who deleted the role
+    const auditLogs = await role.guild.fetchAuditLogs({
+      type: 32, // ROLE_DELETE
+      limit: 1
+    });
+
+    const deleteLog = auditLogs.entries.first();
+    if (!deleteLog || !deleteLog.executor) return;
+
+    const executor = deleteLog.executor;
+    const member = await role.guild.members.fetch(executor.id).catch(() => null);
+    if (!member) return;
+
+    // Check if whitelisted
+    const userRoles = Array.from(member.roles.cache.keys());
+    if (isWhitelisted(config, executor.id, userRoles)) return;
+
+    // Track the action
+    trackAntiNukeAction(role.guild.id, executor.id, 'role_delete');
+
+    // Check if threshold exceeded
+    const recentDeletes = getRecentActions(
+      role.guild.id,
+      executor.id,
+      'role_delete',
+      config.time_window_seconds
+    );
+
+    if (recentDeletes >= config.max_role_deletes) {
+      // TRIGGER ANTI-NUKE
+      console.log(`🚨 Anti-nuke triggered: ${executor.tag} deleted ${recentDeletes} roles`);
+
+      // Ban the user
+      try {
+        await member.ban({ reason: `Anti-nuke: Deleted ${recentDeletes} roles in ${config.time_window_seconds}s` });
+        logAntiNukeTrigger(role.guild.id, executor.id, 'role_delete', recentDeletes, 'banned');
+      } catch (err) {
+        console.error('Failed to ban nuke user:', err);
+        logAntiNukeTrigger(role.guild.id, executor.id, 'role_delete', recentDeletes, 'failed_to_ban');
+      }
+
+      // Alert admins
+      const modLogChannelId = getModLogChannelId();
+      if (modLogChannelId) {
+        const modLogChannel = await role.guild.channels.fetch(modLogChannelId).catch(() => null) as any;
+        if (modLogChannel) {
+          await modLogChannel.send({
+            content: '@everyone',
+            embeds: [{
+              color: 0xFF0000,
+              title: '🚨 ANTI-NUKE TRIGGERED',
+              description: `**User:** <@${executor.id}> (${executor.tag})\n**Action:** Mass Role Deletion\n**Roles Deleted:** ${recentDeletes} in ${config.time_window_seconds}s\n**Response:** User has been banned`,
+              timestamp: new Date().toISOString()
+            }]
+          });
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Anti-nuke role delete handler error:', err);
+  }
+});
+
+// Anti-Nuke Protection - Mass Ban
+client.on('guildBanAdd', async (ban) => {
+  try {
+    const {
+      getAntiNukeConfig,
+      trackAntiNukeAction,
+      getRecentActions,
+      isWhitelisted,
+      logAntiNukeTrigger
+    } = await import('./services/antiNuke');
+
+    const config = getAntiNukeConfig(ban.guild.id);
+    if (!config || !config.enabled) return;
+
+    // Get audit log to find who banned
+    const auditLogs = await ban.guild.fetchAuditLogs({
+      type: 22, // MEMBER_BAN_ADD
+      limit: 1
+    });
+
+    const banLog = auditLogs.entries.first();
+    if (!banLog || !banLog.executor) return;
+
+    const executor = banLog.executor;
+    const member = await ban.guild.members.fetch(executor.id).catch(() => null);
+    if (!member) return;
+
+    // Check if whitelisted
+    const userRoles = Array.from(member.roles.cache.keys());
+    if (isWhitelisted(config, executor.id, userRoles)) return;
+
+    // Track the action
+    trackAntiNukeAction(ban.guild.id, executor.id, 'ban');
+
+    // Check if threshold exceeded
+    const recentBans = getRecentActions(
+      ban.guild.id,
+      executor.id,
+      'ban',
+      config.time_window_seconds
+    );
+
+    if (recentBans >= config.max_bans) {
+      // TRIGGER ANTI-NUKE
+      console.log(`🚨 Anti-nuke triggered: ${executor.tag} banned ${recentBans} users`);
+
+      // Remove all roles (can't ban bot user or self)
+      try {
+        await member.roles.set([], `Anti-nuke: Mass banned ${recentBans} users in ${config.time_window_seconds}s`);
+        logAntiNukeTrigger(ban.guild.id, executor.id, 'ban', recentBans, 'roles_removed');
+      } catch (err) {
+        console.error('Failed to remove roles from nuke user:', err);
+        logAntiNukeTrigger(ban.guild.id, executor.id, 'ban', recentBans, 'failed_to_action');
+      }
+
+      // Alert admins
+      const modLogChannelId = getModLogChannelId();
+      if (modLogChannelId) {
+        const modLogChannel = await ban.guild.channels.fetch(modLogChannelId).catch(() => null) as any;
+        if (modLogChannel) {
+          await modLogChannel.send({
+            content: '@everyone',
+            embeds: [{
+              color: 0xFF0000,
+              title: '🚨 ANTI-NUKE TRIGGERED',
+              description: `**User:** <@${executor.id}> (${executor.tag})\n**Action:** Mass Banning\n**Users Banned:** ${recentBans} in ${config.time_window_seconds}s\n**Response:** All roles removed`,
+              timestamp: new Date().toISOString()
+            }]
+          });
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Anti-nuke ban handler error:', err);
   }
 });
 
