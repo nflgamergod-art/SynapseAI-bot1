@@ -29,8 +29,43 @@ Notes
 - Moderation commands require appropriate permissions (KickMembers, BanMembers, ManageRoles, ModerateMembers).
 - OpenAI integration is used to generate conversational replies. Ensure your OpenAI key is set.
 
+## New Features
+
+### 🚫 Staff Suspension & Demotion System
+Automatic staff management with warning escalation and role hierarchy:
+
+**Key Features:**
+- **Auto-suspend at 3 warnings** (4-7 day random duration)
+- **Role hierarchy demotion:** Head Support → Support → Trial Support → Permanent Removal
+- **Manual suspension:** `/suspendstaff` with custom duration
+- **Cancellation:** `/cancelsuspension` to restore roles
+- **Monitoring:** `/suspensions` to view active cases
+
+**Commands:**
+- `/suspendstaff user:[staff] duration:[days] reason:[text]` - Manually suspend staff member
+- `/cancelsuspension user:[staff]` - Cancel active suspension and restore roles
+- `/suspensions` - View all active staff suspensions
+
+**See [STAFF_SUSPENSION_SYSTEM.md](./STAFF_SUSPENSION_SYSTEM.md) for complete documentation.**
+
+### 📊 Stats & Achievement Tracking
+- **Message tracking:** Earn points for every 100 messages
+- **Welcome tracking:** Track and reward welcoming new members
+- **Conversation tracking:** Track meaningful conversations
+- **Streak system:** Maintain consecutive days of support
+- **Comprehensive stats:** `/stats` command shows detailed progress
+
+**See [STREAK_SYSTEM.md](./STREAK_SYSTEM.md) for streak details.**
+
+### 💰 Payroll System
+- **Unpaid breaks:** Break time excluded from pay calculations
+- **Daily limits:** Automatic enforcement with break exclusion
+- **Shift tracking:** `/shifts detail` for comprehensive breakdown
+
 Security
 - Keep `.env` secret. Do not commit API keys to git.
 
 Next steps
-- Add persistent conversation storage (optional) and register slash commands if you prefer native Discord slash support.
+- Configure support roles using `/setsupportroles`
+- Set up mod log channel with `/setmodlog`
+- Review staff suspension settings in documentation

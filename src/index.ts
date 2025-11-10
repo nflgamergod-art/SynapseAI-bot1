@@ -354,7 +354,7 @@ client.once('clientReady', async () => {
   
   // Start achievement cron jobs for periodic checks
   const { startAchievementCron } = await import('./services/achievementCron');
-  startAchievementCron();
+  startAchievementCron(client);
   
   // Start payroll auto-break checker (runs every 2 minutes)
   const { checkAndAutoBreak, checkDailyLimitReached, forceClockOut, set24HourCooldown } = await import('./services/payroll');
@@ -545,6 +545,15 @@ client.once('clientReady', async () => {
   { name: "warns", description: "Check user warnings", options: [{ name: 'user', type: 6, description: 'User to check', required: true }] },
     { name: "clearwarn", description: "Clear warnings for a user", options: [{ name: 'user', type: 6, description: 'User', required: true }] },
     { name: "unmute", description: "Remove timeout from a member", options: [{ name: 'user', type: 6, description: 'Member to unmute', required: true }] },
+    { name: "suspendstaff", description: "Suspend a staff member (Admin)", options: [
+      { name: 'user', type: 6, description: 'Staff member to suspend', required: true },
+      { name: 'duration', type: 4, description: 'Duration in days (1-30)', required: true },
+      { name: 'reason', type: 3, description: 'Reason for suspension', required: true }
+    ] },
+    { name: "cancelsuspension", description: "Cancel an active staff suspension (Admin)", options: [
+      { name: 'user', type: 6, description: 'Suspended staff member', required: true }
+    ] },
+    { name: "suspensions", description: "View active staff suspensions (Admin)" },
   { name: "announce", description: "Send an announcement as the bot", options: [{ name: 'message', type: 3, description: 'Message content', required: true }, { name: 'channel', type: 7, description: 'Channel to announce in', required: false }] },
     { name: "membercount", description: "Show member count (optionally for a role)", options: [{ name: 'role', type: 8, description: 'Role to count', required: false }] },
     { name: "purge", description: "Delete recent messages from the channel", options: [{ name: 'count', type: 4, description: 'Number of messages to delete', required: true }] },
@@ -5214,6 +5223,25 @@ client.on("interactionCreate", async (interaction) => {
     // Create case
     const { createCase } = await import('./services/cases');
     const caseNum = createCase(interaction.guild.id, user.id, interaction.user.id, 'warn', reason);
+    
+    // Check if user should be auto-suspended (3 warnings)
+    const { checkWarningsAndSuspend } = await import('./services/staffSuspension');
+    const modLogChannelId = getModLogChannelId();
+    const modLogChannel = modLogChannelId ? await interaction.guild.channels.fetch(modLogChannelId).catch(() => null) as any : null;
+    const suspensionResult = await checkWarningsAndSuspend(
+      user.id,
+      interaction.guild.id,
+      interaction.guild,
+      modLogChannel || undefined
+    );
+    
+    if (suspensionResult.shouldSuspend) {
+      return interaction.reply({ 
+        content: `⚠️ Warned ${user.tag} (Case #${caseNum})\n\n🚫 **User has been automatically suspended** for accumulating ${suspensionResult.warningCount} warnings.`, 
+        ephemeral: true 
+      });
+    }
+    
     return interaction.reply({ content: `Warned ${user.tag} (Case #${caseNum})`, ephemeral: true });
   }
 
@@ -5321,6 +5349,139 @@ client.on("interactionCreate", async (interaction) => {
     } catch (err) {
       console.error('Failed to unmute', err);
       return interaction.reply({ content: 'Failed to unmute member.', ephemeral: true });
+    }
+  }
+
+  if (name === 'suspendstaff') {
+    if (!(await hasCommandAccess(interaction.member, 'suspendstaff', interaction.guild?.id || null))) {
+      return interaction.reply({ content: '❌ You don\'t have permission to use this command.', ephemeral: true });
+    }
+    
+    const user = interaction.options.getUser('user', true);
+    const duration = interaction.options.getInteger('duration', true);
+    const reason = interaction.options.getString('reason', true);
+    
+    if (!interaction.guild) {
+      return interaction.reply({ content: '❌ This command must be used in a guild.', ephemeral: true });
+    }
+    
+    if (duration < 1 || duration > 30) {
+      return interaction.reply({ content: '❌ Duration must be between 1 and 30 days.', ephemeral: true });
+    }
+    
+    try {
+      const member = await interaction.guild.members.fetch(user.id);
+      const { suspendStaffMember } = await import('./services/staffSuspension');
+      
+      const modLogChannelId = getModLogChannelId();
+      const modLogChannel = modLogChannelId ? await interaction.guild.channels.fetch(modLogChannelId).catch(() => null) as any : null;
+      
+      const result = await suspendStaffMember(
+        member,
+        reason,
+        interaction.user.id,
+        duration,
+        modLogChannel || undefined
+      );
+      
+      if (result.success) {
+        return interaction.reply({ content: `✅ ${result.message}`, ephemeral: true });
+      } else {
+        return interaction.reply({ content: `❌ ${result.message}`, ephemeral: true });
+      }
+    } catch (err) {
+      console.error('Failed to suspend staff member:', err);
+      return interaction.reply({ content: `❌ Failed to suspend: ${err}`, ephemeral: true });
+    }
+  }
+
+  if (name === 'cancelsuspension') {
+    if (!(await hasCommandAccess(interaction.member, 'cancelsuspension', interaction.guild?.id || null))) {
+      return interaction.reply({ content: '❌ You don\'t have permission to use this command.', ephemeral: true });
+    }
+    
+    const user = interaction.options.getUser('user', true);
+    
+    if (!interaction.guild) {
+      return interaction.reply({ content: '❌ This command must be used in a guild.', ephemeral: true });
+    }
+    
+    try {
+      const { getActiveSuspension, cancelStaffSuspension } = await import('./services/staffSuspension');
+      
+      const suspension = getActiveSuspension(user.id, interaction.guild.id);
+      if (!suspension) {
+        return interaction.reply({ content: `❌ ${user.tag} does not have an active suspension.`, ephemeral: true });
+      }
+      
+      const modLogChannelId = getModLogChannelId();
+      const modLogChannel = modLogChannelId ? await interaction.guild.channels.fetch(modLogChannelId).catch(() => null) as any : null;
+      
+      const result = await cancelStaffSuspension(
+        suspension.id!,
+        interaction.user.id,
+        interaction.guild,
+        modLogChannel || undefined
+      );
+      
+      if (result.success) {
+        return interaction.reply({ content: `✅ ${result.message}`, ephemeral: true });
+      } else {
+        return interaction.reply({ content: `❌ ${result.message}`, ephemeral: true });
+      }
+    } catch (err) {
+      console.error('Failed to cancel suspension:', err);
+      return interaction.reply({ content: `❌ Failed to cancel suspension: ${err}`, ephemeral: true });
+    }
+  }
+
+  if (name === 'suspensions') {
+    if (!(await hasCommandAccess(interaction.member, 'suspensions', interaction.guild?.id || null))) {
+      return interaction.reply({ content: '❌ You don\'t have permission to use this command.', ephemeral: true });
+    }
+    
+    if (!interaction.guild) {
+      return interaction.reply({ content: '❌ This command must be used in a guild.', ephemeral: true });
+    }
+    
+    try {
+      const { getActiveSuspensions } = await import('./services/staffSuspension');
+      const suspensions = getActiveSuspensions().filter(s => s.guild_id === interaction.guild!.id);
+      
+      if (suspensions.length === 0) {
+        return interaction.reply({ content: '✅ No active suspensions.', ephemeral: true });
+      }
+      
+      const embed = new EmbedBuilder()
+        .setTitle('🚫 Active Staff Suspensions')
+        .setColor(0xFF6B6B)
+        .setDescription(`**${suspensions.length}** active suspension(s)`)
+        .setTimestamp();
+      
+      for (const suspension of suspensions.slice(0, 10)) {
+        const endDate = new Date(suspension.end_date);
+        const endTimestamp = Math.floor(endDate.getTime() / 1000);
+        
+        embed.addFields({
+          name: `User: <@${suspension.user_id}>`,
+          value: [
+            `**Reason:** ${suspension.reason}`,
+            `**Suspended by:** <@${suspension.suspended_by}>`,
+            `**Ends:** <t:${endTimestamp}:R>`,
+            `**Type:** ${suspension.is_permanent ? '🔴 Permanent (must appeal)' : '🟡 Temporary (will be demoted)'}`
+          ].join('\n'),
+          inline: false
+        });
+      }
+      
+      if (suspensions.length > 10) {
+        embed.setFooter({ text: `Showing first 10 of ${suspensions.length} suspensions` });
+      }
+      
+      return interaction.reply({ embeds: [embed], ephemeral: true });
+    } catch (err) {
+      console.error('Failed to list suspensions:', err);
+      return interaction.reply({ content: `❌ Failed to list suspensions: ${err}`, ephemeral: true });
     }
   }
 

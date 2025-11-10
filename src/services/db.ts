@@ -105,6 +105,25 @@ function initSchema() {
     );
     CREATE INDEX IF NOT EXISTS idx_interactions_user ON user_interactions(user_id, guild_id);
     CREATE INDEX IF NOT EXISTS idx_interactions_type ON user_interactions(interaction_type, created_at);
+
+    CREATE TABLE IF NOT EXISTS staff_suspensions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id TEXT NOT NULL,
+      guild_id TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      suspended_by TEXT NOT NULL,
+      start_date TEXT NOT NULL,
+      end_date TEXT NOT NULL,
+      original_roles TEXT NOT NULL,
+      demoted_role TEXT,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      is_permanent INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      resolved_at TEXT,
+      cancelled_by TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_suspensions_user ON staff_suspensions(user_id, guild_id);
+    CREATE INDEX IF NOT EXISTS idx_suspensions_active ON staff_suspensions(is_active, end_date);
   `);
 }
 

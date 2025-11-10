@@ -171,10 +171,47 @@ export function checkAllAchievements() {
 }
 
 /**
+ * Check and process expired staff suspensions
+ * Run this hourly to restore roles with demotion
+ */
+export async function checkExpiredSuspensions(client: any) {
+  const { getActiveSuspensions, processExpiredSuspensions } = await import('./staffSuspension');
+  const { getModLogChannelId } = await import('../config');
+  
+  const suspensions = getActiveSuspensions();
+  const now = new Date();
+  let processedCount = 0;
+  
+  for (const suspension of suspensions) {
+    const endDate = new Date(suspension.end_date);
+    if (now >= endDate) {
+      try {
+        const guild = await client.guilds.fetch(suspension.guild_id);
+        if (!guild) continue;
+        
+        const modLogChannelId = getModLogChannelId();
+        const modLogChannel = modLogChannelId ? await guild.channels.fetch(modLogChannelId).catch(() => null) : null;
+        
+        await processExpiredSuspensions(guild, modLogChannel || undefined);
+        processedCount++;
+      } catch (err) {
+        console.error(`Failed to process expired suspension for user ${suspension.user_id}:`, err);
+      }
+    }
+  }
+  
+  if (processedCount > 0) {
+    console.log(`✅ Processed ${processedCount} expired suspension(s)`);
+  }
+  
+  return processedCount;
+}
+
+/**
  * Start the achievement cron jobs
  * This sets up periodic checks
  */
-export function startAchievementCron() {
+export function startAchievementCron(client?: any) {
   // Check streaks daily at midnight
   const now = new Date();
   const midnight = new Date(now);
@@ -193,5 +230,13 @@ export function startAchievementCron() {
   // Run an initial check on startup (after a short delay)
   setTimeout(checkAllAchievements, 60 * 1000); // 1 minute after startup
   
-  console.log('📅 Achievement cron jobs started');
+  // Check expired suspensions every hour if client is provided
+  if (client) {
+    setInterval(() => checkExpiredSuspensions(client), 60 * 60 * 1000); // Every hour
+    // Initial check after 2 minutes
+    setTimeout(() => checkExpiredSuspensions(client), 2 * 60 * 1000);
+    console.log('📅 Achievement and suspension cron jobs started');
+  } else {
+    console.log('📅 Achievement cron jobs started');
+  }
 }
