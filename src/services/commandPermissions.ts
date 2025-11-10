@@ -151,8 +151,8 @@ export function getAllGuildCommandPermissions(guildId: string): CommandPermissio
 // Available commands that can be restricted
 export const RESTRICTABLE_COMMANDS = [
   // Moderation
-  'kick', 'ban', 'mute', 'unmute', 'warn', 'checkwarn', 'clearwarn',
-  'bulkban', 'bulkkick', 'bulkmute',
+  'kick', 'ban', 'mute', 'unmute', 'warn', 'warns', 'clearwarn', 'history',
+  'bulkban', 'bulkkick', 'bulkmute', 'unban',
   // Role management
   'addrole', 'removerole',
   // Channel management
@@ -161,32 +161,100 @@ export const RESTRICTABLE_COMMANDS = [
   'setdefaultmute', 'getdefaultmute', 'setquestiontimeout', 'getquestiontimeout',
   'setmodlog', 'getmodlog', 'clearmodlog',
   // Support system
-  'supportstart', 'supportend', 'supportaddhelper', 'supportrate', 'listopentickets',
+  'supportstart', 'supportend', 'supportaddhelper', 'supportrate', 'supportstats', 'whosonduty',
   // Response rules
   'setresponserule', 'listresponserules', 'delresponserule',
   // Bypass management
-  'addbypass', 'removebypass', 'listbypass',
+  'addbypass', 'removebypass', 'abusebypass',
   // Auto-moderation
   'automod',
   // Case management
   'case', 'cases', 'updatecase',
   // Appeals
-  'appeals',
+  'appeals', 'appeal', 'appealhistory',
   // Tickets
   'ticket',
   // Stats channels
   'statschannels',
   // Temp channels
-  'tempchannels'
+  'tempchannels',
+  // Staff management
+  'suspendstaff', 'cancelsuspension', 'suspensions',
+  // Reminders
+  'remind', 'reminders', 'cancelreminder'
 ];
 
 // Command categories for easier setup
 export const COMMAND_PRESETS = {
-  'head_support': ['kick', 'ban', 'mute', 'unmute', 'warn', 'checkwarn', 'clearwarn', 'addrole', 'removerole', 'purge', 'supportstart', 'supportend', 'supportaddhelper', 'listopentickets', 'case', 'cases', 'ticket', 'appeals'],
-  'support': ['mute', 'unmute', 'warn', 'checkwarn', 'supportstart', 'supportend', 'supportaddhelper', 'listopentickets', 'case', 'cases', 'ticket'],
-  'trial_support': ['mute', 'unmute', 'warn', 'checkwarn', 'supportstart', 'supportend', 'listopentickets', 'ticket'],
-  'moderator': ['kick', 'ban', 'mute', 'unmute', 'warn', 'checkwarn', 'clearwarn', 'purge', 'bulkban', 'bulkkick', 'bulkmute', 'case', 'cases', 'updatecase', 'automod'],
-  'admin': RESTRICTABLE_COMMANDS // All commands
+  // Trial Support - Bare minimum for entry-level support staff
+  // Focus: Basic ticket handling, warnings, temporary moderation
+  'trial_support': [
+    // Tickets - Essential for support work
+    'ticket',
+    // Basic moderation
+    'mute', 'unmute', 'warn',
+    // View user info
+    'warns', 'history', 'case',
+    // Support tracking
+    'supportstart', 'supportend', 'whosonduty',
+    // View cases
+    'cases'
+  ],
+  
+  // Support - Full-time support with expanded permissions
+  // Focus: Complete ticket/support management, user moderation, case management
+  'support': [
+    // All trial support commands
+    'ticket', 'mute', 'unmute', 'warn', 'warns', 'history', 'case', 'cases',
+    'supportstart', 'supportend', 'whosonduty',
+    // Enhanced moderation
+    'kick', 'clearwarn',
+    // Support management
+    'supportaddhelper', 'supportrate', 'supportstats',
+    // Appeals review
+    'appeals', 'appealhistory',
+    // Reminders for follow-ups
+    'remind', 'reminders', 'cancelreminder',
+    // Case updates
+    'updatecase'
+  ],
+  
+  // Head Support - Leadership role with full support capabilities
+  // Focus: Team management, advanced moderation, configuration, appeals handling
+  'head_support': [
+    // All support commands
+    'ticket', 'mute', 'unmute', 'warn', 'warns', 'history', 'case', 'cases',
+    'supportstart', 'supportend', 'whosonduty', 'kick', 'clearwarn',
+    'supportaddhelper', 'supportrate', 'supportstats',
+    'appeals', 'appealhistory', 'remind', 'reminders', 'cancelreminder', 'updatecase',
+    // Advanced moderation
+    'ban', 'unban',
+    // Role management for support team
+    'addrole', 'removerole',
+    // Channel management
+    'purge', 'announce',
+    // Staff management
+    'suspendstaff', 'cancelsuspension', 'suspensions',
+    // Configuration viewing
+    'getdefaultmute', 'getquestiontimeout', 'getmodlog',
+    // Temp channels management
+    'tempchannels',
+    // Response rules (for support automation)
+    'listresponserules'
+  ],
+  
+  // Moderator - Full moderation powers
+  'moderator': [
+    'kick', 'ban', 'unban', 'mute', 'unmute', 'warn', 'warns', 'clearwarn', 'history',
+    'purge', 'bulkban', 'bulkkick', 'bulkmute',
+    'case', 'cases', 'updatecase',
+    'automod', 'addrole', 'removerole',
+    'suspendstaff', 'cancelsuspension', 'suspensions',
+    'appeals', 'appealhistory', 'ticket'
+  ],
+  
+  // Admin - All commands
+  'admin': RESTRICTABLE_COMMANDS
 };
 
 // Initialize on module load
