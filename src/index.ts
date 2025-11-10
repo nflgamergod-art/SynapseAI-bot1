@@ -647,12 +647,13 @@ client.once('clientReady', async () => {
     ] },
     // Appeals
     { name: "appeal", description: "📨 Submit an appeal (use in DMs with bot)", dm_permission: true, contexts: [0, 1, 2], integration_types: [0, 1], options: [
-      { name: "type", description: "ban | mute | blacklist", type: 3, required: true, choices: [
+      { name: "type", description: "ban | mute | blacklist | staff_suspension", type: 3, required: true, choices: [
         { name: "Ban Appeal", value: "ban" },
         { name: "Mute Appeal", value: "mute" },
-        { name: "Blacklist Appeal", value: "blacklist" }
+        { name: "Blacklist Appeal", value: "blacklist" },
+        { name: "Staff Suspension/Removal Appeal", value: "staff_suspension" }
       ] },
-      { name: "reason", description: "Why should your punishment be revoked?", type: 3, required: true }
+      { name: "reason", description: "Detailed explanation of why your punishment should be revoked", type: 3, required: true }
     ] },
     { name: "appeals", description: "📨 Admin: Review pending appeals", options: [
       { name: "view", description: "View all pending appeals", type: 1 },
@@ -2325,6 +2326,21 @@ client.on("interactionCreate", async (interaction) => {
       return await safeReply(interaction, '❌ Could not determine server. Please use this command in the server or ensure the bot is configured.', { flags: MessageFlags.Ephemeral });
     }
 
+    // For staff suspension appeals, check if they have an active suspension
+    let suspensionId: number | undefined;
+    if (type === 'staff_suspension') {
+      const { getSuspensionHistory } = await import('./services/staffSuspension');
+      const history = getSuspensionHistory(interaction.user.id, guildId);
+      const activeSuspension = history.find(s => s.is_active === 1 || s.is_permanent === 1);
+      
+      if (!activeSuspension && history.length === 0) {
+        return await safeReply(interaction, { content: '❌ You do not have a staff suspension record to appeal.', flags: MessageFlags.Ephemeral });
+      }
+      
+      // Use most recent suspension if active one not found
+      suspensionId = activeSuspension?.id || history[0]?.id;
+    }
+
     // Rate limit: 1 submission per 12 hours per type
     const windowSeconds = 12 * 60 * 60; // 12h
     const rl = canSubmitAppeal(guildId, interaction.user.id, type, windowSeconds);
@@ -2334,8 +2350,45 @@ client.on("interactionCreate", async (interaction) => {
     }
 
     try {
-      const appealId = createAppeal(guildId, interaction.user.id, type, reason);
-      return await safeReply(interaction, { content: `✅ Appeal #${appealId} submitted successfully. Staff will review it soon.`, flags: MessageFlags.Ephemeral });
+      const appealId = createAppeal(guildId, interaction.user.id, type, reason, suspensionId);
+      
+      // Send notification to mod log and owner
+      const guild = await client.guilds.fetch(guildId);
+      const modLogChannelId = getModLogChannelId();
+      
+      const appealEmbed = new EmbedBuilder()
+        .setColor(0xFAB005)
+        .setTitle('📨 New Appeal Submitted')
+        .setDescription(`**${interaction.user.tag}** has submitted a ${type.replace('_', ' ')} appeal.`)
+        .addFields(
+          { name: 'Appeal ID', value: `#${appealId}`, inline: true },
+          { name: 'User', value: `<@${interaction.user.id}>`, inline: true },
+          { name: 'Type', value: type.replace('_', ' ').replace(/\b\w/g, (l: string) => l.toUpperCase()), inline: true },
+          { name: 'Reason/Explanation', value: reason.length > 1000 ? reason.substring(0, 997) + '...' : reason }
+        )
+        .setTimestamp()
+        .setFooter({ text: `Use /appeals approve id:${appealId} or /appeals deny id:${appealId}` });
+      
+      // Send to mod log
+      if (modLogChannelId) {
+        const modLogChannel = await guild.channels.fetch(modLogChannelId).catch(() => null) as any;
+        if (modLogChannel) {
+          await modLogChannel.send({ embeds: [appealEmbed] });
+        }
+      }
+      
+      // Send to owner DMs
+      const ownerId = process.env.OWNER_USER_ID;
+      if (ownerId) {
+        try {
+          const owner = await client.users.fetch(ownerId);
+          await owner.send({ embeds: [appealEmbed] });
+        } catch (err) {
+          console.error('Failed to DM owner about appeal:', err);
+        }
+      }
+      
+      return await safeReply(interaction, { content: `✅ Appeal #${appealId} submitted successfully. Staff will review it soon. You will be notified of the decision.`, flags: MessageFlags.Ephemeral });
     } catch (err: any) {
       if (interaction.replied || interaction.deferred) {
         console.log('Debug: Interaction already acknowledged. Skipping response.');
@@ -2419,6 +2472,34 @@ client.on("interactionCreate", async (interaction) => {
                   } catch (e) {
                     console.warn(`[Appeals] Remove blacklist failed for ${appeal.user_id}:`, (e as any)?.message ?? e);
                   }
+                } else if (appeal.appeal_type === 'staff_suspension') {
+                  // Restore staff member and cancel suspension
+                  try {
+                    const { getSuspensionHistory } = await import('./services/staffSuspension');
+                    const { getSupportRoles } = await import('./services/supportRoles');
+                    
+                    const history = getSuspensionHistory(appeal.user_id, appeal.guild_id);
+                    const suspension = appeal.suspension_id 
+                      ? history.find(s => s.id === appeal.suspension_id)
+                      : history.find(s => s.is_active === 1) || history[0];
+                    
+                    if (suspension) {
+                      const member = await guild.members.fetch(appeal.user_id).catch(() => null);
+                      if (member) {
+                        // Restore original roles from before suspension
+                        const originalRoles = JSON.parse(suspension.original_roles) as string[];
+                        if (originalRoles.length > 0) {
+                          await member.roles.add(originalRoles, `Appeal #${appealId} approved - restoring staff roles`);
+                        }
+                        
+                        // Mark suspension as resolved
+                        const { completeSuspension } = await import('./services/staffSuspension');
+                        completeSuspension(suspension.id!);
+                      }
+                    }
+                  } catch (e) {
+                    console.warn(`[Appeals] Staff suspension restoration failed for ${appeal.user_id}:`, (e as any)?.message ?? e);
+                  }
                 }
               } else {
                 console.warn(`[Appeals] Guild ${appeal.guild_id} not found for auto-reversal`);
@@ -2434,7 +2515,9 @@ client.on("interactionCreate", async (interaction) => {
             const autoMsg = subCmd === 'approve'
               ? (appeal.appeal_type === 'ban' ? '\n\nAction: You have been unbanned.'
                 : appeal.appeal_type === 'mute' ? '\n\nAction: You have been unmuted.'
-                : '\n\nAction: You have been removed from the blacklist.')
+                : appeal.appeal_type === 'blacklist' ? '\n\nAction: You have been removed from the blacklist.'
+                : appeal.appeal_type === 'staff_suspension' ? '\n\nAction: Your staff roles have been restored.'
+                : '')
               : '';
             const noteMsg = note ? `\n\n**Note:** ${note}` : '';
             await user.send(`${statusMsg} (Appeal #${appealId})${autoMsg}${noteMsg}`);
@@ -2447,7 +2530,11 @@ client.on("interactionCreate", async (interaction) => {
                 ? 'Unbanned'
                 : appeal.appeal_type === 'mute'
                   ? 'Unmuted'
-                  : 'Removed from Blacklist';
+                  : appeal.appeal_type === 'blacklist'
+                    ? 'Removed from Blacklist'
+                    : appeal.appeal_type === 'staff_suspension'
+                      ? 'Staff Roles Restored'
+                      : 'Action Taken';
 
               const summaryEmbed = new EmbedBuilder()
                 .setTitle('✅ Appeal Approved')

@@ -4,13 +4,14 @@ export interface Appeal {
   id: number;
   guild_id: string;
   user_id: string;
-  appeal_type: 'ban' | 'mute' | 'blacklist';
+  appeal_type: 'ban' | 'mute' | 'blacklist' | 'staff_suspension';
   reason: string;
   status: 'pending' | 'approved' | 'denied';
   reviewed_by?: string;
   review_note?: string;
   created_at: string;
   reviewed_at?: string;
+  suspension_id?: number; // For staff suspension appeals
 }
 
 // Initialize appeals table
@@ -21,13 +22,14 @@ export function initAppealsSchema() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       guild_id TEXT NOT NULL,
       user_id TEXT NOT NULL,
-      appeal_type TEXT CHECK(appeal_type IN ('ban', 'mute', 'blacklist')) NOT NULL,
+      appeal_type TEXT CHECK(appeal_type IN ('ban', 'mute', 'blacklist', 'staff_suspension')) NOT NULL,
       reason TEXT NOT NULL,
       status TEXT CHECK(status IN ('pending', 'approved', 'denied')) NOT NULL DEFAULT 'pending',
       reviewed_by TEXT,
       review_note TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      reviewed_at TEXT
+      reviewed_at TEXT,
+      suspension_id INTEGER
     );
     CREATE INDEX IF NOT EXISTS idx_appeals_guild ON appeals(guild_id);
     CREATE INDEX IF NOT EXISTS idx_appeals_user ON appeals(user_id);
@@ -40,7 +42,8 @@ export function createAppeal(
   guildId: string,
   userId: string,
   appealType: Appeal['appeal_type'],
-  reason: string
+  reason: string,
+  suspensionId?: number
 ): number {
   const db = getDB();
   const now = new Date().toISOString();
@@ -56,9 +59,9 @@ export function createAppeal(
   }
   
   const result = db.prepare(`
-    INSERT INTO appeals (guild_id, user_id, appeal_type, reason, created_at)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(guildId, userId, appealType, reason, now);
+    INSERT INTO appeals (guild_id, user_id, appeal_type, reason, created_at, suspension_id)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(guildId, userId, appealType, reason, now, suspensionId || null);
   
   return result.lastInsertRowid as number;
 }
@@ -67,7 +70,7 @@ export function createAppeal(
 export function getAppeal(appealId: number): Appeal | null {
   const db = getDB();
   const row = db.prepare(`
-    SELECT id, guild_id, user_id, appeal_type, reason, status, reviewed_by, review_note, created_at, reviewed_at
+    SELECT id, guild_id, user_id, appeal_type, reason, status, reviewed_by, review_note, created_at, reviewed_at, suspension_id
     FROM appeals
     WHERE id = ?
   `).get(appealId) as any;
@@ -84,7 +87,8 @@ export function getAppeal(appealId: number): Appeal | null {
     reviewed_by: row.reviewed_by,
     review_note: row.review_note,
     created_at: row.created_at,
-    reviewed_at: row.reviewed_at
+    reviewed_at: row.reviewed_at,
+    suspension_id: row.suspension_id
   };
 }
 
@@ -92,7 +96,7 @@ export function getAppeal(appealId: number): Appeal | null {
 export function getPendingAppeals(guildId: string): Appeal[] {
   const db = getDB();
   const rows = db.prepare(`
-    SELECT id, guild_id, user_id, appeal_type, reason, status, reviewed_by, review_note, created_at, reviewed_at
+    SELECT id, guild_id, user_id, appeal_type, reason, status, reviewed_by, review_note, created_at, reviewed_at, suspension_id
     FROM appeals
     WHERE guild_id = ? AND status = 'pending'
     ORDER BY created_at ASC
@@ -108,7 +112,8 @@ export function getPendingAppeals(guildId: string): Appeal[] {
     reviewed_by: row.reviewed_by,
     review_note: row.review_note,
     created_at: row.created_at,
-    reviewed_at: row.reviewed_at
+    reviewed_at: row.reviewed_at,
+    suspension_id: row.suspension_id
   }));
 }
 
@@ -116,7 +121,7 @@ export function getPendingAppeals(guildId: string): Appeal[] {
 export function getUserAppeals(guildId: string, userId: string): Appeal[] {
   const db = getDB();
   const rows = db.prepare(`
-    SELECT id, guild_id, user_id, appeal_type, reason, status, reviewed_by, review_note, created_at, reviewed_at
+    SELECT id, guild_id, user_id, appeal_type, reason, status, reviewed_by, review_note, created_at, reviewed_at, suspension_id
     FROM appeals
     WHERE guild_id = ? AND user_id = ?
     ORDER BY created_at DESC
@@ -132,7 +137,8 @@ export function getUserAppeals(guildId: string, userId: string): Appeal[] {
     reviewed_by: row.reviewed_by,
     review_note: row.review_note,
     created_at: row.created_at,
-    reviewed_at: row.reviewed_at
+    reviewed_at: row.reviewed_at,
+    suspension_id: row.suspension_id
   }));
 }
 
@@ -140,7 +146,7 @@ export function getUserAppeals(guildId: string, userId: string): Appeal[] {
 export function getLatestAppealOfType(guildId: string, userId: string, appealType: Appeal['appeal_type']): Appeal | null {
   const db = getDB();
   const row = db.prepare(`
-    SELECT id, guild_id, user_id, appeal_type, reason, status, reviewed_by, review_note, created_at, reviewed_at
+    SELECT id, guild_id, user_id, appeal_type, reason, status, reviewed_by, review_note, created_at, reviewed_at, suspension_id
     FROM appeals
     WHERE guild_id = ? AND user_id = ? AND appeal_type = ?
     ORDER BY datetime(created_at) DESC
@@ -157,7 +163,8 @@ export function getLatestAppealOfType(guildId: string, userId: string, appealTyp
     reviewed_by: row.reviewed_by,
     review_note: row.review_note,
     created_at: row.created_at,
-    reviewed_at: row.reviewed_at
+    reviewed_at: row.reviewed_at,
+    suspension_id: row.suspension_id
   };
 }
 

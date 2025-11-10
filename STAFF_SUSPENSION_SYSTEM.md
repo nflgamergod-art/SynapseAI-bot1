@@ -316,13 +316,31 @@ Configure where suspension notifications are posted:
 - Mod log configuration
 - Discord.js role management
 
+## Appeals System
+
+### Staff Can Appeal Suspensions
+Staff members who are suspended or permanently removed can appeal using:
+```
+/appeal type:Staff Suspension/Removal Appeal reason:[Detailed explanation]
+```
+
+**Features:**
+- ✅ Works in DMs with the bot
+- ✅ Admins notified in mod log + owner DM
+- ✅ Review with `/appeals approve` or `/appeals deny`
+- ✅ Approved appeals restore **original roles** (no demotion)
+- ✅ 12-hour cooldown between submissions
+- ✅ Full tracking and history
+
+**See [STAFF_APPEALS.md](./STAFF_APPEALS.md) for complete appeals documentation.**
+
 ## Future Enhancements
 
 Possible additions:
-- [ ] Suspension appeals command
+- [x] Suspension appeals command ✅ **COMPLETED**
 - [ ] Suspension history per user
 - [ ] Configurable warning thresholds
 - [ ] Configurable suspension durations
 - [ ] Email notifications
 - [ ] Suspension reason templates
-- [ ] Auto-unsuspend on appeal approval
+- [x] Auto-unsuspend on appeal approval ✅ **COMPLETED**
