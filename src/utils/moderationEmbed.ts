@@ -1,7 +1,7 @@
 import { EmbedBuilder, Colors, Guild, User, TextChannel } from "discord.js";
 import { getModLogChannelId } from "../config";
 
-export type ModerationAction = "Warned" | "Kicked" | "Banned" | "Muted";
+export type ModerationAction = "Warned" | "Kicked" | "Banned" | "Unbanned" | "Muted";
 
 function humanizeSeconds(totalSeconds: number): string {
   const days = Math.floor(totalSeconds / 86400);

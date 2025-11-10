@@ -432,6 +432,87 @@ client.once('clientReady', async () => {
   
   console.log('✅ Payroll auto-break system started (checks every 2 minutes)');
   
+  // Check for inactive tickets every hour (24h+ no user response = auto-blacklist)
+  setInterval(async () => {
+    try {
+      for (const [guildId, guild] of client.guilds.cache) {
+        const { getInactiveTickets, blacklistFromTickets, isTicketBlacklisted, closeTicket } = await import('./services/tickets');
+        const inactiveTickets = getInactiveTickets(guildId, 24); // 24 hours
+        
+        for (const ticket of inactiveTickets) {
+          // Check if already blacklisted
+          if (isTicketBlacklisted(ticket.user_id, guildId)) continue;
+          
+          try {
+            // Blacklist the user
+            blacklistFromTickets(
+              ticket.user_id,
+              guildId,
+              'Auto-blacklisted: No response in ticket for 24+ hours',
+              client.user!.id
+            );
+            
+            // Close the ticket
+            closeTicket(ticket.channel_id, 'Ticket closed due to inactivity (24h+ no response)');
+            
+            // Delete the channel
+            const channel = await guild.channels.fetch(ticket.channel_id).catch(() => null);
+            if (channel) {
+              await channel.delete('Ticket closed: User inactive for 24+ hours');
+            }
+            
+            // Notify user
+            try {
+              const user = await client.users.fetch(ticket.user_id);
+              await user.send({
+                embeds: [{
+                  color: 0xFF6B6B,
+                  title: '🚫 Ticket Blacklist Notice',
+                  description: `Your ticket in **${guild.name}** was closed due to inactivity, and you have been blacklisted from creating new tickets.`,
+                  fields: [
+                    { name: 'Reason', value: 'No response for 24+ hours after ticket creation' },
+                    { name: 'Note', value: 'Please respond promptly to tickets in the future. Contact an administrator to appeal this blacklist.' }
+                  ],
+                  timestamp: new Date().toISOString()
+                }]
+              });
+            } catch (err) {
+              console.error(`Failed to DM user ${ticket.user_id} about auto-blacklist:`, err);
+            }
+            
+            // Log to mod channel
+            const modLogChannelId = getModLogChannelId();
+            if (modLogChannelId) {
+              const modLogChannel = await guild.channels.fetch(modLogChannelId).catch(() => null) as any;
+              if (modLogChannel) {
+                await modLogChannel.send({
+                  embeds: [{
+                    color: 0xFF6B6B,
+                    title: '🚫 User Auto-Blacklisted from Tickets',
+                    fields: [
+                      { name: 'User', value: `<@${ticket.user_id}>`, inline: true },
+                      { name: 'Ticket ID', value: `#${ticket.id}`, inline: true },
+                      { name: 'Reason', value: 'No response for 24+ hours' }
+                    ],
+                    timestamp: new Date().toISOString()
+                  }]
+                });
+              }
+            }
+            
+            console.log(`🚫 Auto-blacklisted user ${ticket.user_id} for inactive ticket #${ticket.id} in guild ${guild.name}`);
+          } catch (err) {
+            console.error(`Failed to auto-blacklist user ${ticket.user_id}:`, err);
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Ticket inactivity check failed:', err);
+    }
+  }, 60 * 60 * 1000); // Every hour
+  
+  console.log('✅ Ticket inactivity system started (checks every hour)');
+  
   // Register slash commands. If GUILD_ID is set, register for that guild (instant); otherwise register globally.
   const guildId = process.env.GUILD_ID;
 
@@ -778,7 +859,19 @@ client.once('clientReady', async () => {
       ] },
       { name: "removesupportrole", description: "Remove a support role", type: 1, options: [
         { name: "role", description: "Role to remove from support", type: 8, required: true }
-      ] }
+      ] },
+      { name: "blacklist", description: "Blacklist a user from creating tickets", type: 1, options: [
+        { name: "user", description: "User to blacklist", type: 6, required: true },
+        { name: "reason", description: "Reason for blacklist", type: 3, required: true }
+      ] },
+      { name: "unblacklist", description: "Remove user from ticket blacklist", type: 1, options: [
+        { name: "user", description: "User to unblacklist", type: 6, required: true }
+      ] },
+      { name: "blacklists", description: "View all ticket blacklisted users", type: 1 }
+    ] },
+    { name: "unban", description: "Unban a user from the server", options: [
+      { name: "user_id", description: "User ID to unban", type: 3, required: true },
+      { name: "reason", description: "Reason for unbanning", type: 3, required: false }
     ] },
     // Temporary Channels
     { name: "tempchannels", description: "🔊 Configure temporary channels", options: [
@@ -1250,7 +1343,18 @@ client.on("interactionCreate", async (interaction) => {
       if (btn === 'ticket-open') {
         try {
           if (!interaction.guild) return interaction.reply({ content: 'This can only be used in a server.', ephemeral: true });
-          const { getTicketConfig, createTicket, getUserTickets } = await import('./services/tickets');
+          const { getTicketConfig, createTicket, getUserTickets, isTicketBlacklisted, getTicketBlacklist } = await import('./services/tickets');
+          
+          // Check if user is blacklisted
+          if (isTicketBlacklisted(interaction.user.id, interaction.guild.id)) {
+            const blacklistEntry = getTicketBlacklist(interaction.user.id, interaction.guild.id);
+            const reason = blacklistEntry?.reason || 'Violation of ticket system rules';
+            return interaction.reply({ 
+              content: `❌ You are blacklisted from creating tickets.\n**Reason:** ${reason}\n\nContact an administrator to appeal this blacklist.`, 
+              ephemeral: true 
+            });
+          }
+          
           const config = getTicketConfig(interaction.guild.id);
           if (!config || !config.enabled) {
             return interaction.reply({ content: '❌ Ticket system is not configured. Please notify an admin.', ephemeral: true });
@@ -3388,7 +3492,18 @@ client.on("interactionCreate", async (interaction) => {
       const category = interaction.options.getString('category', true);
       const description = interaction.options.getString('description') || 'No description provided';
 
-      const { getTicketConfig, createTicket, getUserTickets } = await import('./services/tickets');
+      const { getTicketConfig, createTicket, getUserTickets, isTicketBlacklisted, getTicketBlacklist } = await import('./services/tickets');
+      
+      // Check if user is blacklisted
+      if (isTicketBlacklisted(interaction.user.id, interaction.guild.id)) {
+        const blacklistEntry = getTicketBlacklist(interaction.user.id, interaction.guild.id);
+        const reason = blacklistEntry?.reason || 'Violation of ticket system rules';
+        return interaction.reply({ 
+          content: `❌ You are blacklisted from creating tickets.\n**Reason:** ${reason}\n\nContact an administrator to appeal this blacklist.`, 
+          ephemeral: true 
+        });
+      }
+      
       const config = getTicketConfig(interaction.guild.id);
 
       if (!config || !config.enabled) {
@@ -3852,6 +3967,188 @@ client.on("interactionCreate", async (interaction) => {
       } else {
         return interaction.reply({ content: `❌ ${role} is not a support role.`, ephemeral: true });
       }
+    }
+
+    if (subCmd === "blacklist") {
+      if (!(await hasCommandAccess(interaction.member, 'ticket', interaction.guild?.id || null))) {
+        return interaction.reply({ content: '❌ You don\'t have permission to use this command.', flags: MessageFlags.Ephemeral });
+      }
+      if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', flags: MessageFlags.Ephemeral });
+
+      const user = interaction.options.getUser('user', true);
+      const reason = interaction.options.getString('reason', true);
+
+      const { blacklistFromTickets, isTicketBlacklisted } = await import('./services/tickets');
+
+      try {
+        const blacklistId = blacklistFromTickets(user.id, interaction.guild.id, reason, interaction.user.id);
+
+        // Send DM to blacklisted user
+        try {
+          const dmEmbed = new EmbedBuilder()
+            .setColor(0xFF6B6B)
+            .setTitle('🚫 Ticket Blacklist Notice')
+            .setDescription(`You have been blacklisted from creating tickets in **${interaction.guild.name}**.`)
+            .addFields(
+              { name: 'Reason', value: reason },
+              { name: 'Note', value: 'You will not be able to create new support tickets. Contact an administrator if you believe this is a mistake.' }
+            )
+            .setTimestamp();
+
+          await user.send({ embeds: [dmEmbed] });
+        } catch (err) {
+          console.error('Failed to DM blacklisted user:', err);
+        }
+
+        // Log to mod channel
+        const modLogChannelId = getModLogChannelId();
+        if (modLogChannelId) {
+          const modLogChannel = await interaction.guild.channels.fetch(modLogChannelId).catch(() => null) as any;
+          if (modLogChannel) {
+            const logEmbed = new EmbedBuilder()
+              .setColor(0xFF6B6B)
+              .setTitle('🚫 User Blacklisted from Tickets')
+              .addFields(
+                { name: 'User', value: `<@${user.id}>`, inline: true },
+                { name: 'Blacklisted By', value: `<@${interaction.user.id}>`, inline: true },
+                { name: 'Reason', value: reason }
+              )
+              .setTimestamp();
+
+            await modLogChannel.send({ embeds: [logEmbed] });
+          }
+        }
+
+        return interaction.reply({ content: `✅ ${user.tag} has been blacklisted from creating tickets.`, ephemeral: true });
+      } catch (err: any) {
+        return interaction.reply({ content: `❌ ${err.message || 'Failed to blacklist user.'}`, ephemeral: true });
+      }
+    }
+
+    if (subCmd === "unblacklist") {
+      if (!(await hasCommandAccess(interaction.member, 'ticket', interaction.guild?.id || null))) {
+        return interaction.reply({ content: '❌ You don\'t have permission to use this command.', flags: MessageFlags.Ephemeral });
+      }
+      if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', flags: MessageFlags.Ephemeral });
+
+      const user = interaction.options.getUser('user', true);
+
+      const { unblacklistFromTickets, isTicketBlacklisted } = await import('./services/tickets');
+
+      if (!isTicketBlacklisted(user.id, interaction.guild.id)) {
+        return interaction.reply({ content: `❌ ${user.tag} is not blacklisted from tickets.`, ephemeral: true });
+      }
+
+      const removed = unblacklistFromTickets(user.id, interaction.guild.id, interaction.user.id);
+
+      if (!removed) {
+        return interaction.reply({ content: `❌ Failed to remove blacklist.`, ephemeral: true });
+      }
+
+      // Notify user
+      try {
+        const dmEmbed = new EmbedBuilder()
+          .setColor(0x51CF66)
+          .setTitle('✅ Ticket Blacklist Removed')
+          .setDescription(`You have been removed from the ticket blacklist in **${interaction.guild.name}**.`)
+          .addFields(
+            { name: 'Status', value: 'You can now create support tickets again.' }
+          )
+          .setTimestamp();
+
+        await user.send({ embeds: [dmEmbed] });
+      } catch (err) {
+        console.error('Failed to DM user about unblacklist:', err);
+      }
+
+      // Log to mod channel
+      const modLogChannelId = getModLogChannelId();
+      if (modLogChannelId) {
+        const modLogChannel = await interaction.guild.channels.fetch(modLogChannelId).catch(() => null) as any;
+        if (modLogChannel) {
+          const logEmbed = new EmbedBuilder()
+            .setColor(0x51CF66)
+            .setTitle('✅ User Unblacklisted from Tickets')
+            .addFields(
+              { name: 'User', value: `<@${user.id}>`, inline: true },
+              { name: 'Removed By', value: `<@${interaction.user.id}>`, inline: true }
+            )
+            .setTimestamp();
+
+          await modLogChannel.send({ embeds: [logEmbed] });
+        }
+      }
+
+      return interaction.reply({ content: `✅ ${user.tag} has been removed from the ticket blacklist.`, ephemeral: true });
+    }
+
+    if (subCmd === "blacklists") {
+      if (!(await hasCommandAccess(interaction.member, 'ticket', interaction.guild?.id || null))) {
+        return interaction.reply({ content: '❌ You don\'t have permission to use this command.', flags: MessageFlags.Ephemeral });
+      }
+      if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', flags: MessageFlags.Ephemeral });
+
+      const { getAllTicketBlacklists } = await import('./services/tickets');
+      const blacklists = getAllTicketBlacklists(interaction.guild.id);
+
+      if (blacklists.length === 0) {
+        return interaction.reply({ content: '✅ No users are currently blacklisted from tickets.', ephemeral: true });
+      }
+
+      const embed = new EmbedBuilder()
+        .setTitle('🚫 Ticket Blacklisted Users')
+        .setColor(0xFF6B6B)
+        .setDescription(`**${blacklists.length}** user(s) blacklisted from creating tickets`);
+
+      for (const blacklist of blacklists.slice(0, 10)) {
+        const date = new Date(blacklist.blacklisted_at);
+        embed.addFields({
+          name: `User: <@${blacklist.user_id}>`,
+          value: [
+            `**Reason:** ${blacklist.reason}`,
+            `**Blacklisted by:** <@${blacklist.blacklisted_by}>`,
+            `**Date:** <t:${Math.floor(date.getTime() / 1000)}:R>`
+          ].join('\n'),
+          inline: false
+        });
+      }
+
+      if (blacklists.length > 10) {
+        embed.setFooter({ text: `Showing first 10 of ${blacklists.length} blacklisted users` });
+      }
+
+      return interaction.reply({ embeds: [embed], ephemeral: true });
+    }
+  }
+
+  if (name === "unban") {
+    if (!(await hasCommandAccess(interaction.member, 'unban', interaction.guild?.id || null))) {
+      return interaction.reply({ content: '❌ You don\'t have permission to use this command.', flags: MessageFlags.Ephemeral });
+    }
+    if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', flags: MessageFlags.Ephemeral });
+
+    const userId = interaction.options.getString('user_id', true);
+    const reason = interaction.options.getString('reason') || 'No reason provided';
+
+    try {
+      await interaction.guild.bans.remove(userId, reason);
+
+      const embed = buildModerationEmbed({
+        action: 'Unbanned',
+        guildName: interaction.guild.name,
+        targetId: userId,
+        targetTag: 'User',
+        moderatorId: interaction.user.id,
+        moderatorTag: interaction.user.tag,
+        reason
+      });
+
+      await sendToModLog(interaction.guild, embed, `<@${userId}>`);
+
+      return interaction.reply({ content: `✅ Unbanned user ID: ${userId}`, ephemeral: true });
+    } catch (err) {
+      console.error('Failed to unban:', err);
+      return interaction.reply({ content: `❌ Failed to unban user. They may not be banned or the ID is invalid.`, ephemeral: true });
     }
   }
 
@@ -5906,6 +6203,17 @@ client.on("messageCreate", async (message: Message) => {
 
   // Track message activity and award points for milestones (every 100 messages)
   if (message.guild) {
+    // Update ticket last message timestamp if this is a ticket channel
+    try {
+      const { getTicket, updateTicketLastMessage } = await import('./services/tickets');
+      const ticket = getTicket(message.channel.id);
+      if (ticket && ticket.user_id === message.author.id && ticket.status !== 'closed') {
+        updateTicketLastMessage(message.channel.id);
+      }
+    } catch (err) {
+      console.error('[Tickets] Failed to update last message timestamp:', err);
+    }
+    
     try {
       const { trackMessageActivity } = await import('./services/rewards');
       const activityResult = trackMessageActivity(message.author.id, message.guild.id);

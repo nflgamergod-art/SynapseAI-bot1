@@ -49,11 +49,25 @@ export function initTicketsSchema() {
       closed_at TEXT,
       transcript TEXT,
       support_interaction_id INTEGER,
-      helpers TEXT
+      helpers TEXT,
+      last_user_message_at TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_tickets_guild ON tickets(guild_id);
     CREATE INDEX IF NOT EXISTS idx_tickets_user ON tickets(user_id);
     CREATE INDEX IF NOT EXISTS idx_tickets_status ON tickets(guild_id, status);
+    
+    CREATE TABLE IF NOT EXISTS ticket_blacklist (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      guild_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      blacklisted_by TEXT NOT NULL,
+      blacklisted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      removed_by TEXT,
+      removed_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_ticket_blacklist_guild_user ON ticket_blacklist(guild_id, user_id, is_active);
   `);
   
   // Migrate existing database if needed
@@ -371,6 +385,125 @@ export function addSupportRole(guildId: string, roleId: string): boolean {
   roleIds.push(roleId);
   setSupportRoleIds(guildId, roleIds);
   return true;
+}
+
+// Update last user message timestamp
+export function updateTicketLastMessage(channelId: string): boolean {
+  const db = getDB();
+  const now = new Date().toISOString();
+  
+  const result = db.prepare(`
+    UPDATE tickets
+    SET last_user_message_at = ?
+    WHERE channel_id = ? AND status != 'closed'
+  `).run(now, channelId);
+  
+  return result.changes > 0;
+}
+
+// Check if user is blacklisted from tickets
+export function isTicketBlacklisted(userId: string, guildId: string): boolean {
+  const db = getDB();
+  const row = db.prepare(`
+    SELECT id FROM ticket_blacklist
+    WHERE guild_id = ? AND user_id = ? AND is_active = 1
+    LIMIT 1
+  `).get(guildId, userId);
+  
+  return !!row;
+}
+
+// Blacklist user from tickets
+export function blacklistFromTickets(
+  userId: string,
+  guildId: string,
+  reason: string,
+  blacklistedBy: string
+): number {
+  const db = getDB();
+  
+  // Check if already blacklisted
+  if (isTicketBlacklisted(userId, guildId)) {
+    throw new Error('User is already blacklisted from tickets.');
+  }
+  
+  const now = new Date().toISOString();
+  const result = db.prepare(`
+    INSERT INTO ticket_blacklist (guild_id, user_id, reason, blacklisted_by, blacklisted_at)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(guildId, userId, reason, blacklistedBy, now);
+  
+  return result.lastInsertRowid as number;
+}
+
+// Remove ticket blacklist
+export function unblacklistFromTickets(
+  userId: string,
+  guildId: string,
+  removedBy: string
+): boolean {
+  const db = getDB();
+  const now = new Date().toISOString();
+  
+  const result = db.prepare(`
+    UPDATE ticket_blacklist
+    SET is_active = 0, removed_by = ?, removed_at = ?
+    WHERE guild_id = ? AND user_id = ? AND is_active = 1
+  `).run(removedBy, now, guildId, userId);
+  
+  return result.changes > 0;
+}
+
+// Get blacklist entry
+export function getTicketBlacklist(userId: string, guildId: string): any | null {
+  const db = getDB();
+  return db.prepare(`
+    SELECT * FROM ticket_blacklist
+    WHERE guild_id = ? AND user_id = ? AND is_active = 1
+    LIMIT 1
+  `).get(guildId, userId);
+}
+
+// Get all active ticket blacklists for a guild
+export function getAllTicketBlacklists(guildId: string): any[] {
+  const db = getDB();
+  return db.prepare(`
+    SELECT * FROM ticket_blacklist
+    WHERE guild_id = ? AND is_active = 1
+    ORDER BY blacklisted_at DESC
+  `).all(guildId) as any[];
+}
+
+// Get inactive tickets (no user response in 24 hours)
+export function getInactiveTickets(guildId: string, hoursInactive: number = 24): Ticket[] {
+  const db = getDB();
+  const cutoffTime = new Date();
+  cutoffTime.setHours(cutoffTime.getHours() - hoursInactive);
+  const cutoffISO = cutoffTime.toISOString();
+  
+  const rows = db.prepare(`
+    SELECT * FROM tickets
+    WHERE guild_id = ? 
+      AND status != 'closed'
+      AND (last_user_message_at IS NULL OR last_user_message_at < ?)
+      AND created_at < ?
+    ORDER BY created_at ASC
+  `).all(guildId, cutoffISO, cutoffISO) as any[];
+  
+  return rows.map(row => ({
+    id: row.id,
+    guild_id: row.guild_id,
+    channel_id: row.channel_id,
+    user_id: row.user_id,
+    claimed_by: row.claimed_by,
+    status: row.status,
+    category: row.category,
+    created_at: row.created_at,
+    closed_at: row.closed_at,
+    transcript: row.transcript,
+    support_interaction_id: row.support_interaction_id,
+    helpers: row.helpers
+  }));
 }
 
 // Remove support role ID
