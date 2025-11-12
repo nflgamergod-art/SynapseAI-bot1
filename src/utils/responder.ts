@@ -237,6 +237,7 @@ export async function handleConversationalReply(message: Message) {
   console.log(`[handleConversationalReply] About to call generateReply (AI)`);
   try {
     const reply = await generateReply(prompt, guildId || undefined);
+    console.log(`[handleConversationalReply] generateReply returned successfully, reply length: ${reply?.length || 0}`);
     // add assistant reply to convo
     convo.push(`Assistant: ${reply}`);
     if (convo.length > 10) convo.splice(0, convo.length - 10);
