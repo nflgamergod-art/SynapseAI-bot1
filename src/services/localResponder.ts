@@ -183,12 +183,13 @@ export async function localReply(message: Message, prompt?: string) {
 
 // Add logic to handle replies to the bot's messages
 export async function handleReply(message: Message): Promise<boolean> {
-  console.log(`[handleReply] Received message: ${message.content}`);
+  console.log(`[handleReply] START - Received message: ${message.content}`);
   if (message.reference?.messageId) {
     const repliedTo = await message.channel.messages.fetch(message.reference.messageId);
     console.log(`[handleReply] Replying to message ID: ${repliedTo.id}, Author: ${repliedTo.author.username}`);
     if (repliedTo.author.id === message.client.user?.id) {
-      try {
+      console.log(`[handleReply] Confirmed: This is a reply to the bot's message. Processing...`);
+      try{
         // Check if user is asking about specific saved information
         const { getMemoryByKey } = await import('./memory');
         const lowerContent = message.content.toLowerCase();
@@ -259,15 +260,23 @@ export async function handleReply(message: Message): Promise<boolean> {
           }
         }
         
+        console.log(`[handleReply] Calling generateReply with OpenAI...`);
         const response = await generateReply(message.content, message.guild?.id);
-        console.log(`[handleReply] Generated response: ${response}`);
+        console.log(`[handleReply] Generated OpenAI response (length: ${response.length}): ${response.substring(0, 100)}...`);
+        console.log(`[handleReply] Sending reply to Discord...`);
         await message.reply(response);
+        console.log(`[handleReply] Reply sent successfully. Returning true.`);
         return true; // Indicate that a response was sent
       } catch (error) {
         console.error('[handleReply] Error generating response:', error);
       }
+    } else {
+      console.log(`[handleReply] Message is a reply, but not to the bot. Ignoring.`);
     }
+  } else {
+    console.log(`[handleReply] Message is not a reply to anything. Ignoring.`);
   }
+  console.log(`[handleReply] END - Returning false (no response sent)`);
   return false; // Indicate that no response was sent
 }
 
