@@ -439,6 +439,8 @@ client.once('clientReady', async () => {
         const { getInactiveTickets, blacklistFromTickets, isTicketBlacklisted, closeTicket } = await import('./services/tickets');
         const inactiveTickets = getInactiveTickets(guildId, 24); // 24 hours
         
+        console.log(`[Ticket Auto-Check] Guild: ${guild.name} - Found ${inactiveTickets.length} inactive ticket(s)`);
+        
         for (const ticket of inactiveTickets) {
           // Check if already blacklisted
           if (isTicketBlacklisted(ticket.user_id, guildId)) continue;
@@ -1009,7 +1011,10 @@ client.once('clientReady', async () => {
       { name: "unblacklist", description: "Remove user from ticket blacklist", type: 1, options: [
         { name: "user", description: "User to unblacklist", type: 6, required: true }
       ] },
-      { name: "blacklists", description: "View all ticket blacklisted users", type: 1 }
+      { name: "blacklists", description: "View all ticket blacklisted users", type: 1 },
+      { name: "debug", description: "Debug ticket inactivity (Admin only)", type: 1, options: [
+        { name: "channel", description: "Ticket channel to check", type: 7, required: false }
+      ] }
     ] },
     { name: "unban", description: "Unban a user from the server", options: [
       { name: "user_id", description: "User ID to unban", type: 3, required: true },
@@ -4308,6 +4313,80 @@ client.on("interactionCreate", async (interaction) => {
 
       return interaction.reply({ embeds: [embed], ephemeral: true });
     }
+
+    if (subCmd === "debug") {
+      if (!isOwnerId(interaction.user.id)) {
+        return interaction.reply({ content: '❌ Only the bot owner can use this debug command.', ephemeral: true });
+      }
+      if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', flags: MessageFlags.Ephemeral });
+
+      const channel = interaction.options.getChannel('channel');
+      const { getTicket, getInactiveTickets } = await import('./services/tickets');
+
+      if (channel) {
+        // Debug specific ticket
+        const ticket = getTicket(channel.id);
+        if (!ticket) {
+          return interaction.reply({ content: `❌ ${channel} is not a ticket channel.`, ephemeral: true });
+        }
+
+        const now = new Date();
+        const createdAt = new Date(ticket.created_at);
+        const lastMessage = ticket.last_user_message_at ? new Date(ticket.last_user_message_at) : null;
+        const hoursSinceCreated = (now.getTime() - createdAt.getTime()) / (1000 * 60 * 60);
+        const hoursSinceLastMessage = lastMessage ? (now.getTime() - lastMessage.getTime()) / (1000 * 60 * 60) : null;
+
+        const embed = new EmbedBuilder()
+          .setTitle(`🔍 Ticket Debug: #${ticket.id}`)
+          .setColor(0x5865F2)
+          .addFields(
+            { name: 'Channel', value: `<#${ticket.channel_id}>`, inline: true },
+            { name: 'Owner', value: `<@${ticket.user_id}>`, inline: true },
+            { name: 'Status', value: ticket.status, inline: true },
+            { name: 'Created', value: `<t:${Math.floor(createdAt.getTime() / 1000)}:R> (${hoursSinceCreated.toFixed(1)}h ago)`, inline: false },
+            { name: 'Last User Message', value: lastMessage ? `<t:${Math.floor(lastMessage.getTime() / 1000)}:R> (${hoursSinceLastMessage!.toFixed(1)}h ago)` : 'Never (NULL)', inline: false },
+            { name: 'Would Be Caught?', value: (!lastMessage || hoursSinceLastMessage! >= 24) && hoursSinceCreated >= 24 && ticket.status !== 'closed' ? '✅ Yes - Inactive' : '❌ No - Active or too new', inline: false }
+          );
+
+        return interaction.reply({ embeds: [embed], ephemeral: true });
+      } else {
+        // Show all inactive tickets
+        const inactiveTickets = getInactiveTickets(interaction.guild.id, 24);
+        
+        if (inactiveTickets.length === 0) {
+          return interaction.reply({ content: '✅ No inactive tickets found (24h+ without user response).', ephemeral: true });
+        }
+
+        const embed = new EmbedBuilder()
+          .setTitle('🔍 Inactive Tickets (24h+)')
+          .setColor(0xFF6B6B)
+          .setDescription(`Found **${inactiveTickets.length}** inactive ticket(s) that should be auto-blacklisted on next hourly check.`);
+
+        for (const ticket of inactiveTickets.slice(0, 10)) {
+          const createdAt = new Date(ticket.created_at);
+          const lastMessage = ticket.last_user_message_at ? new Date(ticket.last_user_message_at) : null;
+          const hoursSinceCreated = (new Date().getTime() - createdAt.getTime()) / (1000 * 60 * 60);
+          const hoursSinceLastMessage = lastMessage ? (new Date().getTime() - lastMessage.getTime()) / (1000 * 60 * 60) : null;
+
+          embed.addFields({
+            name: `Ticket #${ticket.id} - <#${ticket.channel_id}>`,
+            value: [
+              `**Owner:** <@${ticket.user_id}>`,
+              `**Created:** ${hoursSinceCreated.toFixed(1)}h ago`,
+              `**Last Message:** ${lastMessage ? `${hoursSinceLastMessage!.toFixed(1)}h ago` : 'Never (NULL)'}`,
+              `**Status:** ${ticket.status}`
+            ].join('\n'),
+            inline: false
+          });
+        }
+
+        if (inactiveTickets.length > 10) {
+          embed.setFooter({ text: `Showing first 10 of ${inactiveTickets.length} inactive tickets` });
+        }
+
+        return interaction.reply({ embeds: [embed], ephemeral: true });
+      }
+    }
   }
 
   if (name === "unban") {
@@ -7554,7 +7633,19 @@ client.on("messageCreate", async (message: Message) => {
 
     // Prefix alias: unmute
     if (command === 'unmute') {
-      if (!isAdminOrBypassForMessage(message.member) && !isOwnerId(message.author.id)) return message.reply('You are not authorized to use this feature.');
+      // Align permission logic with other moderation prefix commands (kick/ban/mute)
+      let hasPermission = isAdminOrBypassForMessage(message.member) || isOwnerId(message.author.id);
+      if (!hasPermission && message.guild) {
+        try {
+          const { hasCommandPermission } = await import('./services/commandPermissions');
+          const member = message.member;
+          const userRoles = member?.roles?.cache ? Array.from(member.roles.cache.keys()) : [];
+          hasPermission = hasCommandPermission(message.guild.id, userRoles, 'unmute');
+        } catch (err) {
+          console.error('Command permission check (prefix unmute) failed:', err);
+        }
+      }
+      if (!hasPermission) return message.reply('You are not authorized to use this feature.');
       const target = message.mentions.members?.first();
       if (!target) return message.reply('Please mention a member to unmute.');
       try {

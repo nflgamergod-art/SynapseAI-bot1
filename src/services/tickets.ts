@@ -13,6 +13,7 @@ export interface Ticket {
   transcript?: string;
   support_interaction_id?: number;
   helpers?: string; // JSON array of user IDs who helped
+  last_user_message_at?: string; // Timestamp of last message from ticket owner
 }
 
 export interface TicketConfig {
@@ -79,10 +80,10 @@ function migrateTicketsSchema() {
   const db = getDB();
   
   try {
-    // Check if old column exists and new column doesn't
-    const result = db.prepare("PRAGMA table_info(ticket_configs)").all() as any[];
-    const hasOldColumn = result.some(col => col.name === 'support_role_id');
-    const hasNewColumn = result.some(col => col.name === 'support_role_ids');
+    // Check if old column exists and new column doesn't (ticket_configs migration)
+    const configResult = db.prepare("PRAGMA table_info(ticket_configs)").all() as any[];
+    const hasOldColumn = configResult.some(col => col.name === 'support_role_id');
+    const hasNewColumn = configResult.some(col => col.name === 'support_role_ids');
     
     if (hasOldColumn && !hasNewColumn) {
       console.log('Migrating ticket_configs table to support multiple roles...');
@@ -100,6 +101,16 @@ function migrateTicketsSchema() {
       }
       
       console.log(`Migrated ${configs.length} ticket configurations to new schema.`);
+    }
+    
+    // Check if last_user_message_at column exists in tickets table
+    const ticketsResult = db.prepare("PRAGMA table_info(tickets)").all() as any[];
+    const hasLastMessageColumn = ticketsResult.some(col => col.name === 'last_user_message_at');
+    
+    if (!hasLastMessageColumn) {
+      console.log('Migrating tickets table to add last_user_message_at column...');
+      db.exec('ALTER TABLE tickets ADD COLUMN last_user_message_at TEXT');
+      console.log('✅ Added last_user_message_at column to tickets table.');
     }
   } catch (error) {
     console.error('Migration error:', error);
