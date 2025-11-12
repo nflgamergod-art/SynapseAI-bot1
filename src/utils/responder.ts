@@ -56,6 +56,7 @@ async function autoSaveToKnowledgeBase(message: Message, reply: string, guildId:
 }
 
 export async function handleConversationalReply(message: Message) {
+  console.log(`[handleConversationalReply] FUNCTION START - Message: "${message.content}"`);
   const key = `${message.guild?.id ?? 'dm'}:${message.author.id}`;
   const convo = conversations.get(key) ?? [];
   convo.push(`User: ${message.content}`);
@@ -233,6 +234,7 @@ export async function handleConversationalReply(message: Message) {
   const prompt = memoryContext + convo.join("\n") + "\nAssistant:";
 
   // Try AI (Gemini) first. If that fails, fallback to local responder.
+  console.log(`[handleConversationalReply] About to call generateReply (AI)`);
   try {
     const reply = await generateReply(prompt, guildId || undefined);
     // add assistant reply to convo
