@@ -7090,14 +7090,15 @@ client.on("messageCreate", async (message: Message) => {
   // Handle replies to the bot's messages - if it responds, don't process further
   const handledByReplySystem = await handleReply(message);
   if (handledByReplySystem) {
+    console.log(`[DEBUG] handleReply processed message, stopping further processing`);
     return; // Stop processing if the reply system handled it
   }
 
   // Debugging log for bot mention
   console.log(`[DEBUG] Message content: ${message.content}`);
-  // Removed early return for mentions to allow AI processing
-  if (client.user && message.mentions.has(client.user)) {
-    console.log(`[DEBUG] Bot mentioned by ${message.author.username} - processing with AI`);
+  // Check if this is a direct mention (not a reply) - if so, let conversational handler deal with it
+  if (client.user && message.mentions.has(client.user) && !message.reference?.messageId) {
+    console.log(`[DEBUG] Bot mentioned (not a reply) by ${message.author.username} - will use conversational handler`);
   }
 
   // Auto-detect and save owner announcements
@@ -7877,7 +7878,21 @@ client.on("messageCreate", async (message: Message) => {
 
   // Wake word or mention -> conversational reply
   try {
+    // If this is a reply to the bot's message, don't trigger wake word handler (already handled by handleReply)
+    if (message.reference?.messageId) {
+      try {
+        const repliedTo = await message.channel.messages.fetch(message.reference.messageId);
+        if (repliedTo.author.id === client.user?.id) {
+          console.log(`[DEBUG] Skipping wake word check - this is a reply to bot's message (already handled)`);
+          return; // Already handled by handleReply above, don't process again
+        }
+      } catch (e) {
+        // Message might be deleted, continue processing
+      }
+    }
+    
     if (isWakeWord(message, wakeWord)) {
+      console.log(`[DEBUG] Wake word detected, processing conversational reply`);
       // Intercept common "support" queries to list staff by roles
       const text = (message.content || '').toLowerCase();
       const supportRe = /\b(who(?:'s| is| are)?\s+(?:the\s+)?support|support\s+team|who\s+are\s+staff(?:\s+support)?|who\s+are\s+(?:head\s+)?support)\b/;
