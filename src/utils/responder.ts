@@ -304,9 +304,12 @@ export async function handleConversationalReply(message: Message) {
     
     const ack = buildMemoryAck(message.content, events, corrCtx.isCorrectionContext);
     const finalReply = ack ? `${reply}\n\n${ack}` : reply;
+    console.log(`[handleConversationalReply] About to send AI reply, length: ${finalReply.length}`);
     await sendChunkedReply(message, finalReply);
+    console.log(`[handleConversationalReply] AI reply sent successfully, RETURNING NOW`);
     return;
   } catch (err: any) {
+    console.error("[handleConversationalReply] AI reply FAILED! Error:", err?.message ?? err);
     console.warn("AI reply failed, falling back to local responder:", err?.message ?? err);
   }
 
