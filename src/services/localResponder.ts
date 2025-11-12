@@ -172,12 +172,15 @@ export async function localReplyText({ text, username = "there", userId }: Reply
 }
 
 export async function localReply(message: Message, prompt?: string) {
+  console.log(`[localReply] CALLED for message ${message.id} from ${message.author.username}`);
+  console.log(`[localReply] Stack trace:`, new Error().stack);
   const text = prompt ?? message.content ?? "";
   const reply = await localReplyText({
     text,
     username: message.author?.username ?? "there",
     userId: message.author.id
   });
+  console.log(`[localReply] Returning reply: "${reply.substring(0, 50)}..."`);
   return reply;
 }
 
