@@ -657,6 +657,23 @@ client.once('clientReady', async () => {
 
   console.log('✅ Staff activity auto-demotion system started (checks every hour)');
   
+  // Check for staff promotions daily (automatic Trial Support → Support, queued Support → Head Support)
+  setInterval(async () => {
+    try {
+      const { runPromotionCheck } = await import('./services/promotionService');
+      
+      for (const [guildId] of client.guilds.cache) {
+        await runPromotionCheck(client, guildId);
+      }
+      
+      console.log('[Promotion] Daily promotion check completed');
+    } catch (err) {
+      console.error('[Promotion] Promotion check failed:', err);
+    }
+  }, 24 * 60 * 60 * 1000); // Every 24 hours
+  
+  console.log('✅ Staff promotion system started (checks every 24 hours)');
+  
   // Register slash commands. If GUILD_ID is set, register for that guild (instant); otherwise register globally.
   const guildId = process.env.GUILD_ID;
 
@@ -1043,6 +1060,20 @@ client.once('clientReady', async () => {
       ] },
       { name: "toggle", description: "Enable/disable the system", type: 1, options: [
         { name: "enabled", description: "Enable or disable", type: 5, required: true }
+      ] }
+    ] },
+    // Staff Promotion System
+    { name: "promotion", description: "🎯 Manage staff promotion system", options: [
+      { name: "check", description: "Run promotion check now", type: 1 },
+      { name: "pending", description: "View pending promotions awaiting approval", type: 1 },
+      { name: "approve", description: "Approve a pending promotion", type: 1, options: [
+        { name: "promotion_id", description: "ID from pending list", type: 4, required: true }
+      ] },
+      { name: "deny", description: "Deny a pending promotion", type: 1, options: [
+        { name: "promotion_id", description: "ID from pending list", type: 4, required: true }
+      ] },
+      { name: "stats", description: "View promotion stats for a support member", type: 1, options: [
+        { name: "user", description: "Support member", type: 6, required: true }
       ] }
     ] },
     // Anti-Nuke System
@@ -6475,6 +6506,101 @@ client.on("interactionCreate", async (interaction) => {
         content: `✅ Anti-nuke protection ${enabled ? 'enabled' : 'disabled'}.`, 
         ephemeral: true 
       });
+    }
+  }
+
+  if (name === 'promotion') {
+    if (!isOwnerId(interaction.user.id) && !adminOrBypass(interaction.member)) {
+      return interaction.reply({ content: '❌ Only administrators can use this command.', ephemeral: true });
+    }
+
+    const {
+      runPromotionCheck,
+      getPendingPromotions,
+      approvePromotion,
+      denyPromotion
+    } = await import('./services/promotionService');
+    
+    const { getPromotionStats } = await import('./services/promotionStats');
+
+    const subCmd = interaction.options.getSubcommand();
+
+    if (subCmd === 'check') {
+      await interaction.deferReply({ ephemeral: true });
+      
+      try {
+        await runPromotionCheck(client, interaction.guild!.id);
+        return interaction.editReply({ content: '✅ Promotion check completed! Check pending promotions with `/promotion pending`.' });
+      } catch (error) {
+        console.error('[Promotion] Error running check:', error);
+        return interaction.editReply({ content: `❌ Error running promotion check: ${error}` });
+      }
+    }
+
+    if (subCmd === 'pending') {
+      const pending = getPendingPromotions(interaction.guild!.id);
+
+      if (pending.length === 0) {
+        return interaction.reply({ content: '✅ No pending promotions.', ephemeral: true });
+      }
+
+      const embed = new EmbedBuilder()
+        .setColor(0xFFA500)
+        .setTitle('🎯 Pending Promotions')
+        .setDescription(`${pending.length} promotion${pending.length > 1 ? 's' : ''} awaiting approval`);
+
+      for (const promo of pending) {
+        embed.addFields({
+          name: `<@${promo.user_id}> (ID: ${promo.id})`,
+          value: `**From:** ${promo.from_role} → **To:** ${promo.to_role}\n**Tickets:** ${promo.tickets_resolved} | **Messages:** ${promo.messages_sent} | **Hours:** ${promo.hours_clocked}\n**Queued:** <t:${Math.floor(new Date(promo.queued_at).getTime() / 1000)}:R>`,
+          inline: false
+        });
+      }
+
+      embed.setFooter({ text: 'Use /promotion approve <id> or /promotion deny <id>' });
+
+      return interaction.reply({ embeds: [embed], ephemeral: true });
+    }
+
+    if (subCmd === 'approve') {
+      const promotionId = interaction.options.getInteger('promotion_id', true);
+
+      const result = await approvePromotion(client, interaction.guild!.id, promotionId, interaction.user.id);
+
+      if (result.success) {
+        return interaction.reply({ content: `✅ ${result.message}`, ephemeral: true });
+      } else {
+        return interaction.reply({ content: `❌ ${result.message}`, ephemeral: true });
+      }
+    }
+
+    if (subCmd === 'deny') {
+      const promotionId = interaction.options.getInteger('promotion_id', true);
+
+      const result = denyPromotion(promotionId, interaction.user.id);
+
+      if (result.success) {
+        return interaction.reply({ content: `✅ ${result.message}`, ephemeral: true });
+      } else {
+        return interaction.reply({ content: `❌ ${result.message}`, ephemeral: true });
+      }
+    }
+
+    if (subCmd === 'stats') {
+      const user = interaction.options.getUser('user', true);
+      const stats = getPromotionStats(interaction.guild!.id, user.id);
+
+      const embed = new EmbedBuilder()
+        .setColor(0x00AE86)
+        .setTitle(`🎯 Promotion Stats for ${user.tag}`)
+        .addFields(
+          { name: 'Tickets Resolved', value: stats.ticketsResolved.toString(), inline: true },
+          { name: 'Messages Sent', value: stats.supportMessages.toString(), inline: true },
+          { name: 'Hours Clocked In', value: stats.hoursClockedIn.toString(), inline: true }
+        )
+        .setFooter({ text: 'Criteria: Trial→Support: 20 tickets, 150 msgs, 12h | Support→Head: 45 tickets, 300 msgs, 25h' });
+
+      return interaction.reply({ embeds: [embed], ephemeral: true });
     }
   }
 
