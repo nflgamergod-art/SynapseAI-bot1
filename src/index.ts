@@ -6934,6 +6934,7 @@ client.on("messageReactionAdd", async (reaction, user) => {
 });
 
 client.on("messageCreate", async (message: Message) => {
+  console.log(`[MessageCreate] ====== NEW MESSAGE ${message.id} from ${message.author.username}: "${message.content?.substring(0, 50)}" ======`);
   if (message.author.bot) return;
 
   // Track message activity and award points for milestones (every 100 messages)
