@@ -7939,7 +7939,9 @@ client.on("messageCreate", async (message: Message) => {
           console.warn('Failed to assemble support list:', (e as any)?.message ?? e);
         }
       }
+      console.log(`[Wake word handler] About to call handleConversationalReply for message ${message.id}`);
       await handleConversationalReply(message);
+      console.log(`[Wake word handler] handleConversationalReply completed for message ${message.id}`);
     }
   } catch (err) {
     console.error("Error handling conversational reply:", err);
