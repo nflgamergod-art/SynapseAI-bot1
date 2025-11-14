@@ -1560,12 +1560,17 @@ client.on("interactionCreate", async (interaction) => {
           // Minimal inline claim for role-based perks; otherwise route to slash
           const guild = interaction.guild!;
           const member = await guild.members.fetch(interaction.user.id);
-          if (perkId === 'priority_support' || perkId === 'channel_suggest' || perkId === 'voice_priority' || perkId === 'exclusive_role') {
+          // For perks that do NOT require a role, just inform the user
+          if (perkId === 'channel_suggest') {
+            return interaction.reply({ content: '📣 You can already suggest channels using /channelsuggestion. No role needed.', ephemeral: true });
+          }
+
+          if (perkId === 'priority_support' || perkId === 'voice_priority' || perkId === 'exclusive_role') {
             const pref = getPerkRolePreference(perkId as any);
             // Ensure role exists (fallback to name)
             let roleId = pref.roleId;
             if (!roleId) {
-              const name = pref.roleName || (perkId === 'priority_support' ? 'Priority Support' : perkId === 'channel_suggest' ? 'Channel Suggest' : perkId === 'voice_priority' ? 'Voice Priority' : 'Exclusive VIP');
+              const name = pref.roleName || (perkId === 'priority_support' ? 'Priority Support' : (perkId === 'voice_priority' ? 'Voice Priority' : 'Exclusive VIP'));
               // Attempt smarter matching to avoid duplicate role creation (case-insensitive + synonyms)
               const synonyms: string[] = [];
               if (perkId === 'voice_priority') synonyms.push('priority', 'voice priority', 'priority speaker');
