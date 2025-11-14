@@ -20,17 +20,23 @@ export async function submitChannelSuggestion(
 
     const db = getDB();
     
-    // Create table if not exists
+    // Create table if not exists with all columns
     db.prepare(`CREATE TABLE IF NOT EXISTS channel_suggestions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id TEXT,
         guild_id TEXT,
         suggestion TEXT,
-        status TEXT,
+        status TEXT DEFAULT 'pending',
         reviewer_id TEXT,
         reviewed_at TEXT,
+        decision_reason TEXT,
         created_at TEXT
     )`).run();
+    
+    // Add missing columns to existing tables (safe for existing installations)
+    try { db.prepare('ALTER TABLE channel_suggestions ADD COLUMN reviewer_id TEXT').run(); } catch {}
+    try { db.prepare('ALTER TABLE channel_suggestions ADD COLUMN reviewed_at TEXT').run(); } catch {}
+    try { db.prepare('ALTER TABLE channel_suggestions ADD COLUMN decision_reason TEXT').run(); } catch {}
     
     // Insert suggestion
     const result = db.prepare(`INSERT INTO channel_suggestions (user_id, guild_id, suggestion, status, created_at) VALUES (?, ?, ?, 'pending', ?)`)
@@ -171,8 +177,6 @@ export async function handleChannelSuggestionModal(interaction: ModalSubmitInter
     })();
 
     const db = getDB();
-    // Ensure decision_reason column exists
-    try { db.prepare('ALTER TABLE channel_suggestions ADD COLUMN decision_reason TEXT').run(); } catch {}
 
     const row = db.prepare('SELECT * FROM channel_suggestions WHERE id = ?').get(suggestionId) as any;
     if (!row) {
