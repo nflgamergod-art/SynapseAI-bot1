@@ -33,6 +33,8 @@ import { handleEnhancedCommands } from "./commands/enhancedCommands";
 import { initializeEnhancedFeatures, processMessageWithEnhancedFeatures } from "./services/enhancedIntegration";
 // Replace interaction.reply and interaction.followUp with safeReply
 import { safeReply, safeDeferReply, safeFollowUp } from "./utils/safeReply";
+// Ensure appeals schema is initialized on startup
+import './services/appeals';
 
 // Removed duplicate import of globalCommands
 // Ensure only one import exists
@@ -680,18 +682,18 @@ client.once('clientReady', async () => {
   const commands = [
     // Diagnostics
     { name: "diagcommands", description: "Owner: list registered slash commands in this guild" },
+    { name: "givepoints", description: "Owner: Grant points to a user", options: [
+      { name: "user", description: "User to grant points to", type: 6, required: true },
+      { name: "points", description: "Number of points to grant", type: 4, required: true },
+      { name: "reason", description: "Reason for granting points", type: 3, required: false }
+    ] },
     { name: "help", description: "Show help for bot commands" },
     { name: "ping", description: "Check bot latency" },
     { name: "joke", description: "Tell a joke", options: [
       { name: "type", description: "Type of joke (random/dad)", type: 3, required: false }
     ] },
     // Owner-only maintenance commands (no SSH required)
-    { name: "redeploy", description: "Owner: pull latest code and restart bot (runs deploy.sh)" },
-    { name: "pm2clean", description: "Owner: remove old PM2 process 'synapseai' and save" },
     { name: "version", description: "Owner: show running commit and config" },
-    { name: "envcheck", description: "Owner: verify env values on server (masked)", options: [
-      { name: "name", description: "Optional env name to check (e.g., OPENAI_API_KEY)", type: 3, required: false }
-    ] },
     { name: "diagai", description: "Owner: AI health check (env + test call)" },
     { name: "setsupportroles", description: "Owner: set support role IDs (head/support/trial)", options: [
       { name: "head", description: "Head Support role", type: 8, required: false },
@@ -707,7 +709,6 @@ client.once('clientReady', async () => {
     { name: "setfounderrole", description: "Owner: set the Founder role for this server", options: [
       { name: "role", description: "Founder role", type: 8, required: true }
     ] },
-  { name: "registercommands", description: "Owner: re-register slash commands in this server (immediate)" },
     { name: "setmention", description: "Owner: toggle @mentions for PobKC or Joycemember", options: [
       { name: "owner", description: "pobkc or joycemember", type: 3, required: true },
       { name: "enabled", description: "true or false", type: 5, required: true }
@@ -827,6 +828,9 @@ client.once('clientReady', async () => {
   { name: "claimperk", description: "Claim an unlocked perk", options: [ { name: "perk", description: "custom_color|priority_support|custom_emoji|channel_suggest|voice_priority|exclusive_role", type: 3, required: true } ] },
   { name: "setcolor", description: "🎨 Set your custom role color from a dropdown menu" },
   { name: "requestemoji", description: "Create a custom emoji (requires custom_emoji perk)", options: [ { name: "name", description: "Emoji name (letters, numbers, _)", type: 3, required: true }, { name: "image", description: "Emoji image (PNG/GIF)", type: 11, required: true } ] },
+  { name: "prioritysupport", description: "🚨 Flag your open tickets as priority (requires perk)" },
+  { name: "channelsuggestion", description: "💡 Suggest a new channel for the server (requires perk)", options: [ { name: "suggestion", description: "Your channel suggestion", type: 3, required: true } ] },
+  { name: "voicepriority", description: "🔊 Get priority in voice channels (requires perk)" },
   { name: "setperkrole", description: "Owner: bind a server role to a perk so claims use it", options: [ { name: "perk", description: "Perk name (see /claimperk for options)", type: 3, required: true }, { name: "role", description: "Role to bind", type: 8, required: true } ] },
     { name: "faq", description: "❓ Quick access to frequently asked questions", options: [ { name: "category", description: "Filter by category", type: 3, required: false } ] },
     // Command Permissions Management
@@ -2647,12 +2651,15 @@ client.on("interactionCreate", async (interaction) => {
 
     const { createAppeal, canSubmitAppeal } = await import('./services/appeals');
     const guildId = interaction.guild?.id || process.env.GUILD_ID;
+    console.log(`[Appeals] /appeal invoked by user=${interaction.user.id} tag=${interaction.user.tag} type=${type} inDM=${!interaction.guild} guildIdResolved=${!!guildId}`);
+    // Immediately acknowledge to avoid Discord 3s timeout
+    await safeDeferReply(interaction, interaction.guild ? { ephemeral: true } : undefined);
     if (!guildId) {
-      if (interaction.replied || interaction.deferred) {
-        console.log('Debug: Interaction already acknowledged. Skipping response.');
-        return;
-      }
-      return await safeReply(interaction, '❌ Could not determine server. Please use this command in the server or ensure the bot is configured.', { flags: MessageFlags.Ephemeral });
+      return await safeReply(
+        interaction,
+        '❌ Could not determine server. Please use this command in the server or ask an admin to configure the bot (missing GUILD_ID for DM appeals).',
+        { flags: MessageFlags.Ephemeral }
+      );
     }
 
     // For staff suspension appeals, check if they have an active suspension
@@ -2661,6 +2668,7 @@ client.on("interactionCreate", async (interaction) => {
       const { getSuspensionHistory } = await import('./services/staffSuspension');
       const history = getSuspensionHistory(interaction.user.id, guildId);
       const activeSuspension = history.find(s => s.is_active === 1 || s.is_permanent === 1);
+      console.log(`[Appeals] staff_suspension path: historyCount=${history.length} activeFound=${!!activeSuspension}`);
       
       if (!activeSuspension && history.length === 0) {
         return await safeReply(interaction, { content: '❌ You do not have a staff suspension record to appeal.', flags: MessageFlags.Ephemeral });
@@ -2668,6 +2676,7 @@ client.on("interactionCreate", async (interaction) => {
       
       // Use most recent suspension if active one not found
       suspensionId = activeSuspension?.id || history[0]?.id;
+      console.log(`[Appeals] selected suspensionId=${suspensionId ?? 'none'}`);
     }
 
     // Rate limit: 1 submission per 12 hours per type
@@ -2675,11 +2684,13 @@ client.on("interactionCreate", async (interaction) => {
     const rl = canSubmitAppeal(guildId, interaction.user.id, type, windowSeconds);
     if (!rl.allowed) {
       const hrs = Math.max(1, Math.ceil((rl.retryAfterSeconds || 0) / 3600));
+      console.log(`[Appeals] rate limited: retryAfterSeconds=${rl.retryAfterSeconds} approxHours=${hrs}`);
       return await safeReply(interaction, { content: `⏳ You recently submitted a ${type} appeal. Please wait about ${hrs} hour(s) before submitting another.`, flags: MessageFlags.Ephemeral });
     }
 
     try {
       const appealId = createAppeal(guildId, interaction.user.id, type, reason, suspensionId);
+      console.log(`[Appeals] created appeal id=${appealId} type=${type} user=${interaction.user.id} suspensionId=${suspensionId ?? 'none'}`);
       
       // Send notification to mod log and owner
       const guild = await client.guilds.fetch(guildId);
@@ -2719,10 +2730,7 @@ client.on("interactionCreate", async (interaction) => {
       
       return await safeReply(interaction, { content: `✅ Appeal #${appealId} submitted successfully. Staff will review it soon. You will be notified of the decision.`, flags: MessageFlags.Ephemeral });
     } catch (err: any) {
-      if (interaction.replied || interaction.deferred) {
-        console.log('Debug: Interaction already acknowledged. Skipping response.');
-        return;
-      }
+      console.warn('[Appeals] createAppeal failed:', err?.message ?? err);
       return await safeReply(interaction, `❌ ${err.message || 'Failed to submit appeal.'}`, { flags: MessageFlags.Ephemeral });
     }
   }

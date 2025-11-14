@@ -19,13 +19,16 @@ export async function safeReply(
       delete (replyOptions as any).ephemeral;
     }
 
-    if (interaction.replied || interaction.deferred) {
-      console.log(`[safeReply] [${interactionId}] Interaction already handled. Using followUp.`);
+    if (interaction.replied) {
+      console.log(`[safeReply] [${interactionId}] Interaction already replied. Using followUp.`);
       return await interaction.followUp({ ...replyOptions, ...additionalOptions });
-    } else {
-      console.log(`[safeReply] [${interactionId}] Replying to interaction.`);
-      return await interaction.reply({ ...replyOptions, ...additionalOptions });
     }
+    if (interaction.deferred) {
+      console.log(`[safeReply] [${interactionId}] Interaction deferred. Using editReply.`);
+      return await interaction.editReply({ ...(replyOptions as any) });
+    }
+    console.log(`[safeReply] [${interactionId}] Replying to interaction.`);
+    return await interaction.reply({ ...replyOptions, ...additionalOptions });
   } catch (error) {
     console.error(`[safeReply] [${interactionId}] Error occurred:`, error);
     throw error;
