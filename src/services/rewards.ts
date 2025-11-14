@@ -166,7 +166,7 @@ export function awardDirectPoints(
   reason: string,
   category: AchievementCategory = 'support'
 ): void {
-  if (points <= 0) return;
+  if (points === 0) return; // Allow negative points for taking away
   
   const db = getDB();
   const now = nowISO();
