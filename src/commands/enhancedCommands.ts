@@ -214,8 +214,9 @@ export async function handleEnhancedCommands(interaction: ChatInputCommandIntera
                 return true;
             }
             case 'requestemoji': {
-                // Allow users with the custom_emoji perk to request a custom emoji
+                // Refactored: Use emojiRequests service for full approval workflow
                 const { getUnlockedPerks } = await import('../services/rewards');
+                const { submitEmojiRequest } = await import('../services/emojiRequests');
                 const targetUser = interaction.user;
                 const guildId = interaction.guild?.id || null;
                 const perks = getUnlockedPerks(targetUser.id, guildId);
@@ -230,22 +231,16 @@ export async function handleEnhancedCommands(interaction: ChatInputCommandIntera
                     await safeReply(interaction, { content: 'Please provide both a name and an image for your emoji.', flags: 64 });
                     return true;
                 }
-                // Store the request in a DB table for approval (minimal implementation)
+                // Basic validation for name
+                if (!/^\w{2,32}$/.test(name)) {
+                    await safeReply(interaction, { content: 'Emoji name must be 2-32 characters (letters, numbers, underscore).', flags: 64 });
+                    return true;
+                }
                 try {
-                    const db = await import('../services/db').then(m => m.getDB());
-                    db.prepare(`CREATE TABLE IF NOT EXISTS emoji_requests (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        user_id TEXT,
-                        guild_id TEXT,
-                        name TEXT,
-                        attachment_url TEXT,
-                        status TEXT,
-                        created_at TEXT
-                    )`).run();
-                    db.prepare(`INSERT INTO emoji_requests (user_id, guild_id, name, attachment_url, status, created_at) VALUES (?, ?, ?, ?, 'pending', ?)`)
-                        .run(targetUser.id, guildId, name, image.url, new Date().toISOString());
-                    await safeReply(interaction, { content: `✅ Emoji request submitted for approval! Staff will review your request soon.`, flags: 64 });
+                    const requestId = await submitEmojiRequest(interaction, name, image.url);
+                    await safeReply(interaction, { content: `✅ Emoji request #${requestId} submitted for approval! You will receive a DM when reviewed.`, flags: 64 });
                 } catch (e) {
+                    console.error('Emoji request submission error:', e);
                     await safeReply(interaction, { content: `❌ Failed to submit emoji request: ${typeof e === 'object' && e && 'message' in e ? (e as any).message : String(e)}`, flags: 64 });
                 }
                 return true;

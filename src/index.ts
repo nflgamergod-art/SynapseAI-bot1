@@ -1291,6 +1291,23 @@ client.on('interactionCreate', async (interaction) => {
     }
     return;
   }
+
+  // Emoji request modal
+  if (customId.startsWith('emoji_modal:')) {
+    try {
+      const { handleEmojiRequestModal } = await import('./services/emojiRequests');
+      const handled = await handleEmojiRequestModal(interaction as any);
+      if (handled) return;
+    } catch (e:any) {
+      console.error('Emoji request modal handler failed:', e);
+      try {
+        if (!interaction.replied && !interaction.deferred) {
+          await interaction.reply({ content: '❌ Something went wrong processing the emoji request.', ephemeral: true });
+        }
+      } catch {}
+    }
+    return;
+  }
   
   if (customId.startsWith('ticket-feedback-submit:')) {
     // CRITICAL: Defer reply immediately to prevent "interaction failed"
@@ -1610,6 +1627,17 @@ client.on("interactionCreate", async (interaction) => {
           if (handled) return;
         } catch (e:any) {
           console.warn('channel suggestion button handler failed:', e?.message ?? e);
+        }
+      }
+
+      // Emoji request buttons (accept/decline)
+      if (btn.startsWith('emoji_request_accept_') || btn.startsWith('emoji_request_decline_')) {
+        try {
+          const { handleEmojiRequestButton } = await import('./services/emojiRequests');
+          const handled = await handleEmojiRequestButton(interaction as any);
+          if (handled) return;
+        } catch (e:any) {
+          console.warn('emoji request button handler failed:', e?.message ?? e);
         }
       }
 
