@@ -35,8 +35,10 @@ export async function submitEmojiRequest(interaction: any, name: string, attachm
   const guildId = interaction.guild?.id;
   if (!guildId) throw new Error('Must be used in a guild.');
   const userId = interaction.user.id;
-  const insert = db.prepare(`INSERT INTO emoji_requests (user_id, guild_id, name, attachment_url, status) VALUES (?, ?, ?, ?, 'pending')`);
-  const result = insert.run(userId, guildId, name, attachmentUrl);
+  // Include created_at to satisfy legacy schema without DEFAULT value
+  const createdAt = new Date().toISOString();
+  const insert = db.prepare(`INSERT INTO emoji_requests (user_id, guild_id, name, attachment_url, status, created_at) VALUES (?, ?, ?, ?, 'pending', ?)`);
+  const result = insert.run(userId, guildId, name, attachmentUrl, createdAt);
   const requestId = result.lastInsertRowid as number;
 
   const ownerId = process.env.OWNER_ID;
