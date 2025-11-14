@@ -1050,6 +1050,12 @@ client.once('clientReady', async () => {
         { name: "user", description: "User to unblacklist", type: 6, required: true }
       ] },
       { name: "blacklists", description: "View all ticket blacklisted users", type: 1 },
+      { name: "diagnoseblacklist", description: "Diagnose all blacklist sources for a user", type: 1, options: [
+        { name: "user", description: "User to diagnose", type: 6, required: true }
+      ] },
+      { name: "unblacklistall", description: "Remove user from ALL blacklist sources", type: 1, options: [
+        { name: "user", description: "User to unblacklist from everywhere", type: 6, required: true }
+      ] },
       { name: "debug", description: "Debug ticket inactivity (Admin only)", type: 1, options: [
         { name: "channel", description: "Ticket channel to check", type: 7, required: false }
       ] }
@@ -4440,6 +4446,129 @@ client.on("interactionCreate", async (interaction) => {
       }
 
       return interaction.reply({ embeds: [embed], ephemeral: true });
+    }
+
+    if (subCmd === "diagnoseblacklist") {
+      if (!(await hasCommandAccess(interaction.member, 'ticket', interaction.guild?.id || null))) {
+        return interaction.reply({ content: '❌ You don\'t have permission to use this command.', flags: MessageFlags.Ephemeral });
+      }
+      if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', flags: MessageFlags.Ephemeral });
+
+      const user = interaction.options.getUser('user', true);
+
+      const { isTicketBlacklisted, getTicketBlacklist } = await import('./services/tickets');
+      const { getBlacklist, isBlacklisted } = await import('./services/blacklistService');
+      const { getDB } = await import('./services/db');
+
+      const ticketBlacklisted = isTicketBlacklisted(user.id, interaction.guild.id);
+      const ticketEntry = ticketBlacklisted ? getTicketBlacklist(user.id, interaction.guild.id) : null;
+
+      // Legacy JSON blacklist
+      const jsonList = getBlacklist();
+      const jsonEntry = jsonList.find(e => e.id === user.id && e.type === 'user') || null;
+
+      // DB-backed global blacklist (guild-specific)
+      let dbEntry: any = null;
+      try {
+        const db = getDB();
+        dbEntry = db.prepare('SELECT * FROM blacklist WHERE guild_id = ? AND user_id = ? LIMIT 1').get(interaction.guild.id, user.id) || null;
+      } catch {
+        // table may not exist; ignore
+      }
+
+      const embed = new EmbedBuilder()
+        .setTitle('🧰 Blacklist Diagnostics')
+        .setColor(0x5865F2)
+        .setDescription(`Results for <@${user.id}> in ${interaction.guild.name}`)
+        .addFields(
+          { name: 'Ticket Blacklist (ticket_blacklist)', value: ticketBlacklisted ? 'Yes' : 'No', inline: true },
+          { name: 'Legacy JSON Blacklist (data/blacklist.json)', value: jsonEntry ? 'Yes' : 'No', inline: true },
+          { name: 'DB Blacklist (blacklist table)', value: dbEntry ? 'Yes' : 'No', inline: true }
+        )
+        .setTimestamp();
+
+      if (ticketEntry) {
+        embed.addFields({ name: 'Ticket Reason', value: ticketEntry.reason || 'N/A', inline: false });
+      }
+      if (jsonEntry) {
+        const when = jsonEntry.addedAt ? `<t:${Math.floor(jsonEntry.addedAt / 1000)}:R>` : 'unknown';
+        embed.addFields({ name: 'JSON Reason', value: jsonEntry.reason || 'N/A', inline: true });
+        embed.addFields({ name: 'JSON Added', value: when, inline: true });
+      }
+      if (dbEntry) {
+        embed.addFields({ name: 'DB Reason', value: dbEntry.reason || 'N/A', inline: true });
+        const createdAt = dbEntry.created_at ? Math.floor(new Date(dbEntry.created_at).getTime() / 1000) : null;
+        if (createdAt) embed.addFields({ name: 'DB Added', value: `<t:${createdAt}:R>`, inline: true });
+      }
+
+      return interaction.reply({ embeds: [embed], ephemeral: true });
+    }
+
+    if (subCmd === "unblacklistall") {
+      if (!(await hasCommandAccess(interaction.member, 'ticket', interaction.guild?.id || null))) {
+        return interaction.reply({ content: '❌ You don\'t have permission to use this command.', flags: MessageFlags.Ephemeral });
+      }
+      if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', flags: MessageFlags.Ephemeral });
+
+      const user = interaction.options.getUser('user', true);
+
+      const { unblacklistFromTickets, isTicketBlacklisted } = await import('./services/tickets');
+      const { removeBlacklistEntry, isBlacklisted } = await import('./services/blacklistService');
+
+      let changes: string[] = [];
+
+      // Ticket blacklist removal
+      try {
+        if (isTicketBlacklisted(user.id, interaction.guild.id)) {
+          const ok = unblacklistFromTickets(user.id, interaction.guild.id, interaction.user.id);
+          if (ok) changes.push('ticket_blacklist');
+        }
+      } catch {}
+
+      // JSON + DB blacklist removal (blacklistService handles both when guildId passed)
+      try {
+        if (isBlacklisted(user.id, 'user', interaction.guild.id)) {
+          removeBlacklistEntry(user.id, 'user', interaction.guild.id);
+          changes.push('legacy_json/blacklist_table');
+        }
+      } catch {}
+
+      // Notify user (best-effort)
+      if (changes.length > 0) {
+        try {
+          const dm = new EmbedBuilder()
+            .setColor(0x51CF66)
+            .setTitle('✅ Blacklist Cleared')
+            .setDescription(`Your blacklist status in **${interaction.guild.name}** has been cleared.`)
+            .addFields({ name: 'Cleared Sources', value: changes.join(', ') })
+            .setTimestamp();
+          await user.send({ embeds: [dm] });
+        } catch {}
+      }
+
+      // Log to mod channel
+      const modLogChannelId = getModLogChannelId();
+      if (modLogChannelId) {
+        const modLogChannel = await interaction.guild.channels.fetch(modLogChannelId).catch(() => null) as any;
+        if (modLogChannel) {
+          const log = new EmbedBuilder()
+            .setColor(changes.length ? 0x51CF66 : 0xFFA94D)
+            .setTitle(changes.length ? '✅ User Fully Unblacklisted' : 'ℹ️ No Blacklist Entries Found')
+            .addFields(
+              { name: 'User', value: `<@${user.id}>`, inline: true },
+              { name: 'By', value: `<@${interaction.user.id}>`, inline: true },
+            )
+            .setTimestamp();
+          if (changes.length) log.addFields({ name: 'Cleared Sources', value: changes.join(', ') });
+          await modLogChannel.send({ embeds: [log] });
+        }
+      }
+
+      if (changes.length === 0) {
+        return interaction.reply({ content: `ℹ️ No active blacklist entries found for ${user.tag}.`, ephemeral: true });
+      }
+
+      return interaction.reply({ content: `✅ Cleared ${changes.join(', ')} for ${user.tag}.`, ephemeral: true });
     }
 
     if (subCmd === "debug") {
