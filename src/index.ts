@@ -2469,6 +2469,17 @@ client.on("interactionCreate", async (interaction) => {
     }
   }
 
+  // Modal submissions (channel suggestions reason)
+  if (interaction.isModalSubmit()) {
+    try {
+      const { handleChannelSuggestionModal } = await import('./services/channelSuggestions');
+      const handled = await handleChannelSuggestionModal(interaction as any);
+      if (handled) return;
+    } catch (e:any) {
+      console.warn('modal submit handler failed:', e?.message ?? e);
+    }
+  }
+
     // helper to check admin or bypass
     const adminOrBypass = (memberMaybe: any) => {
       try {

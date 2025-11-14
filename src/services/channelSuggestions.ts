@@ -3,7 +3,7 @@
  * Handles channel suggestion submissions and reviews
  */
 
-import { Client, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ButtonInteraction, ChatInputCommandInteraction } from 'discord.js';
+import { Client, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ButtonInteraction, ChatInputCommandInteraction, ModalBuilder, TextInputBuilder, TextInputStyle, ModalSubmitInteraction, ChannelType } from 'discord.js';
 import { getDB } from './db';
 
 /**
@@ -114,45 +114,95 @@ export async function handleChannelSuggestionButton(
     
     const accept = customId.startsWith('channel_suggestion_accept_');
     const suggestionId = Number(customId.split('_').pop());
-    
+
+    // Build modal for optional reason
+    const modal = new ModalBuilder()
+        .setCustomId(`cs_modal:${suggestionId}:${accept ? 1 : 0}:${interaction.channelId}:${interaction.message.id}`)
+        .setTitle(accept ? 'Accept Channel Suggestion' : 'Decline Channel Suggestion');
+    const reason = new TextInputBuilder()
+        .setCustomId('cs_reason')
+        .setLabel('Reason/Notes (optional)')
+        .setStyle(TextInputStyle.Paragraph)
+        .setRequired(false)
+        .setPlaceholder('Why are you accepting/declining?');
+    const row = new ActionRowBuilder<TextInputBuilder>().addComponents(reason);
+    modal.addComponents(row);
+    await interaction.showModal(modal);
+    return true;
+}
+
+/**
+ * Handle modal submit for channel suggestion decision
+ */
+export async function handleChannelSuggestionModal(interaction: ModalSubmitInteraction): Promise<boolean> {
+    const id = interaction.customId;
+    if (!id.startsWith('cs_modal:')) return false;
+
+    // Only owner can submit decisions
+    const ownerId = process.env.OWNER_ID;
+    if (interaction.user.id !== ownerId) {
+        await interaction.reply({ content: '❌ Only the bot owner can review channel suggestions.', ephemeral: true });
+        return true;
+    }
+
+    // cs_modal:{suggestionId}:{accept}:{channelId}:{messageId}
+    const parts = id.split(':');
+    const suggestionId = Number(parts[1]);
+    const accept = parts[2] === '1';
+    const channelId = parts[3];
+    const messageId = parts[4];
+
+    const reason = interaction.fields.getTextInputValue('cs_reason') || '';
+
     const db = getDB();
+    // Ensure decision_reason column exists
+    try { db.prepare('ALTER TABLE channel_suggestions ADD COLUMN decision_reason TEXT').run(); } catch {}
+
     const row = db.prepare('SELECT * FROM channel_suggestions WHERE id = ?').get(suggestionId) as any;
-    
     if (!row) {
         await interaction.reply({ content: `Suggestion #${suggestionId} not found.`, ephemeral: true });
         return true;
     }
-    
     if (row.status !== 'pending') {
         await interaction.reply({ content: `Suggestion #${suggestionId} is already ${row.status}.`, ephemeral: true });
         return true;
     }
-    
-    // Update status
+
     const newStatus = accept ? 'accepted' : 'declined';
-    db.prepare('UPDATE channel_suggestions SET status = ?, reviewer_id = ?, reviewed_at = ? WHERE id = ?')
-        .run(newStatus, interaction.user.id, new Date().toISOString(), suggestionId);
-    
-    // Notify the user via DM
+    db.prepare('UPDATE channel_suggestions SET status = ?, reviewer_id = ?, reviewed_at = ?, decision_reason = ? WHERE id = ?')
+        .run(newStatus, interaction.user.id, new Date().toISOString(), reason || null, suggestionId);
+
+    // Notify the suggester via DM
     try {
         const user = await interaction.client.users.fetch(row.user_id);
         const notifyEmbed = new EmbedBuilder()
             .setTitle(accept ? '✅ Channel Suggestion Accepted' : '❌ Channel Suggestion Declined')
             .setColor(accept ? 0x57F287 : 0xED4245)
             .setDescription(`**Your Suggestion:**\n${row.suggestion}`)
-            .addFields({ name: 'Status', value: accept ? 'Your suggestion has been accepted!' : 'Your suggestion has been declined.' })
+            .addFields(
+                { name: 'Status', value: accept ? 'Your suggestion has been accepted!' : 'Your suggestion has been declined.' },
+                ...(reason ? [{ name: 'Reason', value: reason }] as any : [])
+            )
             .setTimestamp();
-        
         await user.send({ embeds: [notifyEmbed] });
     } catch (dmError) {
         console.log('Could not DM user about suggestion decision:', dmError);
     }
-    
-    // Update the message to show decision
-    await interaction.update({ 
-        content: `${accept ? '✅ **Accepted**' : '❌ **Declined**'} by <@${interaction.user.id}>`, 
-        components: [] 
-    });
-    
+
+    // Update the original review message to show decision
+    try {
+        const channel = await interaction.client.channels.fetch(channelId);
+        if (channel && channel.type === ChannelType.GuildText) {
+            const msg = await (channel as any).messages.fetch(messageId);
+            await msg.edit({
+                content: `${accept ? '✅ **Accepted**' : '❌ **Declined**'} by <@${interaction.user.id}>${reason ? `\nReason: ${reason}` : ''}`,
+                components: []
+            });
+        }
+    } catch (editErr) {
+        console.log('Could not edit original review message:', editErr);
+    }
+
+    await interaction.reply({ content: `Saved decision for suggestion #${suggestionId}.`, ephemeral: true });
     return true;
 }
