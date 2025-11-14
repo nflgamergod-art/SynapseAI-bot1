@@ -14,6 +14,8 @@ export interface Ticket {
   support_interaction_id?: number;
   helpers?: string; // JSON array of user IDs who helped
   last_user_message_at?: string; // Timestamp of last message from ticket owner
+  priority?: number; // 1 if priority ticket, 0 otherwise
+  priority_set_at?: string; // Timestamp when priority was set
 }
 
 export interface TicketConfig {
@@ -319,10 +321,10 @@ export function getTicketHelpers(channelId: string): string[] {
 export function getOpenTickets(guildId: string): Ticket[] {
   const db = getDB();
   const rows = db.prepare(`
-    SELECT id, guild_id, channel_id, user_id, claimed_by, status, category, created_at, closed_at, transcript, support_interaction_id, helpers
+    SELECT id, guild_id, channel_id, user_id, claimed_by, status, category, created_at, closed_at, transcript, support_interaction_id, helpers, priority, priority_set_at
     FROM tickets
     WHERE guild_id = ? AND status IN ('open', 'claimed')
-    ORDER BY created_at ASC
+    ORDER BY priority DESC, priority_set_at ASC, created_at ASC
   `).all(guildId) as any[];
   
   return rows.map(row => ({
@@ -337,7 +339,9 @@ export function getOpenTickets(guildId: string): Ticket[] {
     closed_at: row.closed_at,
     transcript: row.transcript,
     support_interaction_id: row.support_interaction_id,
-    helpers: row.helpers
+    helpers: row.helpers,
+    priority: row.priority,
+    priority_set_at: row.priority_set_at
   }));
 }
 
@@ -345,7 +349,7 @@ export function getOpenTickets(guildId: string): Ticket[] {
 export function getUserTickets(guildId: string, userId: string): Ticket[] {
   const db = getDB();
   const rows = db.prepare(`
-    SELECT id, guild_id, channel_id, user_id, claimed_by, status, category, created_at, closed_at, transcript, support_interaction_id, helpers
+    SELECT id, guild_id, channel_id, user_id, claimed_by, status, category, created_at, closed_at, transcript, support_interaction_id, helpers, priority, priority_set_at
     FROM tickets
     WHERE guild_id = ? AND user_id = ?
     ORDER BY created_at DESC
@@ -363,7 +367,9 @@ export function getUserTickets(guildId: string, userId: string): Ticket[] {
     closed_at: row.closed_at,
     transcript: row.transcript,
     support_interaction_id: row.support_interaction_id,
-    helpers: row.helpers
+    helpers: row.helpers,
+    priority: row.priority,
+    priority_set_at: row.priority_set_at
   }));
 }
 

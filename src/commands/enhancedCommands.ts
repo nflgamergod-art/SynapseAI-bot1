@@ -273,14 +273,36 @@ export async function handleEnhancedCommands(interaction: ChatInputCommandIntera
                     await safeReply(interaction, { content: 'You have no open tickets to prioritize.', flags: 64 });
                     return true;
                 }
-                // Add a 'priority' flag to the ticket (if not present, add column)
+                // Add priority columns if not present
                 try {
                     db.prepare('ALTER TABLE tickets ADD COLUMN priority INTEGER DEFAULT 0').run();
                 } catch {}
-                tickets.forEach(ticket => {
-                    db.prepare('UPDATE tickets SET priority = 1 WHERE id = ?').run(ticket.id);
-                });
-                await safeReply(interaction, { content: '🚨 Your open tickets have been marked as priority! Staff will see them at the top of the queue.', flags: 64 });
+                try {
+                    db.prepare('ALTER TABLE tickets ADD COLUMN priority_set_at TEXT').run();
+                } catch {}
+                
+                // Update tickets and rename channels
+                const guild = interaction.guild;
+                for (const ticket of tickets) {
+                    const now = new Date().toISOString();
+                    db.prepare('UPDATE tickets SET priority = 1, priority_set_at = ? WHERE id = ?').run(now, ticket.id);
+                    
+                    // Rename channel to add "-priority" suffix
+                    try {
+                        const channel = await guild?.channels.fetch(ticket.channel_id).catch(() => null);
+                        if (channel && 'name' in channel) {
+                            const currentName = (channel as any).name;
+                            if (!currentName.endsWith('-priority')) {
+                                await (channel as any).setName(`${currentName}-priority`).catch((err: any) => {
+                                    console.log('Failed to rename ticket channel:', err);
+                                });
+                            }
+                        }
+                    } catch (err) {
+                        console.log('Error renaming ticket channel:', err);
+                    }
+                }
+                await safeReply(interaction, { content: '🚨 Your open tickets have been marked as priority! Staff will see them at the top of the queue and channels have been renamed.', flags: 64 });
                 return true;
             }
             case 'channelsuggestion': {

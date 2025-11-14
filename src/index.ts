@@ -4140,8 +4140,9 @@ client.on("interactionCreate", async (interaction) => {
 
       for (const ticket of tickets) {
         const status = ticket.claimed_by ? `Claimed by <@${ticket.claimed_by}>` : 'Unclaimed';
+        const priorityTag = ticket.priority ? '🚨 **PRIORITY** ' : '';
         embed.addFields({
-          name: `Ticket #${ticket.id}`,
+          name: `${priorityTag}Ticket #${ticket.id}`,
           value: `<#${ticket.channel_id}>\n**User:** <@${ticket.user_id}>\n**Status:** ${status}`,
           inline: false
         });
