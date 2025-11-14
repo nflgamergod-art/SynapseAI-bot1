@@ -1585,6 +1585,17 @@ client.on("interactionCreate", async (interaction) => {
         }
       }
       
+      // Channel suggestion buttons (accept/decline)
+      if (btn.startsWith('channel_suggestion_')) {
+        try {
+          const { handleChannelSuggestionButton } = await import('./services/channelSuggestions');
+          const handled = await handleChannelSuggestionButton(interaction as any);
+          if (handled) return;
+        } catch (e:any) {
+          console.warn('channel suggestion button handler failed:', e?.message ?? e);
+        }
+      }
+
       // Ticket panel open button
       if (btn === 'ticket-open') {
         try {

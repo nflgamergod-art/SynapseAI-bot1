@@ -305,19 +305,11 @@ export async function handleEnhancedCommands(interaction: ChatInputCommandIntera
                     return true;
                 }
                 try {
-                    const db = await import('../services/db').then(m => m.getDB());
-                    db.prepare(`CREATE TABLE IF NOT EXISTS channel_suggestions (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        user_id TEXT,
-                        guild_id TEXT,
-                        suggestion TEXT,
-                        status TEXT,
-                        created_at TEXT
-                    )`).run();
-                    db.prepare(`INSERT INTO channel_suggestions (user_id, guild_id, suggestion, status, created_at) VALUES (?, ?, ?, 'pending', ?)`)
-                        .run(interaction.user.id, guildId, suggestion, new Date().toISOString());
-                    await safeReply(interaction, { content: '✅ Channel suggestion submitted for review! Staff will consider your idea.', flags: 64 });
+                    const { submitChannelSuggestion } = await import('../services/channelSuggestions');
+                    await submitChannelSuggestion(interaction, suggestion);
+                    await safeReply(interaction, { content: '✅ Channel suggestion submitted for review! You will receive a DM when a decision is made.', flags: 64 });
                 } catch (e) {
+                    console.error('Channel suggestion error:', e);
                     await safeReply(interaction, { content: `❌ Failed to submit suggestion: ${typeof e === 'object' && e && 'message' in e ? (e as any).message : String(e)}`, flags: 64 });
                 }
                 return true;
