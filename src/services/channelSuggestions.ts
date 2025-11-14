@@ -152,7 +152,23 @@ export async function handleChannelSuggestionModal(interaction: ModalSubmitInter
     const channelId = parts[3];
     const messageId = parts[4];
 
-    const reason = interaction.fields.getTextInputValue('cs_reason') || '';
+    // Defer early to avoid "interaction failed" on long operations
+    try {
+        if (!interaction.deferred && !interaction.replied) {
+            await interaction.deferReply({ ephemeral: true });
+        }
+    } catch (e) {
+        // Ignore defer errors; we'll try replying/editing below
+        console.warn('channelSuggestions: failed to defer modal reply:', e);
+    }
+
+    const reason = (() => {
+        try {
+            return interaction.fields.getTextInputValue('cs_reason') || '';
+        } catch {
+            return '';
+        }
+    })();
 
     const db = getDB();
     // Ensure decision_reason column exists
@@ -160,11 +176,15 @@ export async function handleChannelSuggestionModal(interaction: ModalSubmitInter
 
     const row = db.prepare('SELECT * FROM channel_suggestions WHERE id = ?').get(suggestionId) as any;
     if (!row) {
-        await interaction.reply({ content: `Suggestion #${suggestionId} not found.`, ephemeral: true });
+        const payload = { content: `Suggestion #${suggestionId} not found.` } as const;
+        if (interaction.deferred) await interaction.editReply(payload);
+        else await interaction.reply({ ...payload, ephemeral: true });
         return true;
     }
     if (row.status !== 'pending') {
-        await interaction.reply({ content: `Suggestion #${suggestionId} is already ${row.status}.`, ephemeral: true });
+        const payload = { content: `Suggestion #${suggestionId} is already ${row.status}.` } as const;
+        if (interaction.deferred) await interaction.editReply(payload);
+        else await interaction.reply({ ...payload, ephemeral: true });
         return true;
     }
 
@@ -191,18 +211,23 @@ export async function handleChannelSuggestionModal(interaction: ModalSubmitInter
 
     // Update the original review message to show decision
     try {
-        const channel = await interaction.client.channels.fetch(channelId);
-        if (channel && channel.type === ChannelType.GuildText) {
-            const msg = await (channel as any).messages.fetch(messageId);
-            await msg.edit({
-                content: `${accept ? '✅ **Accepted**' : '❌ **Declined**'} by <@${interaction.user.id}>${reason ? `\nReason: ${reason}` : ''}`,
-                components: []
-            });
+        const channel = await interaction.client.channels.fetch(channelId).catch(() => null);
+        // Try to edit in any text-based channel (DMs or guild text)
+        if (channel && 'isTextBased' in channel && (channel as any).isTextBased()) {
+            const msg = await (channel as any).messages.fetch(messageId).catch(() => null);
+            if (msg) {
+                await msg.edit({
+                    content: `${accept ? '✅ **Accepted**' : '❌ **Declined**'} by <@${interaction.user.id}>${reason ? `\nReason: ${reason}` : ''}`,
+                    components: []
+                }).catch(() => {});
+            }
         }
     } catch (editErr) {
         console.log('Could not edit original review message:', editErr);
     }
 
-    await interaction.reply({ content: `Saved decision for suggestion #${suggestionId}.`, ephemeral: true });
+    const donePayload = { content: `Saved decision for suggestion #${suggestionId}.` } as const;
+    if (interaction.deferred) await interaction.editReply(donePayload);
+    else await interaction.reply({ ...donePayload, ephemeral: true });
     return true;
 }
