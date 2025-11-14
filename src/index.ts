@@ -1269,11 +1269,28 @@ client.once('clientReady', async () => {
   })();
 });
 
-// Handle modal submissions for feedback
+// Handle modal submissions for feedback and channel suggestions
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isModalSubmit()) return;
   
   const customId = interaction.customId;
+  
+  // Channel suggestion modal
+  if (customId.startsWith('cs_modal:')) {
+    try {
+      const { handleChannelSuggestionModal } = await import('./services/channelSuggestions');
+      const handled = await handleChannelSuggestionModal(interaction as any);
+      if (handled) return;
+    } catch (e:any) {
+      console.error('Channel suggestion modal handler failed:', e);
+      try {
+        if (!interaction.replied && !interaction.deferred) {
+          await interaction.reply({ content: '❌ Something went wrong. Try again.', ephemeral: true });
+        }
+      } catch {}
+    }
+    return;
+  }
   
   if (customId.startsWith('ticket-feedback-submit:')) {
     // CRITICAL: Defer reply immediately to prevent "interaction failed"
@@ -2466,17 +2483,6 @@ client.on("interactionCreate", async (interaction) => {
           ephemeral: true 
         });
       }
-    }
-  }
-
-  // Modal submissions (channel suggestions reason)
-  if (interaction.isModalSubmit()) {
-    try {
-      const { handleChannelSuggestionModal } = await import('./services/channelSuggestions');
-      const handled = await handleChannelSuggestionModal(interaction as any);
-      if (handled) return;
-    } catch (e:any) {
-      console.warn('modal submit handler failed:', e?.message ?? e);
     }
   }
 
