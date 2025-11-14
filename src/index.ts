@@ -1566,12 +1566,22 @@ client.on("interactionCreate", async (interaction) => {
             let roleId = pref.roleId;
             if (!roleId) {
               const name = pref.roleName || (perkId === 'priority_support' ? 'Priority Support' : perkId === 'channel_suggest' ? 'Channel Suggest' : perkId === 'voice_priority' ? 'Voice Priority' : 'Exclusive VIP');
-              const existing = guild.roles.cache.find(r => r.name === name);
+              // Attempt smarter matching to avoid duplicate role creation (case-insensitive + synonyms)
+              const synonyms: string[] = [];
+              if (perkId === 'voice_priority') synonyms.push('priority', 'voice priority', 'priority speaker');
+              if (perkId === 'priority_support') synonyms.push('priority support', 'support priority');
+              if (perkId === 'exclusive_role') synonyms.push('exclusive vip', 'vip', 'exclusive');
+              const lowered = guild.roles.cache.map(r => ({ name: r.name, id: r.id, lower: r.name.toLowerCase() }));
+              const targetNames = [name.toLowerCase(), ...synonyms.map(s => s.toLowerCase())];
+              const existingMatch = lowered.find(r => targetNames.includes(r.lower));
+              const existing = existingMatch ? guild.roles.cache.get(existingMatch.id) : guild.roles.cache.find(r => r.name === name);
               if (existing) roleId = existing.id;
               else {
                 const perms = perkId === 'voice_priority' ? (await import('discord.js')).PermissionsBitField.Flags.PrioritySpeaker : undefined;
                 const created = await guild.roles.create({ name, permissions: perms ? new (await import('discord.js')).PermissionsBitField(perms) : undefined, reason: 'Perks panel claim' });
                 roleId = created.id;
+                // Persist so future claims don't recreate
+                try { const { setPerkRoleId } = await import('./config/perksConfig'); setPerkRoleId(perkId as any, roleId); } catch {}
               }
             }
             await member.roles.add(roleId!).catch(() => {});
