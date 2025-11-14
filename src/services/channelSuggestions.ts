@@ -5,6 +5,7 @@
 
 import { Client, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ButtonInteraction, ChatInputCommandInteraction, ModalBuilder, TextInputBuilder, TextInputStyle, ModalSubmitInteraction, ChannelType } from 'discord.js';
 import { getDB } from './db';
+import { getModLogChannelId } from '../config';
 
 /**
  * Submit a channel suggestion and notify owner/modlog
@@ -85,11 +86,10 @@ export async function submitChannelSuggestion(
     
     // Send to mod log if configured
     try {
-        const modLogRow = db.prepare('SELECT value FROM settings WHERE guild_id = ? AND key = ?')
-            .get(guildId, 'modlog_channel') as any;
+        const modLogChannelId = getModLogChannelId();
         
-        if (modLogRow?.value) {
-            const modLogChannel = await interaction.guild.channels.fetch(modLogRow.value);
+        if (modLogChannelId) {
+            const modLogChannel = await interaction.guild.channels.fetch(modLogChannelId);
             if (modLogChannel?.isTextBased()) {
                 await modLogChannel.send({ embeds: [reviewEmbed], components: [buttons] });
             }
