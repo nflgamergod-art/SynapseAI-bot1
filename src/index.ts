@@ -682,10 +682,27 @@ client.once('clientReady', async () => {
   const commands = [
     // Diagnostics
     { name: "diagcommands", description: "Owner: list registered slash commands in this guild" },
-    { name: "givepoints", description: "Owner: Grant points to a user", options: [
-      { name: "user", description: "User to grant points to", type: 6, required: true },
-      { name: "points", description: "Number of points to grant", type: 4, required: true },
-      { name: "reason", description: "Reason for granting points", type: 3, required: false }
+    { name: "givepoints", description: "Owner: Manage user points", options: [
+      { 
+        name: "give", 
+        description: "Grant points to a user", 
+        type: 1, 
+        options: [
+          { name: "user", description: "User to grant points to", type: 6, required: true },
+          { name: "points", description: "Number of points to grant", type: 4, required: true },
+          { name: "reason", description: "Reason for granting points", type: 3, required: false }
+        ]
+      },
+      { 
+        name: "take", 
+        description: "Remove points from a user", 
+        type: 1, 
+        options: [
+          { name: "user", description: "User to remove points from", type: 6, required: true },
+          { name: "points", description: "Number of points to remove", type: 4, required: true },
+          { name: "reason", description: "Reason for removing points", type: 3, required: false }
+        ]
+      }
     ] },
     { name: "help", description: "Show help for bot commands" },
     { name: "ping", description: "Check bot latency" },

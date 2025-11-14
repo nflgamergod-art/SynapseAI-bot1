@@ -28,6 +28,52 @@ export async function handleEnhancedCommands(interaction: ChatInputCommandIntera
 
     try {
         switch (name) {
+            case 'givepoints': {
+                // Owner-only command to give or take points
+                const ownerId = process.env.OWNER_ID;
+                if (interaction.user.id !== ownerId) {
+                    await safeReply(interaction, { content: '❌ Only the bot owner can use this command.', flags: 64 });
+                    return true;
+                }
+                
+                const subcommand = interaction.options.getSubcommand();
+                const targetUser = interaction.options.getUser('user', true);
+                const points = interaction.options.getInteger('points', true);
+                const reason = interaction.options.getString('reason') || 'Manual adjustment by owner';
+                const guildId = interaction.guild?.id;
+                
+                if (!guildId) {
+                    await safeReply(interaction, { content: 'This command can only be used in a server.', flags: 64 });
+                    return true;
+                }
+                
+                try {
+                    const { awardDirectPoints, getUserPoints } = await import('../services/rewards');
+                    
+                    if (subcommand === 'give') {
+                        await awardDirectPoints(targetUser.id, guildId, points, reason);
+                        const newTotal = getUserPoints(targetUser.id, guildId);
+                        await safeReply(interaction, { 
+                            content: `✅ Granted **${points} points** to ${targetUser.username}\n📊 New balance: ${newTotal} points\n📝 Reason: ${reason}`, 
+                            flags: 64 
+                        });
+                    } else if (subcommand === 'take') {
+                        await awardDirectPoints(targetUser.id, guildId, -points, reason);
+                        const newTotal = getUserPoints(targetUser.id, guildId);
+                        await safeReply(interaction, { 
+                            content: `✅ Removed **${points} points** from ${targetUser.username}\n📊 New balance: ${newTotal} points\n📝 Reason: ${reason}`, 
+                            flags: 64 
+                        });
+                    }
+                } catch (error) {
+                    console.error('Error managing points:', error);
+                    await safeReply(interaction, { 
+                        content: `❌ Failed to manage points: ${error instanceof Error ? error.message : 'Unknown error'}`, 
+                        flags: 64 
+                    });
+                }
+                return true;
+            }
             case 'achievements': {
                 // Simulate fetching and displaying user achievements
                 const user = interaction.user;
