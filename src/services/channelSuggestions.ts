@@ -31,6 +31,9 @@ export async function submitChannelSuggestion(
         reviewer_id TEXT,
         reviewed_at TEXT,
         decision_reason TEXT,
+        dm_message_id TEXT,
+        modlog_message_id TEXT,
+        modlog_channel_id TEXT,
         created_at TEXT
     )`).run();
     
@@ -38,6 +41,9 @@ export async function submitChannelSuggestion(
     try { db.prepare('ALTER TABLE channel_suggestions ADD COLUMN reviewer_id TEXT').run(); } catch {}
     try { db.prepare('ALTER TABLE channel_suggestions ADD COLUMN reviewed_at TEXT').run(); } catch {}
     try { db.prepare('ALTER TABLE channel_suggestions ADD COLUMN decision_reason TEXT').run(); } catch {}
+    try { db.prepare('ALTER TABLE channel_suggestions ADD COLUMN dm_message_id TEXT').run(); } catch {}
+    try { db.prepare('ALTER TABLE channel_suggestions ADD COLUMN modlog_message_id TEXT').run(); } catch {}
+    try { db.prepare('ALTER TABLE channel_suggestions ADD COLUMN modlog_channel_id TEXT').run(); } catch {}
     
     // Insert suggestion
     const result = db.prepare(`INSERT INTO channel_suggestions (user_id, guild_id, suggestion, status, created_at) VALUES (?, ?, ?, 'pending', ?)`)
@@ -73,12 +79,16 @@ export async function submitChannelSuggestion(
         );
     
     const ownerId = process.env.OWNER_ID;
+    let dmMessageId: string | null = null;
+    let modlogMessageId: string | null = null;
+    let modlogChannelId: string | null = null;
     
     // Send to owner DM
     if (ownerId) {
         try {
             const owner = await interaction.client.users.fetch(ownerId);
-            await owner.send({ embeds: [reviewEmbed], components: [buttons] });
+            const dmMsg = await owner.send({ embeds: [reviewEmbed], components: [buttons] });
+            dmMessageId = dmMsg.id;
         } catch (dmError) {
             console.log('Could not DM owner about channel suggestion:', dmError);
         }
@@ -86,16 +96,24 @@ export async function submitChannelSuggestion(
     
     // Send to mod log if configured
     try {
-        const modLogChannelId = getModLogChannelId();
+        const modLogId = getModLogChannelId();
         
-        if (modLogChannelId) {
-            const modLogChannel = await interaction.guild.channels.fetch(modLogChannelId);
+        if (modLogId) {
+            const modLogChannel = await interaction.guild.channels.fetch(modLogId);
             if (modLogChannel?.isTextBased()) {
-                await modLogChannel.send({ embeds: [reviewEmbed], components: [buttons] });
+                const modMsg = await modLogChannel.send({ embeds: [reviewEmbed], components: [buttons] });
+                modlogMessageId = modMsg.id;
+                modlogChannelId = modLogId;
             }
         }
     } catch (channelError) {
         console.log('Could not send to mod log:', channelError);
+    }
+    
+    // Update the database with message IDs for later editing
+    if (dmMessageId || modlogMessageId) {
+        db.prepare('UPDATE channel_suggestions SET dm_message_id = ?, modlog_message_id = ?, modlog_channel_id = ? WHERE id = ?')
+            .run(dmMessageId, modlogMessageId, modlogChannelId, suggestionId);
     }
 }
 
@@ -213,21 +231,42 @@ export async function handleChannelSuggestionModal(interaction: ModalSubmitInter
         console.log('Could not DM user about suggestion decision:', dmError);
     }
 
-    // Update the original review message to show decision
-    try {
-        const channel = await interaction.client.channels.fetch(channelId).catch(() => null);
-        // Try to edit in any text-based channel (DMs or guild text)
-        if (channel && 'isTextBased' in channel && (channel as any).isTextBased()) {
-            const msg = await (channel as any).messages.fetch(messageId).catch(() => null);
-            if (msg) {
-                await msg.edit({
-                    content: `${accept ? '✅ **Accepted**' : '❌ **Declined**'} by <@${interaction.user.id}>${reason ? `\nReason: ${reason}` : ''}`,
+    // Update BOTH the DM and mod log review messages to show decision
+    const updateContent = `${accept ? '✅ **Accepted**' : '❌ **Declined**'} by <@${interaction.user.id}>${reason ? `\nReason: ${reason}` : ''}`;
+    
+    // Update DM message if it exists
+    if (row.dm_message_id && ownerId) {
+        try {
+            const owner = await interaction.client.users.fetch(ownerId);
+            const dmChannel = await owner.createDM();
+            const dmMsg = await dmChannel.messages.fetch(row.dm_message_id).catch(() => null);
+            if (dmMsg) {
+                await dmMsg.edit({
+                    content: updateContent,
                     components: []
                 }).catch(() => {});
             }
+        } catch (editErr) {
+            console.log('Could not edit DM review message:', editErr);
         }
-    } catch (editErr) {
-        console.log('Could not edit original review message:', editErr);
+    }
+    
+    // Update mod log message if it exists
+    if (row.modlog_message_id && row.modlog_channel_id) {
+        try {
+            const modChannel = await interaction.client.channels.fetch(row.modlog_channel_id).catch(() => null);
+            if (modChannel && 'isTextBased' in modChannel && (modChannel as any).isTextBased()) {
+                const modMsg = await (modChannel as any).messages.fetch(row.modlog_message_id).catch(() => null);
+                if (modMsg) {
+                    await modMsg.edit({
+                        content: updateContent,
+                        components: []
+                    }).catch(() => {});
+                }
+            }
+        } catch (editErr) {
+            console.log('Could not edit mod log review message:', editErr);
+        }
     }
 
     const donePayload = { content: `Saved decision for suggestion #${suggestionId}.` } as const;
