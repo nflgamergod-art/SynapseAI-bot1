@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SynapseAI Executor</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header>
+            <h1 class="title">SynapseAI Executor</h1>
+            <p class="subtitle">Web Edition • Cross-Platform</p>
+        </header>
+
+        <!-- Status Bar -->
+        <div class="status-bar">
+            <div class="status-indicator">
+                <span id="status-dot" class="dot"></span>
+                <span id="status-text">Not Injected</span>
+            </div>
+            <button id="inject-btn" class="btn btn-success">Inject</button>
+        </div>
+
+        <!-- Main Content -->
+        <div class="main-content">
+            <!-- Script Editor -->
+            <div class="editor-section">
+                <div class="section-header">
+                    <h2>Script Editor</h2>
+                    <div class="editor-info">
+                        <span id="line-count">Lines: 1</span>
+                        <span id="char-count">Characters: 0</span>
+                    </div>
+                </div>
+                <textarea id="script-editor" class="script-editor" placeholder="-- Enter your Lua script here...">-- SynapseAI Executor
+-- Welcome to SynapseAI!
+
+print("Hello from SynapseAI!")
+game:GetService("StarterGui"):SetCore("SendNotification", {
+    Title = "SynapseAI";
+    Text = "Script executed successfully!";
+    Duration = 5;
+})</textarea>
+            </div>
+
+            <!-- Control Buttons -->
+            <div class="controls">
+                <button id="execute-btn" class="btn btn-execute" disabled>
+                    <span>▶</span> Execute
+                </button>
+                <button id="clear-btn" class="btn btn-danger">
+                    <span>✖</span> Clear
+                </button>
+                <button id="save-btn" class="btn btn-secondary">
+                    <span>💾</span> Save
+                </button>
+                <button id="load-btn" class="btn btn-secondary">
+                    <span>📂</span> Load
+                </button>
+                <button id="hub-btn" class="btn btn-primary">
+                    <span>📚</span> Script Hub
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Script Hub Modal -->
+    <div id="hub-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Script Hub</h2>
+                <span class="close">&times;</span>
+            </div>
+            <div id="scripts-container" class="scripts-container">
+                <!-- Scripts will be loaded here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Save Script Modal -->
+    <div id="save-modal" class="modal">
+        <div class="modal-content modal-small">
+            <div class="modal-header">
+                <h2>Save Script</h2>
+                <span class="close-save">&times;</span>
+            </div>
+            <div class="modal-body">
+                <input type="text" id="script-name" class="input-field" placeholder="Script Name">
+                <textarea id="script-description" class="input-field" placeholder="Description (optional)" rows="3"></textarea>
+                <div class="modal-buttons">
+                    <button id="save-confirm-btn" class="btn btn-success">Save</button>
+                    <button id="save-cancel-btn" class="btn btn-secondary">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Notification Container -->
+    <div id="notification-container"></div>
+
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
