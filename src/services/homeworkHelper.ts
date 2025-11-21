@@ -47,7 +47,7 @@ async function analyzeWithGemini(imageUrl: string, userQuestion?: string): Promi
   
   // Use Gemini 1.5 Pro for best multimodal capabilities
   const model = genAI.getGenerativeModel({ 
-    model: "gemini-1.5-pro-latest",
+    model: "gemini-1.5-pro",
     generationConfig: {
       temperature: 0.4, // Lower temperature for more accurate educational responses
       topP: 0.95,
@@ -140,7 +140,7 @@ Format your response clearly with:
 Be thorough but concise. Help the student understand, don't just give answers.`;
 
     const response = await openai.chat.completions.create({
-      model: "gpt-4-vision-preview",
+      model: "gpt-4o",
       messages: [
         {
           role: "user",
