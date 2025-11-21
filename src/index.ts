@@ -7362,27 +7362,38 @@ client.on("messageCreate", async (message: Message) => {
     console.log(`[DEBUG] Direct message received from ${message.author.username}`);
     
     // Check if user is asking to simplify a previous response
-    if (message.reference?.messageId) {
-      const simplifyKeywords = ['simplify', 'simpler', 'shorter', 'brief', 'summarize', 'summary', 'tldr', 'short version', 'condense', 'quick'];
-      const messageContent = message.content.toLowerCase();
-      
-      if (simplifyKeywords.some(kw => messageContent.includes(kw))) {
-        try {
-          const referencedMsg = await message.channel.messages.fetch(message.reference.messageId);
-          
-          if (referencedMsg.author.id === client.user?.id && referencedMsg.content.length > 200) {
-            await message.channel.sendTyping();
-            
-            const { generateReply } = await import('./services/openai');
-            const simplifiedPrompt = `The user asked you to simplify this answer. Provide a much shorter, simpler version (2-3 sentences max) that gives just the key points:\n\n${referencedMsg.content}`;
-            
-            const simplified = await generateReply(simplifiedPrompt);
-            await message.reply(`📝 **Simplified Answer:**\n\n${simplified}`);
-            return;
-          }
-        } catch (error) {
-          console.error('[Simplify] Error:', error);
+    const simplifyKeywords = ['simplify', 'simpler', 'shorter', 'brief', 'summarize', 'summary', 'tldr', 'short version', 'condense', 'quick'];
+    const messageContent = message.content.toLowerCase();
+    
+    if (simplifyKeywords.some(kw => messageContent.includes(kw))) {
+      try {
+        let targetMessage = null;
+        
+        // First, check if they replied to a specific message
+        if (message.reference?.messageId) {
+          targetMessage = await message.channel.messages.fetch(message.reference.messageId);
+        } else {
+          // If not a reply, look for the most recent bot message
+          const recentMessages = await message.channel.messages.fetch({ limit: 10 });
+          targetMessage = recentMessages.find(msg => 
+            msg.author.id === client.user?.id && 
+            msg.content.length > 200 &&
+            msg.createdTimestamp < message.createdTimestamp
+          );
         }
+        
+        if (targetMessage && targetMessage.author.id === client.user?.id && targetMessage.content.length > 200) {
+          await message.channel.sendTyping();
+          
+          const { generateReply } = await import('./services/openai');
+          const simplifiedPrompt = `The user asked you to simplify this answer. Provide a much shorter, simpler version (2-3 sentences max) that gives just the key points:\n\n${targetMessage.content}`;
+          
+          const simplified = await generateReply(simplifiedPrompt);
+          await message.reply(`📝 **Simplified Answer:**\n\n${simplified}`);
+          return;
+        }
+      } catch (error) {
+        console.error('[Simplify] Error:', error);
       }
     }
     
