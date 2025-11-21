@@ -162,6 +162,7 @@ export const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.DirectMessages,
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildMessageReactions
@@ -7161,6 +7162,7 @@ client.on("messageReactionAdd", async (reaction, user) => {
 
 client.on("messageCreate", async (message: Message) => {
   console.log(`[MessageCreate] ====== NEW MESSAGE ${message.id} from ${message.author.username}: "${message.content?.substring(0, 50)}" ======`);
+  console.log(`[MessageCreate] Channel type: ${message.channel.type}, Is DM: ${message.channel.type === ChannelType.DM}, Attachments: ${message.attachments.size}`);
   if (message.author.bot) return;
 
   // Track message activity and award points for milestones (every 100 messages)
