@@ -198,6 +198,11 @@ header {
     border: 1px solid rgba(255, 255, 255, 0.2);
 }
 
+.btn-info {
+    background: linear-gradient(135deg, #3498db, #2980b9);
+    color: white;
+}
+
 /* Modal */
 .modal {
     display: none;

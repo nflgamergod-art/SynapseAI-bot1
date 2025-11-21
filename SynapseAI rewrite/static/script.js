@@ -7,6 +7,7 @@ const statusDot = document.getElementById('status-dot');
 const statusText = document.getElementById('status-text');
 const injectBtn = document.getElementById('inject-btn');
 const executeBtn = document.getElementById('execute-btn');
+const testBtn = document.getElementById('test-btn');
 const clearBtn = document.getElementById('clear-btn');
 const saveBtn = document.getElementById('save-btn');
 const loadBtn = document.getElementById('load-btn');
@@ -34,6 +35,7 @@ checkStatus();
 scriptEditor.addEventListener('input', updateEditorStats);
 injectBtn.addEventListener('click', inject);
 executeBtn.addEventListener('click', executeScript);
+testBtn.addEventListener('click', testScript);
 clearBtn.addEventListener('click', clearEditor);
 saveBtn.addEventListener('click', showSaveModal);
 loadBtn.addEventListener('click', loadFromFile);
@@ -139,7 +141,7 @@ async function executeScript() {
         const data = await response.json();
         
         if (data.success) {
-            showNotification('Success', 'Script executed successfully!', 'success');
+            showNotification('Success', data.message, 'success');
         } else {
             showNotification('Error', data.message, 'error');
         }
@@ -148,6 +150,40 @@ async function executeScript() {
     } finally {
         executeBtn.classList.remove('loading');
         executeBtn.disabled = false;
+    }
+}
+
+async function testScript() {
+    const script = scriptEditor.value.trim();
+    
+    if (!script) {
+        showNotification('Warning', 'Script is empty!', 'warning');
+        return;
+    }
+    
+    testBtn.classList.add('loading');
+    testBtn.disabled = true;
+    
+    try {
+        const response = await fetch('/api/test', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ script })
+        });
+        const data = await response.json();
+        
+        if (data.success) {
+            showNotification('Test Complete', data.message, 'success', 8000);
+        } else {
+            showNotification('Test Failed', data.message, 'error', 8000);
+        }
+    } catch (error) {
+        showNotification('Error', 'Test failed: ' + error.message, 'error');
+    } finally {
+        testBtn.classList.remove('loading');
+        testBtn.disabled = false;
     }
 }
 

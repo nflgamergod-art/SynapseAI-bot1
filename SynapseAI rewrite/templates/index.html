@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SynapseAI Executor</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=3) }}">
 </head>
 <body>
     <div class="container">
@@ -49,6 +49,9 @@ game:GetService("StarterGui"):SetCore("SendNotification", {
             <div class="controls">
                 <button id="execute-btn" class="btn btn-execute" disabled>
                     <span>▶</span> Execute
+                </button>
+                <button id="test-btn" class="btn btn-info">
+                    <span>🧪</span> Test Locally
                 </button>
                 <button id="clear-btn" class="btn btn-danger">
                     <span>✖</span> Clear
@@ -100,6 +103,6 @@ game:GetService("StarterGui"):SetCore("SendNotification", {
     <!-- Notification Container -->
     <div id="notification-container"></div>
 
-    <script src="{{ url_for('static', filename='script.js') }}"></script>
+    <script src="{{ url_for('static', filename='script.js', v=3) }}"></script>
 </body>
 </html>

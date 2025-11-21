@@ -29,10 +29,13 @@ setup(
         "flask>=2.3.0",
         "flask-cors>=4.0.0",
         "psutil>=5.9.0",
+        # Optional but used for native macOS window launcher
+        "pywebview>=4.4",
     ],
     entry_points={
         "console_scripts": [
             "synapse=main:main",
+            "synapse-app=mac_app:main",
         ],
     },
     include_package_data=True,

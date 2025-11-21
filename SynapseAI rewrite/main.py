@@ -1,10 +1,23 @@
 from flask import Flask, render_template, request, jsonify
 from flask_cors import CORS
 import os
+import sys
 from executor import RobloxExecutor
 from script_hub import ScriptHub
 
-app = Flask(__name__)
+def _resource_base() -> str:
+    """Return base dir for resources; supports PyInstaller (_MEIPASS)."""
+    if hasattr(sys, "_MEIPASS"):
+        return sys._MEIPASS  # type: ignore[attr-defined]
+    return os.path.abspath(os.path.dirname(__file__))
+
+BASE_DIR = _resource_base()
+
+app = Flask(
+    __name__,
+    template_folder=os.path.join(BASE_DIR, "templates"),
+    static_folder=os.path.join(BASE_DIR, "static"),
+)
 CORS(app)
 
 # Initialize backend
@@ -84,12 +97,31 @@ def save_script():
         'message': 'Script saved successfully' if success else 'Failed to save script'
     })
 
+@app.route('/api/test', methods=['POST'])
+def test_script():
+    """Test a script locally using Lua interpreter"""
+    data = request.get_json()
+    script = data.get('script', '')
+    
+    if not script.strip():
+        return jsonify({
+            'success': False,
+            'message': 'Script is empty'
+        })
+    
+    success, message, console_output = executor.test_script_locally(script)
+    return jsonify({
+        'success': success,
+        'message': message,
+        'console_output': console_output
+    })
+
 def main():
     """Main entry point for the application"""
     print("\n" + "="*60)
     print("🚀 SynapseAI Executor - Web Edition")
     print("="*60)
-    print("\n📱 Opening in your browser at: http://localhost:5000")
+    print("\n📱 Opening in your browser at: http://localhost:5001")
     print("\n⚠️  Make sure Roblox is running before injecting!")
     print("\n🛑 Press CTRL+C to stop the server\n")
     print("="*60 + "\n")
@@ -100,11 +132,11 @@ def main():
     def open_browser():
         import time
         time.sleep(1.5)
-        webbrowser.open('http://localhost:5000')
+        webbrowser.open('http://localhost:5001')
     
     threading.Thread(target=open_browser).start()
     
-    app.run(debug=False, port=5000, host='127.0.0.1')
+    app.run(debug=False, port=5001, host='127.0.0.1')
 
 if __name__ == '__main__':
     main()

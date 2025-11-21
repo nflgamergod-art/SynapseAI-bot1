@@ -22,7 +22,7 @@ echo "✓ Found Python $PYTHON_VERSION"
 # Install dependencies
 echo ""
 echo "📦 Installing dependencies..."
-python3 -m pip install --user flask flask-cors psutil
+python3 -m pip install --user flask flask-cors psutil lupa
 
 echo ""
 echo "✓ Dependencies installed successfully!"
@@ -34,6 +34,11 @@ mkdir -p "$INSTALL_DIR"
 # Get the current directory (where the script is located)
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
+    # macOS-specific: install native app dependencies (pywebview + pyobjc)
+if [[ "$(uname)" == "Darwin" ]]; then
+    echo "\n🧰 Detected macOS - installing native app dependencies (pywebview, pyobjc)..."
+    python3 -m pip install --user pywebview pyobjc || true
+fi
 # Create the synapse command
 cat > "$INSTALL_DIR/synapse" << EOL
 #!/bin/bash
@@ -64,6 +69,19 @@ echo ""
 echo "To start SynapseAI Executor, run:"
 echo "    synapse"
 echo ""
+if [[ "$(uname)" == "Darwin" ]]; then
+    # Create the synapse-app command (native window on macOS)
+    cat > "$INSTALL_DIR/synapse-app" << EOL
+#!/bin/bash
+cd "$SCRIPT_DIR"
+python3 mac_app.py "\$@"
+EOL
+
+    chmod +x "$INSTALL_DIR/synapse-app"
+
+    echo ""
+    echo "✓ Installed synapse-app command to $INSTALL_DIR (macOS native window)"
+fi
 echo "Or directly:"
 echo "    python3 $SCRIPT_DIR/main.py"
 echo ""

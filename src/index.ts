@@ -7358,7 +7358,66 @@ client.on("messageCreate", async (message: Message) => {
   // Respond to direct messages to the bot
   if (message.channel.type === ChannelType.DM) {
     console.log(`[DEBUG] Direct message received from ${message.author.username}`);
-    await message.reply('Thank you for reaching out! How can I help you?');
+    
+    // Check for homework help requests with images
+    if (message.attachments.size > 0) {
+      const imageAttachment = message.attachments.find(att => 
+        att.contentType?.startsWith('image/') || 
+        att.url.match(/\.(jpg|jpeg|png|gif|webp)$/i)
+      );
+      
+      if (imageAttachment) {
+        try {
+          const { analyzeHomework, isHomeworkRelated } = await import('./services/homeworkHelper');
+          
+          // Check if the message content suggests homework help
+          const messageContent = message.content.toLowerCase();
+          const isLikelyHomework = isHomeworkRelated(messageContent) || 
+                                   messageContent.includes('help') || 
+                                   messageContent.length < 100; // Short message with image likely homework
+          
+          if (isLikelyHomework || messageContent.length === 0) {
+            await message.channel.sendTyping();
+            
+            const result = await analyzeHomework(imageAttachment.url, message.content);
+            
+            // Split long responses into chunks (Discord has 2000 char limit)
+            const chunks = [];
+            let currentChunk = '';
+            const lines = result.answer.split('\n');
+            
+            for (const line of lines) {
+              if ((currentChunk + line + '\n').length > 1900) {
+                chunks.push(currentChunk);
+                currentChunk = line + '\n';
+              } else {
+                currentChunk += line + '\n';
+              }
+            }
+            if (currentChunk) chunks.push(currentChunk);
+            
+            // Send response(s)
+            for (let i = 0; i < chunks.length; i++) {
+              if (i === 0) {
+                await message.reply(chunks[i]);
+              } else {
+                await message.channel.send(chunks[i]);
+              }
+            }
+            
+            console.log(`[Homework Help] Analyzed image for ${message.author.username} - Subject: ${result.subject || 'Unknown'}`);
+            return;
+          }
+        } catch (error: any) {
+          console.error('[Homework Help] Error:', error);
+          await message.reply('❌ Sorry, I had trouble analyzing that image. Make sure it\'s clear and try again, or describe your question in text!');
+          return;
+        }
+      }
+    }
+    
+    // Default DM response for non-homework messages
+    await message.reply('Thank you for reaching out! How can I help you?\n\n💡 **Tip:** Send me a picture of your homework assignment and I\'ll help you solve it! Works for any subject - Math, Science, English, History, and more.');
     return;
   }
 
