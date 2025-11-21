@@ -21,17 +21,22 @@ interface HomeworkResult {
 export async function analyzeHomework(imageUrl: string, userQuestion?: string): Promise<HomeworkResult> {
   const provider = (process.env.AI_PROVIDER || '').toLowerCase();
   
-  // Try Gemini first (better for educational content)
+  // Try OpenAI first if configured
+  if (provider === 'openai' || (!provider && process.env.OPENAI_API_KEY)) {
+    try {
+      return await analyzeWithOpenAI(imageUrl, userQuestion);
+    } catch (error) {
+      console.error('OpenAI homework analysis failed, trying Gemini:', error);
+      // Fall through to Gemini if OpenAI fails
+    }
+  }
+  
+  // Try Gemini if OpenAI not available or failed
   if (provider === 'gemini' || process.env.GEMINI_API_KEY) {
     return analyzeWithGemini(imageUrl, userQuestion);
   }
   
-  // Fall back to OpenAI GPT-4 Vision
-  if (provider === 'openai' || process.env.OPENAI_API_KEY) {
-    return analyzeWithOpenAI(imageUrl, userQuestion);
-  }
-  
-  throw new Error('No AI provider configured for homework help. Please set GEMINI_API_KEY or OPENAI_API_KEY');
+  throw new Error('No AI provider configured for homework help. Please set OPENAI_API_KEY or GEMINI_API_KEY');
 }
 
 async function analyzeWithGemini(imageUrl: string, userQuestion?: string): Promise<HomeworkResult> {
