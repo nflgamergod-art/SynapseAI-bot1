@@ -7361,6 +7361,31 @@ client.on("messageCreate", async (message: Message) => {
   if (message.channel.type === ChannelType.DM) {
     console.log(`[DEBUG] Direct message received from ${message.author.username}`);
     
+    // Check if user is asking to simplify a previous response
+    if (message.reference?.messageId) {
+      const simplifyKeywords = ['simplify', 'simpler', 'shorter', 'brief', 'summarize', 'summary', 'tldr', 'short version', 'condense', 'quick'];
+      const messageContent = message.content.toLowerCase();
+      
+      if (simplifyKeywords.some(kw => messageContent.includes(kw))) {
+        try {
+          const referencedMsg = await message.channel.messages.fetch(message.reference.messageId);
+          
+          if (referencedMsg.author.id === client.user?.id && referencedMsg.content.length > 200) {
+            await message.channel.sendTyping();
+            
+            const { generateReply } = await import('./services/openai');
+            const simplifiedPrompt = `The user asked you to simplify this answer. Provide a much shorter, simpler version (2-3 sentences max) that gives just the key points:\n\n${referencedMsg.content}`;
+            
+            const simplified = await generateReply(simplifiedPrompt);
+            await message.reply(`📝 **Simplified Answer:**\n\n${simplified}`);
+            return;
+          }
+        } catch (error) {
+          console.error('[Simplify] Error:', error);
+        }
+      }
+    }
+    
     // Check for homework help requests with images
     if (message.attachments.size > 0) {
       const imageAttachment = message.attachments.find(att => 
@@ -7401,7 +7426,7 @@ client.on("messageCreate", async (message: Message) => {
             // Send response(s)
             for (let i = 0; i < chunks.length; i++) {
               if (i === 0) {
-                await message.reply(chunks[i]);
+                await message.reply(chunks[i] + '\n\n*💡 Reply with "simplify" or "shorter" if you want a brief version!*');
               } else {
                 await message.channel.send(chunks[i]);
               }
