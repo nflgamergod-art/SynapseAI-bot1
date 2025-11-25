@@ -992,10 +992,10 @@ client.once('clientReady', async () => {
           { name: "User", value: "user" },
           { name: "Role", value: "role" }
         ] },
-        { name: "user", description: "User to adjust (if target_type=user)", type: 6, required: false },
-        { name: "role", description: "Role to adjust (if target_type=role)", type: 8, required: false },
         { name: "multiplier", description: "Pay multiplier (1.0=normal, 1.5=150%, 0.5=50%)", type: 10, required: true },
-        { name: "reason", description: "Reason for adjustment", type: 3, required: true }
+        { name: "reason", description: "Reason for adjustment", type: 3, required: true },
+        { name: "user", description: "User to adjust (if target_type=user)", type: 6, required: false },
+        { name: "role", description: "Role to adjust (if target_type=role)", type: 8, required: false }
       ] },
       { name: "removepay", description: "👑 Remove pay adjustment", type: 1, options: [
         { name: "target_type", description: "Remove from user or role", type: 3, required: true, choices: [
