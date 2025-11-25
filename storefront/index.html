@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Premium Digital Store</title>
+    <link rel="stylesheet" href="assets/style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="navbar">
+        <div class="container">
+            <div class="nav-brand">
+                <i class="fas fa-bolt"></i>
+                <span>Digital Store</span>
+            </div>
+            <div class="nav-links">
+                <a href="#products">Products</a>
+                <a href="#about">About</a>
+                <a href="#contact">Contact</a>
+                <button class="cart-btn" onclick="toggleCart()">
+                    <i class="fas fa-shopping-cart"></i>
+                    <span class="cart-count">0</span>
+                </button>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <section class="hero">
+        <div class="container">
+            <div class="hero-content">
+                <h1 class="hero-title">Premium Digital Products</h1>
+                <p class="hero-subtitle">Instant delivery • Secure payments • 24/7 support</p>
+                <div class="hero-badges">
+                    <span class="badge"><i class="fab fa-bitcoin"></i> Bitcoin Accepted</span>
+                    <span class="badge"><i class="fab fa-stripe"></i> Stripe Secure</span>
+                    <span class="badge"><i class="fas fa-shield-alt"></i> SSL Protected</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Products Section -->
+    <section id="products" class="products-section">
+        <div class="container">
+            <h2 class="section-title">Available Products</h2>
+            <div class="products-grid" id="productsGrid">
+                <!-- Products will be dynamically loaded here -->
+            </div>
+        </div>
+    </section>
+
+    <!-- Shopping Cart Sidebar -->
+    <div class="cart-sidebar" id="cartSidebar">
+        <div class="cart-header">
+            <h3>Shopping Cart</h3>
+            <button class="close-btn" onclick="toggleCart()">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+        <div class="cart-items" id="cartItems">
+            <div class="empty-cart">
+                <i class="fas fa-shopping-bag"></i>
+                <p>Your cart is empty</p>
+            </div>
+        </div>
+        <div class="cart-footer">
+            <div class="cart-total">
+                <span>Total:</span>
+                <span class="total-amount">$0.00</span>
+            </div>
+            <button class="checkout-btn" onclick="proceedToCheckout()" disabled>
+                Proceed to Checkout
+            </button>
+        </div>
+    </div>
+
+    <!-- Checkout Modal -->
+    <div class="modal" id="checkoutModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Checkout</h3>
+                <button class="close-btn" onclick="closeCheckout()">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="checkout-summary">
+                    <h4>Order Summary</h4>
+                    <div id="checkoutItems"></div>
+                    <div class="checkout-total">
+                        <strong>Total:</strong>
+                        <strong class="checkout-amount">$0.00</strong>
+                    </div>
+                </div>
+
+                <div class="payment-methods">
+                    <h4>Select Payment Method</h4>
+                    <div class="payment-options">
+                        <button class="payment-option" onclick="selectPayment('stripe')">
+                            <i class="fab fa-stripe"></i>
+                            <span>Credit/Debit Card</span>
+                            <p>Powered by Stripe</p>
+                        </button>
+                        <button class="payment-option" onclick="selectPayment('bitcoin')">
+                            <i class="fab fa-bitcoin"></i>
+                            <span>Bitcoin</span>
+                            <p>Cryptocurrency Payment</p>
+                        </button>
+                    </div>
+                </div>
+
+                <form id="customerForm" class="customer-form">
+                    <h4>Contact Information</h4>
+                    <input type="email" id="customerEmail" placeholder="Email address" required>
+                    <input type="text" id="customerName" placeholder="Full name" required>
+                    <button type="submit" class="submit-btn">
+                        <i class="fas fa-lock"></i>
+                        Complete Purchase
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Success Modal -->
+    <div class="modal" id="successModal">
+        <div class="modal-content success">
+            <div class="success-icon">
+                <i class="fas fa-check-circle"></i>
+            </div>
+            <h3>Purchase Successful!</h3>
+            <p>Your serial key has been sent to your email</p>
+            <div class="serial-key-display" id="serialKeyDisplay">
+                <!-- Key will be displayed here -->
+            </div>
+            <button class="btn-primary" onclick="closeSuccess()">Close</button>
+        </div>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="spinner"></div>
+        <p>Processing your order...</p>
+    </div>
+
+    <script src="assets/script.js"></script>
+</body>
+</html>

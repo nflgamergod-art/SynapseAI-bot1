@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Panel - Serial Key Management</title>
+    <link rel="stylesheet" href="../assets/style.css">
+    <style>
+        .admin-container {
+            max-width: 1000px;
+            margin: 2rem auto;
+            padding: 2rem;
+        }
+        
+        .admin-card {
+            background: white;
+            border-radius: 16px;
+            padding: 2rem;
+            margin-bottom: 2rem;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+        }
+        
+        .admin-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+            padding-bottom: 1rem;
+            border-bottom: 2px solid #e5e7eb;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+        
+        .stat-card {
+            background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+            color: white;
+            padding: 1.5rem;
+            border-radius: 12px;
+            text-align: center;
+        }
+        
+        .stat-number {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+        }
+        
+        .stat-label {
+            opacity: 0.9;
+            font-size: 0.875rem;
+        }
+        
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 600;
+            color: var(--dark);
+        }
+        
+        .form-group input,
+        .form-group select,
+        .form-group textarea {
+            width: 100%;
+            padding: 0.75rem;
+            border: 2px solid #e5e7eb;
+            border-radius: 8px;
+            font-size: 1rem;
+        }
+        
+        .form-group textarea {
+            min-height: 150px;
+            font-family: 'Courier New', monospace;
+        }
+        
+        .btn-primary {
+            background: #6366f1;
+            color: white;
+            border: none;
+            padding: 0.75rem 2rem;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .btn-primary:hover {
+            background: #4f46e5;
+            transform: translateY(-2px);
+        }
+        
+        .alert {
+            padding: 1rem;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+            display: none;
+        }
+        
+        .alert.success {
+            background: #d1fae5;
+            color: #065f46;
+            border: 1px solid #10b981;
+        }
+        
+        .alert.error {
+            background: #fee2e2;
+            color: #991b1b;
+            border: 1px solid #ef4444;
+        }
+        
+        .alert.show {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="admin-container">
+        <div class="admin-card">
+            <div class="admin-header">
+                <h1><i class="fas fa-key"></i> Serial Key Management</h1>
+                <button onclick="refreshStats()" class="btn-primary">
+                    <i class="fas fa-sync"></i> Refresh
+                </button>
+            </div>
+            
+            <div id="alert" class="alert"></div>
+            
+            <h3>Key Statistics</h3>
+            <div class="stats-grid" id="statsGrid">
+                <div class="stat-card">
+                    <div class="stat-number">-</div>
+                    <div class="stat-label">Loading...</div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="admin-card">
+            <h2><i class="fas fa-plus-circle"></i> Add Serial Keys</h2>
+            <p style="color: #6b7280; margin-bottom: 1.5rem;">
+                Add serial keys for products. Enter one key per line.
+            </p>
+            
+            <form id="addKeysForm">
+                <div class="form-group">
+                    <label for="adminKey">Admin Key</label>
+                    <input type="password" id="adminKey" required placeholder="Enter admin authentication key">
+                </div>
+                
+                <div class="form-group">
+                    <label for="productId">Product ID</label>
+                    <select id="productId" required>
+                        <option value="">Select Product</option>
+                        <option value="1">Product 1 - Premium Software License</option>
+                        <option value="2">Product 2 - Professional Tools Pack</option>
+                        <option value="3">Product 3 - Enterprise Suite</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="serialKeys">Serial Keys (one per line)</label>
+                    <textarea id="serialKeys" required placeholder="XXXX-XXXX-XXXX-XXXX
+YYYY-YYYY-YYYY-YYYY
+ZZZZ-ZZZZ-ZZZZ-ZZZZ"></textarea>
+                </div>
+                
+                <button type="submit" class="btn-primary">
+                    <i class="fas fa-save"></i> Add Keys
+                </button>
+            </form>
+        </div>
+        
+        <div class="admin-card">
+            <h2><i class="fas fa-magic"></i> Generate Random Keys</h2>
+            <p style="color: #6b7280; margin-bottom: 1.5rem;">
+                Quickly generate random serial keys in the format XXXX-XXXX-XXXX-XXXX
+            </p>
+            
+            <div class="form-group">
+                <label for="keyCount">Number of Keys to Generate</label>
+                <input type="number" id="keyCount" min="1" max="1000" value="10">
+            </div>
+            
+            <button onclick="generateKeys()" class="btn-primary">
+                <i class="fas fa-random"></i> Generate Keys
+            </button>
+        </div>
+    </div>
+    
+    <script>
+        // Load stats on page load
+        document.addEventListener('DOMContentLoaded', refreshStats);
+        
+        async function refreshStats() {
+            const adminKey = document.getElementById('adminKey').value;
+            
+            if (!adminKey) {
+                showAlert('Please enter admin key first', 'error');
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/api/admin/key-stats?adminKey=${encodeURIComponent(adminKey)}`);
+                const stats = await response.json();
+                
+                if (response.ok) {
+                    displayStats(stats);
+                } else {
+                    showAlert(stats.error || 'Failed to load stats', 'error');
+                }
+            } catch (error) {
+                showAlert('Error loading stats: ' + error.message, 'error');
+            }
+        }
+        
+        function displayStats(stats) {
+            const grid = document.getElementById('statsGrid');
+            grid.innerHTML = '';
+            
+            if (Object.keys(stats).length === 0) {
+                grid.innerHTML = '<div class="stat-card"><div class="stat-label">No products with keys yet</div></div>';
+                return;
+            }
+            
+            for (const [productId, data] of Object.entries(stats)) {
+                grid.innerHTML += `
+                    <div class="stat-card">
+                        <div class="stat-number">${data.available}</div>
+                        <div class="stat-label">Available - Product ${productId}</div>
+                    </div>
+                    <div class="stat-card" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%);">
+                        <div class="stat-number">${data.used}</div>
+                        <div class="stat-label">Used - Product ${productId}</div>
+                    </div>
+                    <div class="stat-card" style="background: linear-gradient(135deg, #6b7280 0%, #4b5563 100%);">
+                        <div class="stat-number">${data.total}</div>
+                        <div class="stat-label">Total - Product ${productId}</div>
+                    </div>
+                `;
+            }
+        }
+        
+        document.getElementById('addKeysForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const adminKey = document.getElementById('adminKey').value;
+            const productId = document.getElementById('productId').value;
+            const keysText = document.getElementById('serialKeys').value;
+            
+            const keys = keysText.split('\n').map(k => k.trim()).filter(k => k.length > 0);
+            
+            if (keys.length === 0) {
+                showAlert('Please enter at least one key', 'error');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/admin/add-keys', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        adminKey,
+                        productId,
+                        keys
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    showAlert(`Successfully added ${keys.length} keys!`, 'success');
+                    document.getElementById('serialKeys').value = '';
+                    refreshStats();
+                } else {
+                    showAlert(data.error || 'Failed to add keys', 'error');
+                }
+            } catch (error) {
+                showAlert('Error: ' + error.message, 'error');
+            }
+        });
+        
+        function generateKeys() {
+            const count = parseInt(document.getElementById('keyCount').value);
+            const keys = [];
+            
+            for (let i = 0; i < count; i++) {
+                const key = generateRandomKey();
+                keys.push(key);
+            }
+            
+            document.getElementById('serialKeys').value = keys.join('\n');
+            showAlert(`Generated ${count} random keys`, 'success');
+        }
+        
+        function generateRandomKey() {
+            const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+            const parts = [];
+            
+            for (let i = 0; i < 4; i++) {
+                let part = '';
+                for (let j = 0; j < 4; j++) {
+                    part += chars.charAt(Math.floor(Math.random() * chars.length));
+                }
+                parts.push(part);
+            }
+            
+            return parts.join('-');
+        }
+        
+        function showAlert(message, type) {
+            const alert = document.getElementById('alert');
+            alert.textContent = message;
+            alert.className = `alert ${type} show`;
+            
+            setTimeout(() => {
+                alert.classList.remove('show');
+            }, 5000);
+        }
+    </script>
+</body>
+</html>

@@ -37,10 +37,23 @@ export function initPayrollSchema() {
       guild_id TEXT PRIMARY KEY,
       hourly_rate REAL NOT NULL DEFAULT 15.0,
       max_hours_per_day INTEGER NOT NULL DEFAULT 5,
-      max_days_per_week INTEGER NOT NULL DEFAULT 5,
+      max_days_per_week INTEGER NOT NULL DEFAULT 4,
       auto_break_minutes INTEGER NOT NULL DEFAULT 10,
       is_enabled INTEGER NOT NULL DEFAULT 1
     );
+    
+    CREATE TABLE IF NOT EXISTS pay_adjustments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      guild_id TEXT NOT NULL,
+      target_id TEXT NOT NULL,
+      target_type TEXT NOT NULL CHECK(target_type IN ('user', 'role')),
+      multiplier REAL NOT NULL DEFAULT 1.0,
+      reason TEXT,
+      created_at TEXT NOT NULL,
+      created_by TEXT NOT NULL,
+      UNIQUE(guild_id, target_id, target_type)
+    );
+    CREATE INDEX IF NOT EXISTS idx_pay_adjustments ON pay_adjustments(guild_id, target_id, target_type);
     
     CREATE TABLE IF NOT EXISTS breaks (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -615,6 +628,211 @@ export function resetPayrollHours(guildId: string, userId: string, days: number 
     deletedShifts: shiftCount.count,
     deletedHours: Math.round((totalMinutes.total / 60) * 100) / 100
   };
+}
+
+// Set or update pay adjustment for user or role
+export function setPayAdjustment(
+  guildId: string,
+  targetId: string,
+  targetType: 'user' | 'role',
+  multiplier: number,
+  reason: string,
+  createdBy: string
+): void {
+  const db = getDB();
+  db.prepare(`
+    INSERT INTO pay_adjustments (guild_id, target_id, target_type, multiplier, reason, created_at, created_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(guild_id, target_id, target_type)
+    DO UPDATE SET multiplier = ?, reason = ?, created_at = ?, created_by = ?
+  `).run(
+    guildId, targetId, targetType, multiplier, reason, new Date().toISOString(), createdBy,
+    multiplier, reason, new Date().toISOString(), createdBy
+  );
+}
+
+// Get pay adjustment for specific target
+export function getPayAdjustment(guildId: string, targetId: string, targetType: 'user' | 'role'): number | null {
+  const db = getDB();
+  const row = db.prepare(`
+    SELECT multiplier FROM pay_adjustments
+    WHERE guild_id = ? AND target_id = ? AND target_type = ?
+  `).get(guildId, targetId, targetType) as any;
+  
+  return row ? row.multiplier : null;
+}
+
+// Get effective pay multiplier for a user (considers user and all their roles)
+export function getEffectivePayMultiplier(guildId: string, userId: string, roleIds: string[]): number {
+  const db = getDB();
+  
+  // Check user-specific adjustment first (highest priority)
+  const userAdj = getPayAdjustment(guildId, userId, 'user');
+  if (userAdj !== null) return userAdj;
+  
+  // Check role adjustments (use highest multiplier)
+  let highestMultiplier = 1.0;
+  for (const roleId of roleIds) {
+    const roleAdj = getPayAdjustment(guildId, roleId, 'role');
+    if (roleAdj !== null && roleAdj > highestMultiplier) {
+      highestMultiplier = roleAdj;
+    }
+  }
+  
+  return highestMultiplier;
+}
+
+// List all pay adjustments
+export function listPayAdjustments(guildId: string): Array<{
+  targetId: string;
+  targetType: 'user' | 'role';
+  multiplier: number;
+  reason: string;
+  createdAt: string;
+  createdBy: string;
+}> {
+  const db = getDB();
+  const rows = db.prepare(`
+    SELECT target_id, target_type, multiplier, reason, created_at, created_by
+    FROM pay_adjustments
+    WHERE guild_id = ?
+    ORDER BY created_at DESC
+  `).all(guildId) as any[];
+  
+  return rows.map(row => ({
+    targetId: row.target_id,
+    targetType: row.target_type,
+    multiplier: row.multiplier,
+    reason: row.reason,
+    createdAt: row.created_at,
+    createdBy: row.created_by
+  }));
+}
+
+// Remove pay adjustment
+export function removePayAdjustment(guildId: string, targetId: string, targetType: 'user' | 'role'): boolean {
+  const db = getDB();
+  const result = db.prepare(`
+    DELETE FROM pay_adjustments
+    WHERE guild_id = ? AND target_id = ? AND target_type = ?
+  `).run(guildId, targetId, targetType);
+  
+  return result.changes > 0;
+}
+
+// Calculate pay with multiplier applied
+export function calculatePayWithMultiplier(
+  guildId: string,
+  userId: string,
+  roleIds: string[],
+  startDate: string,
+  endDate: string
+): {
+  totalHours: number;
+  basePay: number;
+  multiplier: number;
+  totalPay: number;
+  shifts: number;
+} {
+  const basePayData = calculatePay(guildId, userId, startDate, endDate);
+  const multiplier = getEffectivePayMultiplier(guildId, userId, roleIds);
+  const adjustedPay = basePayData.totalPay * multiplier;
+  
+  return {
+    totalHours: basePayData.totalHours,
+    basePay: basePayData.totalPay,
+    multiplier,
+    totalPay: Math.round(adjustedPay * 100) / 100,
+    shifts: basePayData.shifts
+  };
+}
+
+// Get total unpaid balance for user across all pay periods
+export function getTotalUnpaidBalance(guildId: string, userId: string): {
+  totalPay: number;
+  totalHours: number;
+  periods: number;
+} {
+  const db = getDB();
+  const result = db.prepare(`
+    SELECT 
+      COALESCE(SUM(total_pay), 0) as total_pay,
+      COALESCE(SUM(total_hours), 0) as total_hours,
+      COUNT(*) as periods
+    FROM pay_periods
+    WHERE guild_id = ? AND user_id = ? AND paid = 0
+  `).get(guildId, userId) as any;
+  
+  return {
+    totalPay: Math.round(result.total_pay * 100) / 100,
+    totalHours: Math.round(result.total_hours * 100) / 100,
+    periods: result.periods
+  };
+}
+
+// Get all users with unpaid balances (for owner's daily report)
+export function getAllUnpaidBalances(guildId: string): Array<{
+  userId: string;
+  totalPay: number;
+  totalHours: number;
+  periods: number;
+}> {
+  const db = getDB();
+  const rows = db.prepare(`
+    SELECT 
+      user_id,
+      COALESCE(SUM(total_pay), 0) as total_pay,
+      COALESCE(SUM(total_hours), 0) as total_hours,
+      COUNT(*) as periods
+    FROM pay_periods
+    WHERE guild_id = ? AND paid = 0
+    GROUP BY user_id
+    ORDER BY total_pay DESC
+  `).all(guildId) as any[];
+  
+  return rows.map(row => ({
+    userId: row.user_id,
+    totalPay: Math.round(row.total_pay * 100) / 100,
+    totalHours: Math.round(row.total_hours * 100) / 100,
+    periods: row.periods
+  }));
+}
+
+// Check if break time counts toward daily limit (it does!)
+export function getTodayNetWorkingMinutes(guildId: string, userId: string, includeActiveShift: boolean = true): number {
+  const db = getDB();
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+  
+  // Get completed shifts today
+  const completedShifts = db.prepare(`
+    SELECT id, duration_minutes
+    FROM shifts
+    WHERE guild_id = ? AND user_id = ? AND clock_in >= ? AND clock_out IS NOT NULL
+  `).all(guildId, userId, todayStart) as any[];
+  
+  let totalMinutes = 0;
+  
+  // For completed shifts: duration includes break time, so total shift time is counted
+  for (const shift of completedShifts) {
+    totalMinutes += shift.duration_minutes || 0;
+  }
+  
+  // Include active shift if requested
+  if (includeActiveShift) {
+    const activeShift = db.prepare(`
+      SELECT id, clock_in FROM shifts
+      WHERE guild_id = ? AND user_id = ? AND clock_out IS NULL
+    `).get(guildId, userId) as any;
+    
+    if (activeShift) {
+      const clockIn = new Date(activeShift.clock_in);
+      const elapsedMinutes = Math.floor((now.getTime() - clockIn.getTime()) / 60000);
+      totalMinutes += elapsedMinutes;
+    }
+  }
+  
+  return totalMinutes;
 }
 
 // Initialize on import

@@ -359,6 +359,10 @@ client.once('clientReady', async () => {
   const { startAchievementCron } = await import('./services/achievementCron');
   startAchievementCron(client);
   
+  // Start payroll cron jobs (weekly notifications, daily reports, time limit checks)
+  const { initPayrollCron } = await import('./services/payrollCron');
+  initPayrollCron(client);
+  
   // Start payroll auto-break checker (runs every 2 minutes)
   const { checkAndAutoBreak, checkDailyLimitReached, forceClockOut, set24HourCooldown } = await import('./services/payroll');
   const { getActiveStaff } = await import('./services/shifts');
@@ -965,7 +969,7 @@ client.once('clientReady', async () => {
       { name: "config", description: "Configure payroll settings", type: 1, options: [
         { name: "hourly_rate", description: "Hourly pay rate", type: 10, required: false },
         { name: "max_hours_day", description: "Max hours per day (default 5)", type: 4, required: false },
-        { name: "max_days_week", description: "Max days per week (default 5)", type: 4, required: false },
+        { name: "max_days_week", description: "Max days per week (default 4)", type: 4, required: false },
         { name: "auto_break_minutes", description: "Auto-break after inactivity (default 10)", type: 4, required: false }
       ] },
       { name: "view", description: "View payroll configuration", type: 1 },
@@ -982,6 +986,28 @@ client.once('clientReady', async () => {
       ] },
       { name: "history", description: "View pay period history", type: 1, options: [
         { name: "user", description: "User to check", type: 6, required: false }
+      ] },
+      { name: "adjustpay", description: "👑 Adjust pay multiplier for user or role", type: 1, options: [
+        { name: "target_type", description: "Adjust for a user or role", type: 3, required: true, choices: [
+          { name: "User", value: "user" },
+          { name: "Role", value: "role" }
+        ] },
+        { name: "user", description: "User to adjust (if target_type=user)", type: 6, required: false },
+        { name: "role", description: "Role to adjust (if target_type=role)", type: 8, required: false },
+        { name: "multiplier", description: "Pay multiplier (1.0=normal, 1.5=150%, 0.5=50%)", type: 10, required: true },
+        { name: "reason", description: "Reason for adjustment", type: 3, required: true }
+      ] },
+      { name: "removepay", description: "👑 Remove pay adjustment", type: 1, options: [
+        { name: "target_type", description: "Remove from user or role", type: 3, required: true, choices: [
+          { name: "User", value: "user" },
+          { name: "Role", value: "role" }
+        ] },
+        { name: "user", description: "User to remove adjustment (if target_type=user)", type: 6, required: false },
+        { name: "role", description: "Role to remove adjustment (if target_type=role)", type: 8, required: false }
+      ] },
+      { name: "listpay", description: "👑 List all pay adjustments", type: 1 },
+      { name: "viewbalance", description: "View unpaid balance", type: 1, options: [
+        { name: "user", description: "User to check (admins only)", type: 6, required: false }
       ] },
       { name: "reset", description: "👑 Reset user's payroll hours", type: 1, options: [
         { name: "user", description: "User to reset", type: 6, required: true },
@@ -3296,6 +3322,168 @@ client.on("interactionCreate", async (interaction) => {
       }
       
       return await safeReply(interaction, { embeds: [embed] });
+    }
+
+    if (subCmd === "adjustpay") {
+      const targetType = interaction.options.getString('target_type', true) as 'user' | 'role';
+      const user = interaction.options.getUser('user');
+      const role = interaction.options.getRole('role');
+      const multiplier = interaction.options.getNumber('multiplier', true);
+      const reason = interaction.options.getString('reason', true);
+
+      if (targetType === 'user' && !user) {
+        return await safeReply(interaction, '❌ You must specify a user when target_type is "user".', { flags: MessageFlags.Ephemeral });
+      }
+
+      if (targetType === 'role' && !role) {
+        return await safeReply(interaction, '❌ You must specify a role when target_type is "role".', { flags: MessageFlags.Ephemeral });
+      }
+
+      if (multiplier <= 0 || multiplier > 5) {
+        return await safeReply(interaction, '❌ Multiplier must be between 0 and 5.', { flags: MessageFlags.Ephemeral });
+      }
+
+      const { setPayAdjustment } = await import('./services/payroll');
+      const targetId = targetType === 'user' ? user!.id : role!.id;
+
+      setPayAdjustment(interaction.guild.id, targetId, targetType, multiplier, reason, interaction.user.id);
+
+      const targetName = targetType === 'user' ? user!.tag : role!.name;
+      const changePercent = ((multiplier - 1) * 100).toFixed(0);
+      const changeText = multiplier > 1 
+        ? `+${changePercent}% increase` 
+        : multiplier < 1 
+          ? `${changePercent}% decrease` 
+          : 'no change (1.0x)';
+
+      const embed = new EmbedBuilder()
+        .setTitle('💰 Pay Adjustment Set')
+        .setColor(multiplier > 1 ? 0x57F287 : multiplier < 1 ? 0xED4245 : 0x5865F2)
+        .addFields(
+          { name: 'Target', value: `${targetType === 'user' ? '👤' : '👥'} ${targetName}`, inline: true },
+          { name: 'Multiplier', value: `${multiplier}x (${changeText})`, inline: true },
+          { name: '\u200b', value: '\u200b', inline: true },
+          { name: 'Reason', value: reason, inline: false },
+          { name: 'Set By', value: interaction.user.tag, inline: true }
+        )
+        .setTimestamp();
+
+      return await safeReply(interaction, { embeds: [embed] });
+    }
+
+    if (subCmd === "removepay") {
+      const targetType = interaction.options.getString('target_type', true) as 'user' | 'role';
+      const user = interaction.options.getUser('user');
+      const role = interaction.options.getRole('role');
+
+      if (targetType === 'user' && !user) {
+        return await safeReply(interaction, '❌ You must specify a user when target_type is "user".', { flags: MessageFlags.Ephemeral });
+      }
+
+      if (targetType === 'role' && !role) {
+        return await safeReply(interaction, '❌ You must specify a role when target_type is "role".', { flags: MessageFlags.Ephemeral });
+      }
+
+      const { removePayAdjustment, getPayAdjustment } = await import('./services/payroll');
+      const targetId = targetType === 'user' ? user!.id : role!.id;
+
+      // Check if adjustment exists
+      const existing = getPayAdjustment(interaction.guild.id, targetId, targetType);
+      if (!existing) {
+        const targetName = targetType === 'user' ? user!.tag : role!.name;
+        return await safeReply(interaction, `❌ No pay adjustment found for ${targetName}.`, { flags: MessageFlags.Ephemeral });
+      }
+
+      removePayAdjustment(interaction.guild.id, targetId, targetType);
+
+      const targetName = targetType === 'user' ? user!.tag : role!.name;
+      return await safeReply(interaction, `✅ Pay adjustment removed for ${targetName}.`, { flags: MessageFlags.Ephemeral });
+    }
+
+    if (subCmd === "listpay") {
+      const { listPayAdjustments } = await import('./services/payroll');
+      const adjustments = listPayAdjustments(interaction.guild.id);
+
+      if (adjustments.length === 0) {
+        return await safeReply(interaction, '✅ No active pay adjustments.', { flags: MessageFlags.Ephemeral });
+      }
+
+      const embed = new EmbedBuilder()
+        .setTitle('💰 Active Pay Adjustments')
+        .setColor(0x5865F2)
+        .setDescription(`Total: ${adjustments.length} adjustment(s)`);
+
+      const userAdjustments = adjustments.filter(a => a.targetType === 'user');
+      const roleAdjustments = adjustments.filter(a => a.targetType === 'role');
+
+      if (userAdjustments.length > 0) {
+        const userList = userAdjustments.map(a => {
+          const changePercent = ((a.multiplier - 1) * 100).toFixed(0);
+          const changeText = a.multiplier > 1 ? `+${changePercent}%` : `${changePercent}%`;
+          return `<@${a.targetId}>: **${a.multiplier}x** (${changeText})\n└ _${a.reason}_`;
+        }).join('\n\n');
+
+        embed.addFields({ name: '👤 User Adjustments', value: userList.slice(0, 1000), inline: false });
+      }
+
+      if (roleAdjustments.length > 0) {
+        const roleList = roleAdjustments.map(a => {
+          const changePercent = ((a.multiplier - 1) * 100).toFixed(0);
+          const changeText = a.multiplier > 1 ? `+${changePercent}%` : `${changePercent}%`;
+          return `<@&${a.targetId}>: **${a.multiplier}x** (${changeText})\n└ _${a.reason}_`;
+        }).join('\n\n');
+
+        embed.addFields({ name: '👥 Role Adjustments', value: roleList.slice(0, 1000), inline: false });
+      }
+
+      return await safeReply(interaction, { embeds: [embed] });
+    }
+
+    if (subCmd === "viewbalance") {
+      const targetUser = interaction.options.getUser('user');
+      
+      // If checking another user, must be owner
+      if (targetUser && targetUser.id !== interaction.user.id && !isOwnerId(interaction.user.id)) {
+        return await safeReply(interaction, '❌ Only the owner can view other users\' balances.', { flags: MessageFlags.Ephemeral });
+      }
+
+      const userToCheck = targetUser || interaction.user;
+      const { getTotalUnpaidBalance, getUnpaidPayPeriods, getEffectivePayMultiplier } = await import('./services/payroll');
+      
+      const balance = getTotalUnpaidBalance(interaction.guild.id, userToCheck.id);
+      
+      if (balance.totalPay === 0) {
+        return await safeReply(interaction, `${userToCheck.id === interaction.user.id ? 'You have' : `${userToCheck.tag} has`} no unpaid balance.`, { flags: MessageFlags.Ephemeral });
+      }
+
+      const periods = getUnpaidPayPeriods(interaction.guild.id, userToCheck.id).slice(0, 5);
+      const member = await interaction.guild.members.fetch(userToCheck.id);
+      const multiplier = getEffectivePayMultiplier(interaction.guild.id, userToCheck.id, member.roles.cache.map(r => r.id));
+
+      const embed = new EmbedBuilder()
+        .setTitle(`💰 Unpaid Balance - ${userToCheck.tag}`)
+        .setColor(0xFEE75C)
+        .addFields(
+          { name: '💵 Total Unpaid', value: `$${balance.totalPay.toFixed(2)}`, inline: true },
+          { name: '⏱️ Total Hours', value: `${balance.totalHours.toFixed(2)}h`, inline: true },
+          { name: '📋 Pay Periods', value: `${balance.periods}`, inline: true },
+          { name: '📊 Pay Multiplier', value: `${multiplier}x`, inline: true }
+        );
+
+      if (periods.length > 0) {
+        const breakdown = periods.map((period, idx) => {
+          const startDate = new Date(period.start_date).toLocaleDateString();
+          const endDate = new Date(period.end_date).toLocaleDateString();
+          return `${idx + 1}. ${startDate} - ${endDate}: **$${period.total_pay.toFixed(2)}** (${period.total_hours.toFixed(2)}h)`;
+        }).join('\n');
+
+        embed.addFields({
+          name: '📊 Recent Periods',
+          value: breakdown + (balance.periods > 5 ? `\n_...and ${balance.periods - 5} more_` : '')
+        });
+      }
+
+      return await safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
     }
 
     if (subCmd === "enable") {
