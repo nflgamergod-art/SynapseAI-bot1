@@ -59,7 +59,15 @@ export function clockIn(guildId: string, userId: string): { success: boolean; me
   
   const shiftId = result.lastInsertRowid as number;
   
-  return { success: true, message: 'Clocked in successfully!', shiftId };
+  // Award UPT for successful clock-in
+  try {
+    const { accrueUPT } = require('./scheduling');
+    accrueUPT(guildId, userId, 15); // 15 minutes UPT per shift
+  } catch (error) {
+    console.error('Failed to accrue UPT:', error);
+  }
+  
+  return { success: true, message: '✅ Clocked in successfully! (+15 min UPT)', shiftId };
 }
 
 // Clock out

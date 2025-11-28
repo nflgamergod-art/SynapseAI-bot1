@@ -369,6 +369,10 @@ client.once('clientReady', async () => {
   initSchedulingSchema();
   initSchedulingCron(client);
   
+  // Start attendance tracking cron jobs (daily missed shift checks)
+  const { initAttendanceCron } = await import('./services/attendanceCron');
+  initAttendanceCron(client);
+  
   // Start payroll auto-break checker (runs every 2 minutes)
   const { checkAndAutoBreak, checkDailyLimitReached, forceClockOut, set24HourCooldown } = await import('./services/payroll');
   const { getActiveStaff } = await import('./services/shifts');
@@ -1017,6 +1021,38 @@ client.once('clientReady', async () => {
       ] },
       { name: "myschedule", description: "View your personal schedule", type: 1 },
       { name: "generate", description: "👑 Owner: Generate schedules for next week", type: 1 }
+    ] },
+    // UPT (Unpaid Time Off) System
+    { name: "upt", description: "💳 UPT (Unpaid Time Off) management", options: [
+      { name: "balance", description: "Check your UPT balance", type: 1 },
+      { name: "history", description: "View your UPT transaction history", type: 1, options: [
+        { name: "limit", description: "Number of transactions to show (default 10)", type: 4, required: false }
+      ] },
+      { name: "adjust", description: "👑 Owner: Manually adjust UPT balance", type: 1, options: [
+        { name: "user", description: "User to adjust UPT for", type: 6, required: true },
+        { name: "minutes", description: "Minutes to add (positive) or remove (negative)", type: 4, required: true },
+        { name: "reason", description: "Reason for adjustment", type: 3, required: true }
+      ] }
+    ] },
+    // Write-up and Attendance System
+    { name: "attendance", description: "📋 Attendance and write-up management", options: [
+      { name: "stats", description: "View your attendance record", type: 1 },
+      { name: "writeups", description: "View your write-ups", type: 1 },
+      { name: "issue", description: "👑 Owner: Issue a write-up", type: 1, options: [
+        { name: "user", description: "User to issue write-up to", type: 6, required: true },
+        { name: "reason", description: "Reason for write-up", type: 3, required: true },
+        { name: "severity", description: "Severity level", type: 3, required: false, choices: [
+          { name: "Standard", value: "standard" },
+          { name: "Severe", value: "severe" }
+        ] },
+        { name: "notes", description: "Additional notes", type: 3, required: false }
+      ] },
+      { name: "clear", description: "👑 Owner: Clear all write-ups for a user", type: 1, options: [
+        { name: "user", description: "User to clear write-ups for", type: 6, required: true }
+      ] },
+      { name: "report", description: "👑 Owner: View detailed attendance report", type: 1, options: [
+        { name: "user", description: "User to view report for", type: 6, required: true }
+      ] }
     ] },
     // Payroll System
     { name: "payroll", description: "💰 Payroll system management", options: [
@@ -3210,6 +3246,228 @@ client.on("interactionCreate", async (interaction) => {
         return;
       }
       return await safeReply(interaction, `❌ Reminder #${reminderId} not found or doesn't belong to you.`, { flags: MessageFlags.Ephemeral });
+    }
+  }
+
+  // UPT (Unpaid Time Off) System
+  if (name === "upt") {
+    if (!interaction.guild) return await safeReply(interaction, 'This command can only be used in a server.', { flags: MessageFlags.Ephemeral });
+
+    const subCmd = interaction.options.getSubcommand();
+    const { getUPTBalance, getUPTHistory, accrueUPT, deductUPT } = await import('./services/scheduling');
+
+    if (subCmd === "balance") {
+      const balance = getUPTBalance(interaction.guild.id, interaction.user.id);
+      const hours = Math.floor(balance / 60);
+      const mins = balance % 60;
+
+      const embed = new EmbedBuilder()
+        .setTitle('💳 Your UPT Balance')
+        .setDescription(`You have **${hours}h ${mins}m** (${balance} minutes) of Unpaid Time Off available.`)
+        .setColor(0x5865F2)
+        .addFields(
+          { name: 'ℹ️ What is UPT?', value: 'UPT (Unpaid Time Off) protects you from penalties:\n• Late clock-ins auto-deduct UPT\n• Missed shifts use UPT (480 min = 8 hours)\n• Earn 15 minutes per successful clock-in' }
+        )
+        .setTimestamp();
+
+      return await safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
+    }
+
+    if (subCmd === "history") {
+      const limit = interaction.options.getInteger('limit') || 10;
+      const history = getUPTHistory(interaction.guild.id, interaction.user.id, limit);
+
+      if (history.length === 0) {
+        return await safeReply(interaction, '📋 No UPT transactions yet.', { flags: MessageFlags.Ephemeral });
+      }
+
+      const embed = new EmbedBuilder()
+        .setTitle('📋 UPT Transaction History')
+        .setColor(0x5865F2)
+        .setTimestamp();
+
+      const lines = history.map(tx => {
+        const amount = tx.amount_minutes;
+        const sign = amount > 0 ? '+' : '';
+        const emoji = amount > 0 ? '✅' : '❌';
+        const date = new Date(tx.created_at).toLocaleDateString();
+        return `${emoji} **${sign}${amount} min** - ${tx.reason} (${date})`;
+      });
+
+      embed.setDescription(lines.join('\n'));
+
+      return await safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
+    }
+
+    if (subCmd === "adjust") {
+      if (!isOwnerId(interaction.user.id)) {
+        return await safeReply(interaction, '❌ Only the owner can adjust UPT balances.', { flags: MessageFlags.Ephemeral });
+      }
+
+      const user = interaction.options.getUser('user', true);
+      const minutes = interaction.options.getInteger('minutes', true);
+      const reason = interaction.options.getString('reason', true);
+
+      if (minutes > 0) {
+        accrueUPT(interaction.guild.id, user.id, minutes);
+      } else {
+        const success = deductUPT(interaction.guild.id, user.id, Math.abs(minutes), 'manual_adjustment', reason);
+        if (!success) {
+          return await safeReply(interaction, '❌ User doesn\'t have enough UPT to deduct.', { flags: MessageFlags.Ephemeral });
+        }
+      }
+
+      const newBalance = getUPTBalance(interaction.guild.id, user.id);
+      return await safeReply(interaction, `✅ Adjusted <@${user.id}>'s UPT by ${minutes > 0 ? '+' : ''}${minutes} minutes.\n**New balance:** ${newBalance} minutes\n**Reason:** ${reason}`, { flags: MessageFlags.Ephemeral });
+    }
+  }
+
+  // Attendance and Write-up System
+  if (name === "attendance") {
+    if (!interaction.guild) return await safeReply(interaction, 'This command can only be used in a server.', { flags: MessageFlags.Ephemeral });
+
+    const subCmd = interaction.options.getSubcommand();
+    const { getWriteupCount, getUserWriteups, issueWriteup, clearWriteups, getMissedScheduledShiftCount } = await import('./services/scheduling');
+
+    if (subCmd === "stats") {
+      const writeupCount = getWriteupCount(interaction.guild.id, interaction.user.id);
+      const missedShifts = getMissedScheduledShiftCount(interaction.guild.id, interaction.user.id);
+      const { getUPTBalance } = await import('./services/scheduling');
+      const uptBalance = getUPTBalance(interaction.guild.id, interaction.user.id);
+
+      const embed = new EmbedBuilder()
+        .setTitle('📊 Your Attendance Record')
+        .setColor(writeupCount >= 2 || missedShifts >= 1 ? 0xED4245 : 0x57F287)
+        .addFields(
+          { name: '⚠️ Write-ups', value: `${writeupCount}/3 ${writeupCount >= 2 ? '⚠️' : ''}`, inline: true },
+          { name: '❌ Missed Shifts', value: `${missedShifts}/2 ${missedShifts >= 1 ? '⚠️' : ''}`, inline: true },
+          { name: '💳 UPT Balance', value: `${Math.floor(uptBalance / 60)}h ${uptBalance % 60}m`, inline: true }
+        )
+        .setFooter({ text: '3 write-ups OR 2 missed scheduled shifts = automatic demotion' })
+        .setTimestamp();
+
+      if (writeupCount >= 2 || missedShifts >= 1) {
+        embed.setDescription('⚠️ **Warning:** You are at risk of demotion!');
+      }
+
+      return await safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
+    }
+
+    if (subCmd === "writeups") {
+      const writeups = getUserWriteups(interaction.guild.id, interaction.user.id);
+
+      if (writeups.length === 0) {
+        return await safeReply(interaction, '✅ You have no write-ups on your record.', { flags: MessageFlags.Ephemeral });
+      }
+
+      const embed = new EmbedBuilder()
+        .setTitle('⚠️ Your Write-ups')
+        .setColor(0xED4245)
+        .setDescription(`You have **${writeups.length}** write-up(s) on record:`)
+        .setFooter({ text: '3 write-ups = automatic demotion' })
+        .setTimestamp();
+
+      const lines = writeups.slice(0, 5).map((w, idx) => {
+        const date = new Date(w.created_at).toLocaleDateString();
+        const severity = w.severity === 'severe' ? '🔴 SEVERE' : '🟡 Standard';
+        return `**${idx + 1}.** ${severity} - ${w.reason} (${date})`;
+      });
+
+      embed.addFields({ name: 'Recent Write-ups', value: lines.join('\n') });
+
+      return await safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
+    }
+
+    if (subCmd === "issue") {
+      if (!isOwnerId(interaction.user.id)) {
+        return await safeReply(interaction, '❌ Only the owner can issue write-ups.', { flags: MessageFlags.Ephemeral });
+      }
+
+      const user = interaction.options.getUser('user', true);
+      const reason = interaction.options.getString('reason', true);
+      const severity = (interaction.options.getString('severity') || 'standard') as 'standard' | 'severe';
+      const notes = interaction.options.getString('notes');
+
+      issueWriteup(interaction.guild.id, user.id, reason, interaction.user.id, severity, notes);
+
+      const writeupCount = getWriteupCount(interaction.guild.id, user.id);
+
+      // Send DM to user
+      try {
+        const dmEmbed = new EmbedBuilder()
+          .setTitle('⚠️ Write-up Issued')
+          .setColor(0xED4245)
+          .addFields(
+            { name: 'Reason', value: reason },
+            { name: 'Severity', value: severity === 'severe' ? '🔴 SEVERE' : '🟡 Standard' },
+            { name: 'Write-ups', value: `${writeupCount}/3` }
+          )
+          .setFooter({ text: '3 write-ups = automatic demotion' })
+          .setTimestamp();
+
+        if (notes) dmEmbed.addFields({ name: 'Notes', value: notes });
+        if (writeupCount >= 3) {
+          dmEmbed.setDescription('⚠️ **You have reached 3 write-ups and will be demoted.**');
+        } else if (writeupCount >= 2) {
+          dmEmbed.setDescription('⚠️ **Warning:** One more write-up will result in demotion!');
+        }
+
+        await user.send({ embeds: [dmEmbed] });
+      } catch (error) {
+        console.error('Failed to DM user about write-up:', error);
+      }
+
+      return await safeReply(interaction, `✅ Write-up issued to <@${user.id}>.\n**Reason:** ${reason}\n**Severity:** ${severity}\n**Total write-ups:** ${writeupCount}/3`, { flags: MessageFlags.Ephemeral });
+    }
+
+    if (subCmd === "clear") {
+      if (!isOwnerId(interaction.user.id)) {
+        return await safeReply(interaction, '❌ Only the owner can clear write-ups.', { flags: MessageFlags.Ephemeral });
+      }
+
+      const user = interaction.options.getUser('user', true);
+      clearWriteups(interaction.guild.id, user.id);
+
+      return await safeReply(interaction, `✅ Cleared all write-ups for <@${user.id}>.`, { flags: MessageFlags.Ephemeral });
+    }
+
+    if (subCmd === "report") {
+      if (!isOwnerId(interaction.user.id)) {
+        return await safeReply(interaction, '❌ Only the owner can view attendance reports.', { flags: MessageFlags.Ephemeral });
+      }
+
+      const user = interaction.options.getUser('user', true);
+      const writeups = getUserWriteups(interaction.guild.id, user.id);
+      const writeupCount = getWriteupCount(interaction.guild.id, user.id);
+      const missedShifts = getMissedScheduledShiftCount(interaction.guild.id, user.id);
+      const { getUPTBalance } = await import('./services/scheduling');
+      const uptBalance = getUPTBalance(interaction.guild.id, user.id);
+
+      const embed = new EmbedBuilder()
+        .setTitle(`📊 Attendance Report: ${user.username}`)
+        .setColor(writeupCount >= 2 || missedShifts >= 1 ? 0xED4245 : 0x57F287)
+        .setThumbnail(user.displayAvatarURL())
+        .addFields(
+          { name: '⚠️ Write-ups', value: `${writeupCount}/3 ${writeupCount >= 2 ? '⚠️' : ''}`, inline: true },
+          { name: '❌ Missed Shifts', value: `${missedShifts}/2 ${missedShifts >= 1 ? '⚠️' : ''}`, inline: true },
+          { name: '💳 UPT Balance', value: `${Math.floor(uptBalance / 60)}h ${uptBalance % 60}m`, inline: true }
+        )
+        .setTimestamp();
+
+      if (writeups.length > 0) {
+        const writeupLines = writeups.slice(0, 3).map((w, idx) => {
+          const date = new Date(w.created_at).toLocaleDateString();
+          const severity = w.severity === 'severe' ? '🔴 SEVERE' : '🟡';
+          return `${idx + 1}. ${severity} ${w.reason} (${date})`;
+        });
+        embed.addFields({ name: 'Recent Write-ups', value: writeupLines.join('\n') });
+      }
+
+      if (writeupCount >= 2 || missedShifts >= 1) {
+        embed.setDescription('⚠️ **Warning:** This user is at risk of automatic demotion!');
+      }
+
+      return await safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
     }
   }
 
