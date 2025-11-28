@@ -62,6 +62,62 @@ export function initSchedulingSchema() {
     )
   `).run();
   
+  // UPT (Unpaid Time Off) balances - like Amazon
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS upt_balances (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      guild_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      balance_minutes INTEGER NOT NULL DEFAULT 0,  -- UPT in minutes
+      last_accrual_date TEXT,  -- Last date UPT was earned
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(guild_id, user_id)
+    )
+  `).run();
+  
+  // UPT transaction history
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS upt_transactions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      guild_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      amount_minutes INTEGER NOT NULL,  -- Positive = earned, Negative = used
+      reason TEXT NOT NULL,  -- 'accrual', 'late', 'absence', 'manual_adjustment'
+      related_date TEXT,  -- Date of shift/absence
+      created_at TEXT NOT NULL
+    )
+  `).run();
+  
+  // Write-up system
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS staff_writeups (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      guild_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      issued_by TEXT NOT NULL,  -- User ID of who issued it
+      related_date TEXT,  -- Date of incident
+      severity TEXT NOT NULL DEFAULT 'standard',  -- 'standard', 'severe'
+      notes TEXT,
+      created_at TEXT NOT NULL
+    )
+  `).run();
+  
+  // Missed shift tracking (only for SCHEDULED shifts)
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS missed_shifts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      guild_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      scheduled_date TEXT NOT NULL,  -- YYYY-MM-DD
+      week_start TEXT NOT NULL,
+      day_of_week TEXT NOT NULL,
+      upt_used BOOLEAN NOT NULL DEFAULT 0,  -- Whether UPT covered it
+      created_at TEXT NOT NULL
+    )
+  `).run();
+  
   console.log('✅ Scheduling tables initialized');
 }
 
@@ -157,6 +213,16 @@ export function generateWeeklySchedule(guildId: string, weekStart: string): Map<
     return schedule;
   }
   
+  // Owner IDs to exclude from scheduling
+  const OWNER_IDS = ['1272923881052704820', '1436743881216897025']; // Your ID + joycemember
+  
+  // Filter out owners from scheduling
+  const nonOwnerStaff = staffList.filter(staff => !OWNER_IDS.includes(staff.userId));
+  
+  if (nonOwnerStaff.length === 0) {
+    return schedule;
+  }
+  
   const daysOfWeek = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
   const dayAssignments = new Map<string, string[]>(); // day -> [userIds]
   
@@ -164,7 +230,7 @@ export function generateWeeklySchedule(guildId: string, weekStart: string): Map<
   daysOfWeek.forEach(day => dayAssignments.set(day, []));
   
   // Sort staff by number of preferred days (fewer preferences = more flexibility)
-  const sortedStaff = [...staffList].sort((a, b) => 
+  const sortedStaff = [...nonOwnerStaff].sort((a, b) => 
     a.preferredDays.length - b.preferredDays.length
   );
   
@@ -492,4 +558,192 @@ export function cancelShiftSwapRequest(requestId: number): boolean {
   `).run(requestId);
   
   return result.changes > 0;
+}
+
+// ============ UPT (Unpaid Time Off) System ============
+
+// Get UPT balance for a user
+export function getUPTBalance(guildId: string, userId: string): number {
+  const db = getDB();
+  
+  const row = db.prepare(`
+    SELECT balance_minutes FROM upt_balances
+    WHERE guild_id = ? AND user_id = ?
+  `).get(guildId, userId) as any;
+  
+  return row ? row.balance_minutes : 0;
+}
+
+// Initialize UPT balance for new staff
+export function initializeUPTBalance(guildId: string, userId: string): void {
+  const db = getDB();
+  const now = new Date().toISOString();
+  
+  db.prepare(`
+    INSERT OR IGNORE INTO upt_balances (guild_id, user_id, balance_minutes, created_at, updated_at)
+    VALUES (?, ?, 0, ?, ?)
+  `).run(guildId, userId, now, now);
+}
+
+// Accrue UPT for working a shift (earn 15 minutes per shift worked)
+export function accrueUPT(guildId: string, userId: string, minutes: number = 15): void {
+  const db = getDB();
+  const now = new Date().toISOString();
+  const today = now.split('T')[0];
+  
+  // Initialize if doesn't exist
+  initializeUPTBalance(guildId, userId);
+  
+  // Update balance
+  db.prepare(`
+    UPDATE upt_balances
+    SET balance_minutes = balance_minutes + ?,
+        last_accrual_date = ?,
+        updated_at = ?
+    WHERE guild_id = ? AND user_id = ?
+  `).run(minutes, today, now, guildId, userId);
+  
+  // Log transaction
+  db.prepare(`
+    INSERT INTO upt_transactions (guild_id, user_id, amount_minutes, reason, related_date, created_at)
+    VALUES (?, ?, ?, 'accrual', ?, ?)
+  `).run(guildId, userId, minutes, today, now);
+}
+
+// Deduct UPT (for lateness or absence)
+export function deductUPT(guildId: string, userId: string, minutes: number, reason: string, relatedDate?: string): boolean {
+  const db = getDB();
+  const now = new Date().toISOString();
+  
+  const balance = getUPTBalance(guildId, userId);
+  
+  if (balance < minutes) {
+    return false; // Not enough UPT
+  }
+  
+  // Deduct balance
+  db.prepare(`
+    UPDATE upt_balances
+    SET balance_minutes = balance_minutes - ?,
+        updated_at = ?
+    WHERE guild_id = ? AND user_id = ?
+  `).run(minutes, now, guildId, userId);
+  
+  // Log transaction
+  db.prepare(`
+    INSERT INTO upt_transactions (guild_id, user_id, amount_minutes, reason, related_date, created_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(guildId, userId, -minutes, reason, relatedDate || now.split('T')[0], now);
+  
+  return true;
+}
+
+// Get UPT transaction history
+export function getUPTHistory(guildId: string, userId: string, limit: number = 20): Array<any> {
+  const db = getDB();
+  
+  return db.prepare(`
+    SELECT * FROM upt_transactions
+    WHERE guild_id = ? AND user_id = ?
+    ORDER BY created_at DESC
+    LIMIT ?
+  `).all(guildId, userId, limit) as any[];
+}
+
+// ============ Write-up System ============
+
+// Issue a write-up
+export function issueWriteup(
+  guildId: string,
+  userId: string,
+  reason: string,
+  issuedBy: string,
+  severity: 'standard' | 'severe' = 'standard',
+  notes?: string,
+  relatedDate?: string
+): number {
+  const db = getDB();
+  const now = new Date().toISOString();
+  
+  const result = db.prepare(`
+    INSERT INTO staff_writeups (guild_id, user_id, reason, issued_by, severity, notes, related_date, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(guildId, userId, reason, issuedBy, severity, notes || null, relatedDate || now.split('T')[0], now);
+  
+  return result.lastInsertRowid as number;
+}
+
+// Get write-up count for user
+export function getWriteupCount(guildId: string, userId: string): number {
+  const db = getDB();
+  
+  const row = db.prepare(`
+    SELECT COUNT(*) as count FROM staff_writeups
+    WHERE guild_id = ? AND user_id = ?
+  `).get(guildId, userId) as any;
+  
+  return row.count;
+}
+
+// Get all write-ups for user
+export function getUserWriteups(guildId: string, userId: string): Array<any> {
+  const db = getDB();
+  
+  return db.prepare(`
+    SELECT * FROM staff_writeups
+    WHERE guild_id = ? AND user_id = ?
+    ORDER BY created_at DESC
+  `).all(guildId, userId) as any[];
+}
+
+// Clear all write-ups for user (after demotion or manual clear)
+export function clearWriteups(guildId: string, userId: string): void {
+  const db = getDB();
+  
+  db.prepare(`
+    DELETE FROM staff_writeups
+    WHERE guild_id = ? AND user_id = ?
+  `).run(guildId, userId);
+}
+
+// ============ Missed Shift Tracking ============
+
+// Record a missed shift (only for SCHEDULED shifts)
+export function recordMissedShift(
+  guildId: string,
+  userId: string,
+  scheduledDate: string,
+  weekStart: string,
+  dayOfWeek: string,
+  uptUsed: boolean = false
+): void {
+  const db = getDB();
+  const now = new Date().toISOString();
+  
+  db.prepare(`
+    INSERT INTO missed_shifts (guild_id, user_id, scheduled_date, week_start, day_of_week, upt_used, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(guildId, userId, scheduledDate, weekStart, dayOfWeek, uptUsed ? 1 : 0, now);
+}
+
+// Get missed SCHEDULED shift count (for demotion purposes)
+export function getMissedScheduledShiftCount(guildId: string, userId: string): number {
+  const db = getDB();
+  
+  const row = db.prepare(`
+    SELECT COUNT(*) as count FROM missed_shifts
+    WHERE guild_id = ? AND user_id = ? AND upt_used = 0
+  `).get(guildId, userId) as any;
+  
+  return row.count;
+}
+
+// Clear missed shifts (after demotion or reset)
+export function clearMissedShifts(guildId: string, userId: string): void {
+  const db = getDB();
+  
+  db.prepare(`
+    DELETE FROM missed_shifts
+    WHERE guild_id = ? AND user_id = ?
+  `).run(guildId, userId);
 }
