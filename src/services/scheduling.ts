@@ -214,7 +214,7 @@ export function generateWeeklySchedule(guildId: string, weekStart: string): Map<
   }
   
   // Owner IDs to exclude from scheduling
-  const OWNER_IDS = ['1272923881052704820', '1436743881216897025']; // Your ID + joycemember
+  const OWNER_IDS = ['1272923881052704820', '840586296044421160']; // Your ID + joycemember
   
   // Filter out owners from scheduling
   const nonOwnerStaff = staffList.filter(staff => !OWNER_IDS.includes(staff.userId));
