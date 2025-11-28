@@ -50,8 +50,8 @@ Advanced attendance tracking system with UPT (Unpaid Time Off), write-ups, and a
   - Warning about demotion risk
 
 **Missed Scheduled Shift:**
-- Full shift absence = 480 minutes (8 hours) of UPT
-- If you have 480+ minutes:
+- Full shift absence = 300 minutes (5 hours) of UPT
+- If you have 300+ minutes:
   - UPT covers the absence
   - No write-up, no missed shift count
 - If you don't have enough UPT:
@@ -249,7 +249,7 @@ Result: 📉 DEMOTED (3 write-ups)
 **Location:** `attendanceTracking.ts` → `accrueUPT()`
 
 ### Full Shift Duration
-**Current:** 480 minutes (8 hours)
+**Current:** 300 minutes (5 hours)
 **Location:** `attendanceTracking.ts` → `FULL_SHIFT_MINUTES`
 
 ### Demotion Thresholds

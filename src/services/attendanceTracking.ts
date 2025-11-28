@@ -82,8 +82,8 @@ export async function handleMissedScheduledShift(
   const weekStart = getCurrentWeekStart();
   const uptBalance = getUPTBalance(guildId, userId);
   
-  // Full shift absence = 480 minutes (8 hours)
-  const FULL_SHIFT_MINUTES = 480;
+  // Full shift absence = 300 minutes (5 hours)
+  const FULL_SHIFT_MINUTES = 300;
   
   if (uptBalance >= FULL_SHIFT_MINUTES) {
     // UPT covers the absence
@@ -100,7 +100,7 @@ export async function handleMissedScheduledShift(
           .setTitle('⚠️ Missed Scheduled Shift')
           .setDescription(`You missed your scheduled shift today (${dayOfWeek}).`)
           .addFields(
-            { name: 'UPT Used', value: `${FULL_SHIFT_MINUTES} minutes (8 hours)` },
+            { name: 'UPT Used', value: `${FULL_SHIFT_MINUTES} minutes (5 hours)` },
             { name: 'Remaining UPT', value: `${uptBalance - FULL_SHIFT_MINUTES} minutes` }
           )
           .setColor(0xFFA500)

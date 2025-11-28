@@ -3388,7 +3388,7 @@ client.on("interactionCreate", async (interaction) => {
       const severity = (interaction.options.getString('severity') || 'standard') as 'standard' | 'severe';
       const notes = interaction.options.getString('notes');
 
-      issueWriteup(interaction.guild.id, user.id, reason, interaction.user.id, severity, notes);
+      issueWriteup(interaction.guild.id, user.id, reason, interaction.user.id, severity, notes || undefined);
 
       const writeupCount = getWriteupCount(interaction.guild.id, user.id);
 
