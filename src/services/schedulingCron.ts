@@ -13,24 +13,25 @@ let scheduleGenerationInterval: NodeJS.Timeout | null = null;
 export function initSchedulingCron(discordClient: Client) {
   client = discordClient;
   
-  // Generate schedules every Sunday at 6 PM for the following week
+  // Generate schedules every Saturday at 6 PM for the following week (Sunday-Saturday)
   scheduleWeeklyGeneration();
   
   console.log('✅ Scheduling cron jobs initialized');
 }
 
 function scheduleWeeklyGeneration() {
-  // Calculate time until next Sunday 6 PM
+  // Calculate time until next Saturday 6 PM
   const now = new Date();
-  const nextSunday = new Date(now);
-  nextSunday.setDate(now.getDate() + (7 - now.getDay()));
-  nextSunday.setHours(18, 0, 0, 0);
+  const nextSaturday = new Date(now);
+  const daysUntilSaturday = (6 - now.getDay() + 7) % 7;
+  nextSaturday.setDate(now.getDate() + (daysUntilSaturday === 0 ? 7 : daysUntilSaturday));
+  nextSaturday.setHours(18, 0, 0, 0);
   
-  if (nextSunday <= now) {
-    nextSunday.setDate(nextSunday.getDate() + 7);
+  if (nextSaturday <= now) {
+    nextSaturday.setDate(nextSaturday.getDate() + 7);
   }
   
-  const msUntilSunday = nextSunday.getTime() - now.getTime();
+  const msUntilSaturday = nextSaturday.getTime() - now.getTime();
   
   // Initial timeout
   setTimeout(() => {
@@ -40,9 +41,9 @@ function scheduleWeeklyGeneration() {
     scheduleGenerationInterval = setInterval(() => {
       generateAndPostSchedules();
     }, 7 * 24 * 60 * 60 * 1000);
-  }, msUntilSunday);
+  }, msUntilSaturday);
   
-  console.log(`📅 Schedule generation scheduled for ${nextSunday.toLocaleString()}`);
+  console.log(`📅 Schedule generation scheduled for ${nextSaturday.toLocaleString()}`);
 }
 
 async function generateAndPostSchedules() {

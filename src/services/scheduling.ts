@@ -65,20 +65,22 @@ export function initSchedulingSchema() {
   console.log('✅ Scheduling tables initialized');
 }
 
-// Get current week's Monday date
+// Get current week's Sunday date
 export function getCurrentWeekStart(): string {
   const now = new Date();
   const day = now.getDay();
-  const diff = now.getDate() - day + (day === 0 ? -6 : 1); // Adjust to Monday
-  const monday = new Date(now.setDate(diff));
-  return monday.toISOString().split('T')[0];
+  // day 0 = Sunday, so if it's Sunday return today, otherwise go back to last Sunday
+  const diff = day === 0 ? 0 : -day;
+  const sunday = new Date(now);
+  sunday.setDate(now.getDate() + diff);
+  return sunday.toISOString().split('T')[0];
 }
 
-// Get next week's Monday date
+// Get next week's Sunday date
 export function getNextWeekStart(): string {
-  const currentMonday = new Date(getCurrentWeekStart());
-  currentMonday.setDate(currentMonday.getDate() + 7);
-  return currentMonday.toISOString().split('T')[0];
+  const currentSunday = new Date(getCurrentWeekStart());
+  currentSunday.setDate(currentSunday.getDate() + 7);
+  return currentSunday.toISOString().split('T')[0];
 }
 
 // Set staff availability preferences
