@@ -279,10 +279,19 @@ export function getAllSchedulesForWeek(guildId: string, weekStart: string): Map<
 // Check if staff is scheduled for today
 export function isScheduledToday(guildId: string, userId: string): boolean {
   const schedule = getStaffSchedule(guildId, userId);
-  if (!schedule) return false;
+  
+  // If no schedule exists yet, allow clock-in (pre-schedule-system period)
+  if (!schedule) return true;
   
   const today = new Date().toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase();
   return schedule.includes(today);
+}
+
+// Check if scheduling system is active (has schedules generated)
+export function hasSchedulesGenerated(guildId: string): boolean {
+  const weekStart = getCurrentWeekStart();
+  const schedules = getAllSchedulesForWeek(guildId, weekStart);
+  return schedules.size > 0;
 }
 
 // Get day name from date
