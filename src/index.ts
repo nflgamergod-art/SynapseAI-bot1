@@ -363,6 +363,12 @@ client.once('clientReady', async () => {
   const { initPayrollCron } = await import('./services/payrollCron');
   initPayrollCron(client);
   
+  // Start scheduling cron jobs (weekly schedule generation)
+  const { initSchedulingCron } = await import('./services/schedulingCron');
+  const { initSchedulingSchema } = await import('./services/scheduling');
+  initSchedulingSchema();
+  initSchedulingCron(client);
+  
   // Start payroll auto-break checker (runs every 2 minutes)
   const { checkAndAutoBreak, checkDailyLimitReached, forceClockOut, set24HourCooldown } = await import('./services/payroll');
   const { getActiveStaff } = await import('./services/shifts');
@@ -964,6 +970,54 @@ client.once('clientReady', async () => {
       { name: "days", description: "Days to analyze (default 30)", type: 4, required: false }
     ] },
     { name: "whosonduty", description: "👥 View currently clocked-in staff" },
+    // Scheduling System
+    { name: "schedule", description: "📅 Staff scheduling system", options: [
+      { name: "view", description: "View the weekly schedule", type: 1, options: [
+        { name: "week", description: "Which week (current/next)", type: 3, required: false, choices: [
+          { name: "Current Week", value: "current" },
+          { name: "Next Week", value: "next" }
+        ] }
+      ] },
+      { name: "setavailability", description: "Set your preferred work days and times", type: 1, options: [
+        { name: "days", description: "Preferred days (comma-separated: monday,tuesday,etc)", type: 3, required: true },
+        { name: "start_time", description: "Preferred start time (HH:MM format, e.g., 09:00)", type: 3, required: true },
+        { name: "end_time", description: "Preferred end time (HH:MM format, e.g., 17:00)", type: 3, required: true }
+      ] },
+      { name: "drop", description: "Drop a shift for others to pick up", type: 1, options: [
+        { name: "day", description: "Day to drop", type: 3, required: true, choices: [
+          { name: "Monday", value: "monday" },
+          { name: "Tuesday", value: "tuesday" },
+          { name: "Wednesday", value: "wednesday" },
+          { name: "Thursday", value: "thursday" },
+          { name: "Friday", value: "friday" },
+          { name: "Saturday", value: "saturday" },
+          { name: "Sunday", value: "sunday" }
+        ] }
+      ] },
+      { name: "swap", description: "Request to swap a shift with another staff member", type: 1, options: [
+        { name: "give_day", description: "Day you want to give away", type: 3, required: true, choices: [
+          { name: "Monday", value: "monday" },
+          { name: "Tuesday", value: "tuesday" },
+          { name: "Wednesday", value: "wednesday" },
+          { name: "Thursday", value: "thursday" },
+          { name: "Friday", value: "friday" },
+          { name: "Saturday", value: "saturday" },
+          { name: "Sunday", value: "sunday" }
+        ] },
+        { name: "receive_day", description: "Day you want in return", type: 3, required: true, choices: [
+          { name: "Monday", value: "monday" },
+          { name: "Tuesday", value: "tuesday" },
+          { name: "Wednesday", value: "wednesday" },
+          { name: "Thursday", value: "thursday" },
+          { name: "Friday", value: "friday" },
+          { name: "Saturday", value: "saturday" },
+          { name: "Sunday", value: "sunday" }
+        ] },
+        { name: "target_user", description: "Staff member to swap with", type: 6, required: true }
+      ] },
+      { name: "myschedule", description: "View your personal schedule", type: 1 },
+      { name: "generate", description: "👑 Owner: Generate schedules for next week", type: 1 }
+    ] },
     // Payroll System
     { name: "payroll", description: "💰 Payroll system management", options: [
       { name: "config", description: "Configure payroll settings", type: 1, options: [
@@ -3503,11 +3557,36 @@ client.on("interactionCreate", async (interaction) => {
 
     const { canClockIn } = await import('./services/payroll');
     const { clockIn, getShiftPanels } = await import('./services/shifts');
+    const { isScheduledToday, hasApprovedWorkRequestToday, createWorkRequest } = await import('./services/scheduling');
     
     // Check if user can clock in (payroll limits)
     const canClock = canClockIn(interaction.guild.id, interaction.user.id);
     if (!canClock.canClock) {
       return await safeReply(interaction, `❌ ${canClock.reason}`, { flags: MessageFlags.Ephemeral });
+    }
+    
+    // Check if user is scheduled to work today
+    const scheduled = isScheduledToday(interaction.guild.id, interaction.user.id);
+    const hasApproval = hasApprovedWorkRequestToday(interaction.guild.id, interaction.user.id);
+    
+    if (!scheduled && !hasApproval) {
+      // Not scheduled - show options
+      const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`work_request_${interaction.user.id}`)
+          .setLabel('📝 Request to Work Today')
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+          .setCustomId('work_request_skip')
+          .setLabel('Skip')
+          .setStyle(ButtonStyle.Secondary)
+      );
+      
+      return await safeReply(interaction, {
+        content: '⚠️ **You are not scheduled to work today.**\n\nYou can either:\n• Request permission from the owner to work today\n• Wait for your next scheduled day',
+        components: [row],
+        flags: MessageFlags.Ephemeral
+      });
     }
     
     const result = clockIn(interaction.guild.id, interaction.user.id);
@@ -3820,6 +3899,249 @@ client.on("interactionCreate", async (interaction) => {
     }
 
     return await safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
+  }
+
+  // Scheduling System
+  if (name === "schedule") {
+    if (!interaction.guild) return await safeReply(interaction, 'This command can only be used in a server.', { flags: MessageFlags.Ephemeral });
+
+    const subCmd = interaction.options.getSubcommand();
+    const {
+      setStaffAvailability,
+      getStaffAvailability,
+      getStaffSchedule,
+      getAllSchedulesForWeek,
+      getCurrentWeekStart,
+      getNextWeekStart,
+      createShiftSwapRequest,
+      getPendingSwapRequests
+    } = await import('./services/scheduling');
+
+    if (subCmd === "setavailability") {
+      const daysStr = interaction.options.getString('days', true);
+      const startTime = interaction.options.getString('start_time', true);
+      const endTime = interaction.options.getString('end_time', true);
+
+      // Parse days
+      const days = daysStr.toLowerCase().split(',').map(d => d.trim());
+      const validDays = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+      const invalidDays = days.filter(d => !validDays.includes(d));
+
+      if (invalidDays.length > 0) {
+        return await safeReply(interaction, `❌ Invalid day(s): ${invalidDays.join(', ')}`, { flags: MessageFlags.Ephemeral });
+      }
+
+      // Validate time format
+      const timeRegex = /^([0-1][0-9]|2[0-3]):[0-5][0-9]$/;
+      if (!timeRegex.test(startTime) || !timeRegex.test(endTime)) {
+        return await safeReply(interaction, '❌ Invalid time format. Use HH:MM (e.g., 09:00)', { flags: MessageFlags.Ephemeral });
+      }
+
+      setStaffAvailability(interaction.guild.id, interaction.user.id, days, { start: startTime, end: endTime });
+
+      const embed = new EmbedBuilder()
+        .setTitle('✅ Availability Set')
+        .setColor(0x57F287)
+        .addFields(
+          { name: '📅 Preferred Days', value: days.map(d => d.charAt(0).toUpperCase() + d.slice(1)).join(', '), inline: false },
+          { name: '⏰ Preferred Hours', value: `${startTime} - ${endTime}`, inline: false }
+        )
+        .setFooter({ text: 'This will be used when generating weekly schedules' });
+
+      return await safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
+    }
+
+    if (subCmd === "view") {
+      const week = interaction.options.getString('week') || 'current';
+      const weekStart = week === 'next' ? getNextWeekStart() : getCurrentWeekStart();
+      const schedules = getAllSchedulesForWeek(interaction.guild.id, weekStart);
+
+      if (schedules.size === 0) {
+        return await safeReply(interaction, '📅 No schedule generated yet for this week.', { flags: MessageFlags.Ephemeral });
+      }
+
+      const weekStartDate = new Date(weekStart);
+      const weekEndDate = new Date(weekStart);
+      weekEndDate.setDate(weekEndDate.getDate() + 6);
+
+      const embed = new EmbedBuilder()
+        .setColor('#5865F2')
+        .setTitle(`📅 ${week === 'next' ? 'Next' : 'Current'} Week Schedule`)
+        .setDescription(`**${weekStartDate.toLocaleDateString()} - ${weekEndDate.toLocaleDateString()}**`)
+        .setTimestamp();
+
+      // Organize by day
+      const daysOfWeek = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+      const daySchedules = new Map<string, string[]>();
+
+      daysOfWeek.forEach(day => daySchedules.set(day, []));
+
+      for (const [userId, days] of schedules.entries()) {
+        days.forEach(day => {
+          const staffList = daySchedules.get(day) || [];
+          staffList.push(userId);
+          daySchedules.set(day, staffList);
+        });
+      }
+
+      for (const day of daysOfWeek) {
+        const staffIds = daySchedules.get(day) || [];
+        const dayLabel = day.charAt(0).toUpperCase() + day.slice(1);
+        
+        if (staffIds.length > 0) {
+          const staffList = staffIds.map(id => `<@${id}>`).join(', ');
+          embed.addFields({ name: dayLabel, value: staffList, inline: false });
+        }
+      }
+
+      return await safeReply(interaction, { embeds: [embed] });
+    }
+
+    if (subCmd === "myschedule") {
+      const schedule = getStaffSchedule(interaction.guild.id, interaction.user.id);
+
+      if (!schedule) {
+        const availability = getStaffAvailability(interaction.guild.id, interaction.user.id);
+        
+        if (!availability) {
+          return await safeReply(interaction, '📅 You don\'t have a schedule yet. Use `/schedule setavailability` to set your preferences first.', { flags: MessageFlags.Ephemeral });
+        }
+        
+        return await safeReply(interaction, '📅 No schedule assigned yet for this week. Check back after Sunday at 6 PM.', { flags: MessageFlags.Ephemeral });
+      }
+
+      const weekStart = getCurrentWeekStart();
+      const weekStartDate = new Date(weekStart);
+      const weekEndDate = new Date(weekStart);
+      weekEndDate.setDate(weekEndDate.getDate() + 6);
+
+      const embed = new EmbedBuilder()
+        .setTitle('📅 Your Schedule')
+        .setColor(0x57F287)
+        .setDescription(`**${weekStartDate.toLocaleDateString()} - ${weekEndDate.toLocaleDateString()}**\n\nYou are scheduled ${schedule.length} day(s) this week:`)
+        .setTimestamp();
+
+      const daysList = schedule.map(day => {
+        const dayLabel = day.charAt(0).toUpperCase() + day.slice(1);
+        return `• **${dayLabel}**`;
+      }).join('\n');
+
+      embed.addFields({ name: 'Your Days', value: daysList, inline: false });
+
+      return await safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
+    }
+
+    if (subCmd === "drop") {
+      const day = interaction.options.getString('day', true);
+      const schedule = getStaffSchedule(interaction.guild.id, interaction.user.id);
+
+      if (!schedule || !schedule.includes(day)) {
+        return await safeReply(interaction, `❌ You are not scheduled for ${day}.`, { flags: MessageFlags.Ephemeral });
+      }
+
+      const requestId = createShiftSwapRequest(interaction.guild.id, interaction.user.id, day, 'drop');
+
+      // Notify all staff about the dropped shift
+      const { getDB } = await import('./services/db');
+      const db = getDB();
+      const allStaff = db.prepare(`
+        SELECT DISTINCT user_id FROM staff_schedules WHERE guild_id = ?
+      `).all(interaction.guild.id) as any[];
+
+      for (const { user_id } of allStaff) {
+        if (user_id === interaction.user.id) continue;
+
+        try {
+          const user = await client.users.fetch(user_id);
+          const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder()
+              .setCustomId(`accept_swap_${requestId}`)
+              .setLabel('✅ Pick Up Shift')
+              .setStyle(ButtonStyle.Success),
+            new ButtonBuilder()
+              .setCustomId(`decline_swap_${requestId}`)
+              .setLabel('Skip')
+              .setStyle(ButtonStyle.Secondary)
+          );
+
+          await user.send({
+            content: `📋 **Shift Available**\n\n<@${interaction.user.id}> has dropped their **${day.charAt(0).toUpperCase() + day.slice(1)}** shift.\n\nWould you like to pick it up? First to accept gets it!`,
+            components: [row]
+          });
+        } catch (err) {
+          console.error(`Failed to notify user ${user_id}:`, err);
+        }
+      }
+
+      return await safeReply(interaction, `✅ Your **${day}** shift has been dropped. Staff will be notified.`, { flags: MessageFlags.Ephemeral });
+    }
+
+    if (subCmd === "swap") {
+      const giveDay = interaction.options.getString('give_day', true);
+      const receiveDay = interaction.options.getString('receive_day', true);
+      const targetUser = interaction.options.getUser('target_user', true);
+
+      const mySchedule = getStaffSchedule(interaction.guild.id, interaction.user.id);
+      const targetSchedule = getStaffSchedule(interaction.guild.id, targetUser.id);
+
+      if (!mySchedule || !mySchedule.includes(giveDay)) {
+        return await safeReply(interaction, `❌ You are not scheduled for ${giveDay}.`, { flags: MessageFlags.Ephemeral });
+      }
+
+      if (!targetSchedule || !targetSchedule.includes(receiveDay)) {
+        return await safeReply(interaction, `❌ ${targetUser.tag} is not scheduled for ${receiveDay}.`, { flags: MessageFlags.Ephemeral });
+      }
+
+      const requestId = createShiftSwapRequest(
+        interaction.guild.id,
+        interaction.user.id,
+        giveDay,
+        'swap',
+        targetUser.id,
+        receiveDay
+      );
+
+      // Notify target user
+      const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`accept_swap_${requestId}`)
+          .setLabel('✅ Accept Swap')
+          .setStyle(ButtonStyle.Success),
+        new ButtonBuilder()
+          .setCustomId(`decline_swap_${requestId}`)
+          .setLabel('❌ Decline')
+          .setStyle(ButtonStyle.Danger)
+      );
+
+      try {
+        await targetUser.send({
+          content: `📋 **Shift Swap Request**\n\n<@${interaction.user.id}> wants to swap shifts with you:\n• They give you: **${giveDay.charAt(0).toUpperCase() + giveDay.slice(1)}**\n• You give them: **${receiveDay.charAt(0).toUpperCase() + receiveDay.slice(1)}**\n\nDo you accept?`,
+          components: [row]
+        });
+      } catch (err) {
+        return await safeReply(interaction, `❌ Failed to send swap request to ${targetUser.tag}.`, { flags: MessageFlags.Ephemeral });
+      }
+
+      return await safeReply(interaction, `✅ Swap request sent to ${targetUser.tag}!`, { flags: MessageFlags.Ephemeral });
+    }
+
+    if (subCmd === "generate") {
+      if (!isOwnerId(interaction.user.id)) {
+        return await safeReply(interaction, '❌ Only the owner can generate schedules.', { flags: MessageFlags.Ephemeral });
+      }
+
+      const { generateWeeklySchedule, saveWeeklySchedule } = await import('./services/scheduling');
+      const nextWeek = getNextWeekStart();
+      const schedule = generateWeeklySchedule(interaction.guild.id, nextWeek);
+
+      if (schedule.size === 0) {
+        return await safeReply(interaction, '❌ No staff have set their availability yet. Staff must use `/schedule setavailability` first.', { flags: MessageFlags.Ephemeral });
+      }
+
+      saveWeeklySchedule(interaction.guild.id, nextWeek, schedule);
+
+      return await safeReply(interaction, `✅ Generated schedule for ${schedule.size} staff members for next week starting ${nextWeek}.`, { flags: MessageFlags.Ephemeral });
+    }
   }
 
   // Server Stats Channels
@@ -8582,6 +8904,165 @@ client.on('interactionCreate', async (interaction) => {
       }
 
       return interaction.reply({ content: 'Unknown action.', ephemeral: true });
+    }
+
+    // Work request buttons
+    if (id.startsWith('work_request_')) {
+      const userId = id.replace('work_request_', '');
+      
+      if (userId !== interaction.user.id) {
+        return interaction.reply({ content: '❌ This is not your request.', ephemeral: true });
+      }
+      
+      const { createWorkRequest } = await import('./services/scheduling');
+      const today = new Date().toISOString().split('T')[0];
+      const requestId = createWorkRequest(interaction.guild!.id, userId, today);
+      
+      // Notify owner
+      const ownerIds = process.env.OWNER_IDS?.split(',') || [];
+      
+      for (const ownerId of ownerIds) {
+        try {
+          const owner = await client.users.fetch(ownerId.trim());
+          const requestRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder()
+              .setCustomId(`approve_work_${requestId}`)
+              .setLabel('✅ Approve')
+              .setStyle(ButtonStyle.Success),
+            new ButtonBuilder()
+              .setCustomId(`deny_work_${requestId}`)
+              .setLabel('❌ Deny')
+              .setStyle(ButtonStyle.Danger)
+          );
+          
+          await owner.send({
+            content: `📋 **Work Request from <@${userId}>**\n\n<@${userId}> is requesting permission to clock in and work today (${new Date().toLocaleDateString()}).\n\nThey are not scheduled for today. Do you want to approve this request?`,
+            components: [requestRow]
+          });
+        } catch (err) {
+          console.error(`Failed to notify owner ${ownerId}:`, err);
+        }
+      }
+      
+      await interaction.update({
+        content: '✅ **Work request sent to the owner.**\n\nYou will receive a DM when they respond to your request.',
+        components: []
+      });
+      return;
+    }
+
+    if (id === 'work_request_skip') {
+      await interaction.update({
+        content: '✅ No problem! You can clock in on your next scheduled day.',
+        components: []
+      });
+      return;
+    }
+
+    // Owner response to work requests
+    if (id.startsWith('approve_work_') || id.startsWith('deny_work_')) {
+      const approved = id.startsWith('approve_work_');
+      const requestId = parseInt(id.replace(approved ? 'approve_work_' : 'deny_work_', ''));
+      
+      const { respondToWorkRequest, getWorkRequest } = await import('./services/scheduling');
+      const request = getWorkRequest(requestId);
+      
+      if (!request) {
+        return interaction.reply({ content: '❌ Request not found.', ephemeral: true });
+      }
+      
+      if (request.status !== 'pending') {
+        return interaction.reply({ content: '⚠️ This request has already been handled.', ephemeral: true });
+      }
+      
+      respondToWorkRequest(requestId, approved);
+      
+      // Notify the staff member
+      try {
+        const staffUser = await client.users.fetch(request.user_id);
+        const statusEmoji = approved ? '✅' : '❌';
+        const statusText = approved ? 'approved' : 'denied';
+        const additionalInfo = approved 
+          ? '\n\nYou can now use `/clockin` to start your shift!'
+          : '\n\nPlease wait for your next scheduled day to work.';
+        
+        await staffUser.send({
+          content: `${statusEmoji} **Your work request has been ${statusText}.**\n\nRequest for: ${new Date(request.requested_date).toLocaleDateString()}${additionalInfo}`
+        });
+      } catch (err) {
+        console.error(`Failed to notify user ${request.user_id}:`, err);
+      }
+      
+      await interaction.update({
+        content: `${approved ? '✅ Approved' : '❌ Denied'} work request for <@${request.user_id}> on ${new Date(request.requested_date).toLocaleDateString()}.`,
+        components: []
+      });
+      return;
+    }
+
+    // Shift swap buttons
+    if (id.startsWith('accept_swap_') || id.startsWith('decline_swap_')) {
+      const accepted = id.startsWith('accept_swap_');
+      const requestId = parseInt(id.replace(accepted ? 'accept_swap_' : 'decline_swap_', ''));
+      
+      const { acceptShiftSwap, declineShiftSwap, getShiftSwapRequest } = await import('./services/scheduling');
+      const request = getShiftSwapRequest(requestId);
+      
+      if (!request) {
+        return interaction.reply({ content: '❌ Request not found.', ephemeral: true });
+      }
+      
+      if (request.status !== 'pending') {
+        return interaction.reply({ content: '⚠️ This request has already been handled.', ephemeral: true });
+      }
+      
+      if (accepted) {
+        const success = acceptShiftSwap(requestId, interaction.user.id);
+        
+        if (!success) {
+          return interaction.reply({ content: '❌ Failed to accept swap.', ephemeral: true });
+        }
+        
+        // Notify requester
+        try {
+          const requester = await client.users.fetch(request.requester_id);
+          
+          if (request.request_type === 'drop') {
+            await requester.send({
+              content: `✅ **Your shift drop was accepted!**\n\n<@${interaction.user.id}> has picked up your **${request.day_to_give}** shift.`
+            });
+          } else {
+            await requester.send({
+              content: `✅ **Your shift swap was accepted!**\n\n<@${interaction.user.id}> has agreed to swap:\n• You give: **${request.day_to_give}**\n• You receive: **${request.day_to_receive}**`
+            });
+          }
+        } catch (err) {
+          console.error(`Failed to notify requester ${request.requester_id}:`, err);
+        }
+        
+        await interaction.update({
+          content: `✅ Shift ${request.request_type === 'drop' ? 'pickup' : 'swap'} accepted!`,
+          components: []
+        });
+      } else {
+        declineShiftSwap(requestId);
+        
+        // Notify requester
+        try {
+          const requester = await client.users.fetch(request.requester_id);
+          await requester.send({
+            content: `❌ **Your shift ${request.request_type} was declined.**\n\n<@${interaction.user.id}> declined your request for **${request.day_to_give}**.`
+          });
+        } catch (err) {
+          console.error(`Failed to notify requester ${request.requester_id}:`, err);
+        }
+        
+        await interaction.update({
+          content: `❌ Shift ${request.request_type} declined.`,
+          components: []
+        });
+      }
+      return;
     }
 
     // Unrecognized button type
