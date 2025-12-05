@@ -1438,14 +1438,10 @@ client.on('interactionCreate', async (interaction) => {
     try {
       await interaction.deferReply({ ephemeral: true });
 
-      // Check if we have guild context
-      if (!interaction.guild || !interaction.guildId) {
-        return interaction.editReply({ content: '❌ This command must be used in a server.' });
-      }
-
       const parts = customId.split('_');
       const paymentType = parts[2]; // paypal, cashapp, venmo, btc, eth, ltc, usdt
-      const paydayId = parts.slice(3).join('_');
+      const guildId = parts[3]; // Guild ID embedded in modal
+      const paydayId = parts.slice(4).join('_');
 
       const credentials = interaction.fields.getTextInputValue('credentials');
       const notes = interaction.fields.getTextInputValue('notes') || undefined;
@@ -1453,21 +1449,24 @@ client.on('interactionCreate', async (interaction) => {
       const { savePaymentMethod, recordPaydaySubmission, getTotalUnpaidBalance, getEffectivePayMultiplier, hasSubmittedForPayday } = await import('./services/payroll');
 
       // Double-check not already submitted
-      if (hasSubmittedForPayday(interaction.guildId, interaction.user.id, paydayId)) {
+      if (hasSubmittedForPayday(guildId, interaction.user.id, paydayId)) {
         return interaction.editReply({ content: '✅ You have already submitted your payment details for this payday!' });
       }
 
+      // Get guild and fetch member to calculate pay
+      const guild = await interaction.client.guilds.fetch(guildId);
+      const member = await guild.members.fetch(interaction.user.id);
+
       // Calculate amount owed
-      const unpaidBalance = getTotalUnpaidBalance(interaction.guildId, interaction.user.id);
-      const member = await interaction.guild.members.fetch(interaction.user.id);
-      const multiplier = getEffectivePayMultiplier(interaction.guildId, interaction.user.id, member.roles.cache.map(r => r.id));
+      const unpaidBalance = getTotalUnpaidBalance(guildId, interaction.user.id);
+      const multiplier = getEffectivePayMultiplier(guildId, interaction.user.id, member.roles.cache.map(r => r.id));
       const amountOwed = unpaidBalance.totalPay * multiplier;
 
       // Save payment method for future use
-      savePaymentMethod(interaction.guildId, interaction.user.id, paymentType, credentials, notes);
+      savePaymentMethod(guildId, interaction.user.id, paymentType, credentials, notes);
 
       // Record submission
-      recordPaydaySubmission(interaction.guildId, interaction.user.id, paydayId, paymentType, credentials, amountOwed);
+      recordPaydaySubmission(guildId, interaction.user.id, paydayId, paymentType, credentials, amountOwed);
 
       // Confirm to user
       await interaction.editReply({ 
@@ -2232,12 +2231,13 @@ client.on("interactionCreate", async (interaction) => {
       if (btn.startsWith('payday_')) {
         const parts = btn.split('_');
         const paymentType = parts[1]; // paypal, cashapp, venmo, btc, eth, ltc, usdt
-        const paydayId = parts.slice(2).join('_'); // Rejoin in case ID contains underscores
+        const guildId = parts[2]; // Guild ID embedded in button
+        const paydayId = parts.slice(3).join('_'); // Rejoin in case ID contains underscores
 
         const { hasSubmittedForPayday, getPaymentMethod } = await import('./services/payroll');
 
         // Check if already submitted
-        if (hasSubmittedForPayday(interaction.guildId!, interaction.user.id, paydayId)) {
+        if (hasSubmittedForPayday(guildId, interaction.user.id, paydayId)) {
           return interaction.reply({ 
             content: '✅ You have already submitted your payment details for this payday!', 
             ephemeral: true 
@@ -2245,12 +2245,12 @@ client.on("interactionCreate", async (interaction) => {
         }
 
         // Get previously saved payment method if exists
-        const savedMethod = getPaymentMethod(interaction.guildId!, interaction.user.id);
+        const savedMethod = getPaymentMethod(guildId, interaction.user.id);
         const prefilled = savedMethod && savedMethod.paymentType === paymentType ? savedMethod.credentials : '';
 
         // Create modal for payment details
         const modal = new ModalBuilder()
-          .setCustomId(`payday_submit_${paymentType}_${paydayId}`)
+          .setCustomId(`payday_submit_${paymentType}_${guildId}_${paydayId}`)
           .setTitle(`${paymentType.toUpperCase()} Payment Details`);
 
         let labelText = 'Your Payment Details';
@@ -4033,17 +4033,17 @@ client.on("interactionCreate", async (interaction) => {
 
           const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
             new ButtonBuilder()
-              .setCustomId(`payday_paypal_${paydayId}`)
+              .setCustomId(`payday_paypal_${interaction.guild.id}_${paydayId}`)
               .setLabel('PayPal')
               .setEmoji('💳')
               .setStyle(ButtonStyle.Primary),
             new ButtonBuilder()
-              .setCustomId(`payday_cashapp_${paydayId}`)
+              .setCustomId(`payday_cashapp_${interaction.guild.id}_${paydayId}`)
               .setLabel('Cash App')
               .setEmoji('💵')
               .setStyle(ButtonStyle.Success),
             new ButtonBuilder()
-              .setCustomId(`payday_venmo_${paydayId}`)
+              .setCustomId(`payday_venmo_${interaction.guild.id}_${paydayId}`)
               .setLabel('Venmo')
               .setEmoji('💰')
               .setStyle(ButtonStyle.Success)
@@ -4051,22 +4051,22 @@ client.on("interactionCreate", async (interaction) => {
 
           const row2 = new ActionRowBuilder<ButtonBuilder>().addComponents(
             new ButtonBuilder()
-              .setCustomId(`payday_btc_${paydayId}`)
+              .setCustomId(`payday_btc_${interaction.guild.id}_${paydayId}`)
               .setLabel('Bitcoin (BTC)')
               .setEmoji('🪙')
               .setStyle(ButtonStyle.Secondary),
             new ButtonBuilder()
-              .setCustomId(`payday_eth_${paydayId}`)
+              .setCustomId(`payday_eth_${interaction.guild.id}_${paydayId}`)
               .setLabel('Ethereum (ETH)')
               .setEmoji('💎')
               .setStyle(ButtonStyle.Secondary),
             new ButtonBuilder()
-              .setCustomId(`payday_ltc_${paydayId}`)
+              .setCustomId(`payday_ltc_${interaction.guild.id}_${paydayId}`)
               .setLabel('Litecoin (LTC)')
               .setEmoji('🔷')
               .setStyle(ButtonStyle.Secondary),
             new ButtonBuilder()
-              .setCustomId(`payday_usdt_${paydayId}`)
+              .setCustomId(`payday_usdt_${interaction.guild.id}_${paydayId}`)
               .setLabel('USDT (Tether)')
               .setEmoji('💵')
               .setStyle(ButtonStyle.Secondary)
