@@ -1096,7 +1096,7 @@ client.once('clientReady', async () => {
         { name: "role", description: "Role to remove adjustment (if target_type=role)", type: 8, required: false }
       ] },
       { name: "listpay", description: "👑 List all pay adjustments", type: 1 },
-      { name: "viewbalance", description: "View unpaid balance", type: 1, options: [
+      { name: "viewbalance", description: "View unpaid balance (accessible to all staff)", type: 1, options: [
         { name: "user", description: "User to check (admins only)", type: 6, required: false }
       ] },
       { name: "reset", description: "👑 Reset user's payroll hours", type: 1, options: [
@@ -1106,6 +1106,10 @@ client.once('clientReady', async () => {
       { name: "enable", description: "Enable the clock-in system", type: 1 },
       { name: "disable", description: "Disable the clock-in system", type: 1 },
       { name: "payday", description: "👑 Initiate payday - DM all staff for payment info", type: 1 }
+    ] },
+    // Standalone balance command for all staff
+    { name: "balance", description: "💰 View your unpaid pay balance", default_member_permissions: null, options: [
+      { name: "user", description: "User to check (owner only)", type: 6, required: false }
     ] },
     // Server Stats Channels
     { name: "statschannels", description: "📊 Configure auto-updating stats channels", options: [
@@ -4733,6 +4737,67 @@ client.on("interactionCreate", async (interaction) => {
 
       return await safeReply(interaction, `✅ Generated schedule for ${schedule.size} staff members for next week starting ${nextWeek}.`, { flags: MessageFlags.Ephemeral });
     }
+  }
+
+  // Standalone Balance Command (accessible to all staff)
+  if (name === "balance") {
+    if (!interaction.guild) return await safeReply(interaction, 'This command can only be used in a server.', { flags: MessageFlags.Ephemeral });
+    
+    const targetUser = interaction.options.getUser('user');
+    
+    // If checking another user, must be owner
+    if (targetUser && targetUser.id !== interaction.user.id && !isOwnerId(interaction.user.id)) {
+      return await safeReply(interaction, '❌ Only the owner can view other users\' balances.', { flags: MessageFlags.Ephemeral });
+    }
+
+    const userToCheck = targetUser || interaction.user;
+    const { getTotalUnpaidBalance, getCurrentBiWeeklyPay, getCurrentMonthlyPay, getLastMonthlyPay, getEffectivePayMultiplier, getPayrollConfig } = await import('./services/payroll');
+    
+    const balance = getTotalUnpaidBalance(interaction.guild.id, userToCheck.id);
+    const biWeekly = getCurrentBiWeeklyPay(interaction.guild.id, userToCheck.id);
+    const thisMonth = getCurrentMonthlyPay(interaction.guild.id, userToCheck.id);
+    const lastMonth = getLastMonthlyPay(interaction.guild.id, userToCheck.id);
+    
+    const member = await interaction.guild.members.fetch(userToCheck.id);
+    const multiplier = getEffectivePayMultiplier(interaction.guild.id, userToCheck.id, member.roles.cache.map(r => r.id));
+
+    const embed = new EmbedBuilder()
+      .setTitle(`💰 Pay Summary - ${userToCheck.tag}`)
+      .setColor(0xFEE75C)
+      .setDescription(`Pay rate: **$${getPayrollConfig(interaction.guild.id).hourly_rate}/hr** • Multiplier: **${multiplier}x**`)
+      .addFields(
+        { 
+          name: '📅 Last 14 Days (Bi-Weekly)', 
+          value: biWeekly.shifts > 0 
+            ? `**$${(biWeekly.totalPay * multiplier).toFixed(2)}**\n${biWeekly.totalHours.toFixed(2)} hours • ${biWeekly.shifts} shifts`
+            : 'No shifts worked', 
+          inline: false 
+        },
+        { 
+          name: `📅 ${new Date().toLocaleString('default', { month: 'long', year: 'numeric' })} (This Month)`, 
+          value: thisMonth.shifts > 0
+            ? `**$${(thisMonth.totalPay * multiplier).toFixed(2)}**\n${thisMonth.totalHours.toFixed(2)} hours • ${thisMonth.shifts} shifts`
+            : 'No shifts worked', 
+          inline: true 
+        },
+        { 
+          name: `📆 ${new Date(new Date().setMonth(new Date().getMonth() - 1)).toLocaleString('default', { month: 'long', year: 'numeric' })} (Last Month)`, 
+          value: lastMonth.shifts > 0
+            ? `**$${(lastMonth.totalPay * multiplier).toFixed(2)}**\n${lastMonth.totalHours.toFixed(2)} hours • ${lastMonth.shifts} shifts`
+            : 'No shifts worked', 
+          inline: true 
+        }
+      );
+
+    if (balance.totalPay > 0) {
+      embed.addFields({
+        name: '💵 Unpaid Balance (All Time)',
+        value: `**$${(balance.totalPay * multiplier).toFixed(2)}**\n${balance.totalHours.toFixed(2)} hours • ${balance.periods} pay periods`,
+        inline: false
+      });
+    }
+
+    return await safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
   }
 
   // Server Stats Channels
