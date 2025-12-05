@@ -4042,22 +4042,22 @@ client.on("interactionCreate", async (interaction) => {
             new ButtonBuilder()
               .setCustomId(`payday_btc_${paydayId}`)
               .setLabel('Bitcoin (BTC)')
-              .setEmoji('₿')
+              .setEmoji('🪙')
               .setStyle(ButtonStyle.Secondary),
             new ButtonBuilder()
               .setCustomId(`payday_eth_${paydayId}`)
               .setLabel('Ethereum (ETH)')
-              .setEmoji('Ξ')
+              .setEmoji('💎')
               .setStyle(ButtonStyle.Secondary),
             new ButtonBuilder()
               .setCustomId(`payday_ltc_${paydayId}`)
               .setLabel('Litecoin (LTC)')
-              .setEmoji('Ł')
+              .setEmoji('🔷')
               .setStyle(ButtonStyle.Secondary),
             new ButtonBuilder()
               .setCustomId(`payday_usdt_${paydayId}`)
               .setLabel('USDT (Tether)')
-              .setEmoji('₮')
+              .setEmoji('💵')
               .setStyle(ButtonStyle.Secondary)
           );
 
