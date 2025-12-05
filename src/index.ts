@@ -3989,10 +3989,22 @@ client.on("interactionCreate", async (interaction) => {
       const paydayId = `payday_${Date.now()}`;
       let successCount = 0;
       let failCount = 0;
+      const failedUsers: Array<{userId: string, username: string, reason: string}> = [];
 
       for (const userData of unpaidUsers) {
         try {
-          const member = await interaction.guild.members.fetch(userData.userId);
+          const member = await interaction.guild.members.fetch(userData.userId).catch(() => null);
+          
+          if (!member) {
+            failedUsers.push({
+              userId: userData.userId,
+              username: 'Unknown User',
+              reason: 'User not found in server'
+            });
+            failCount++;
+            continue;
+          }
+
           const multiplier = getEffectivePayMultiplier(interaction.guild.id, userData.userId, member.roles.cache.map(r => r.id));
           const amountOwed = (userData.totalPay * multiplier).toFixed(2);
 
@@ -4051,8 +4063,17 @@ client.on("interactionCreate", async (interaction) => {
 
           await member.send({ embeds: [embed], components: [row, row2] });
           successCount++;
-        } catch (error) {
+        } catch (error: any) {
+          const member = await interaction.guild.members.fetch(userData.userId).catch(() => null);
+          const username = member ? member.user.tag : `User ID: ${userData.userId}`;
+          const reason = error?.code === 50007 ? 'DMs disabled or bot blocked' : error?.message || 'Unknown error';
+          
           console.error(`Failed to send payday DM to ${userData.userId}:`, error);
+          failedUsers.push({
+            userId: userData.userId,
+            username,
+            reason
+          });
           failCount++;
         }
       }
@@ -4062,15 +4083,29 @@ client.on("interactionCreate", async (interaction) => {
         const owner = await interaction.client.users.fetch(interaction.user.id);
         const summaryEmbed = new EmbedBuilder()
           .setTitle('💰 Payday Summary')
-          .setColor(0xFEE75C)
-          .setDescription(`Payday initiated successfully!\n\n**ID:** ${paydayId}`)
+          .setColor(failCount > 0 ? 0xFEE75C : 0x57F287)
+          .setDescription(`Payday initiated!\n\n**ID:** ${paydayId}`)
           .addFields(
             { name: '✅ DMs Sent', value: `${successCount}`, inline: true },
             { name: '❌ Failed', value: `${failCount}`, inline: true },
             { name: '📊 Total Staff', value: `${unpaidUsers.length}`, inline: true }
           )
-          .setFooter({ text: 'You will receive payment details as staff submit them' })
           .setTimestamp();
+
+        // Add failed users details if any
+        if (failedUsers.length > 0) {
+          const failedList = failedUsers.map(f => 
+            `• <@${f.userId}> (${f.username})\n  *Reason:* ${f.reason}`
+          ).join('\n\n');
+          
+          summaryEmbed.addFields({
+            name: '⚠️ Failed to Send DMs',
+            value: failedList.slice(0, 1000) // Limit to 1000 chars
+          });
+          summaryEmbed.setFooter({ text: 'Staff with failed DMs need to enable DMs from server members or contact you manually' });
+        } else {
+          summaryEmbed.setFooter({ text: 'You will receive payment details as staff submit them' });
+        }
 
         await owner.send({ embeds: [summaryEmbed] });
       } catch (error) {
