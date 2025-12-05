@@ -100,6 +100,31 @@ export function initPayrollSchema() {
       PRIMARY KEY (guild_id, user_id)
     );
     CREATE INDEX IF NOT EXISTS idx_payroll_cooldowns ON payroll_cooldowns(guild_id, user_id, cooldown_until);
+    
+    CREATE TABLE IF NOT EXISTS payment_methods (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      guild_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      payment_type TEXT NOT NULL CHECK(payment_type IN ('paypal', 'cashapp', 'venmo', 'btc', 'eth', 'ltc', 'usdt', 'other')),
+      credentials TEXT NOT NULL,
+      notes TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(guild_id, user_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_payment_methods ON payment_methods(guild_id, user_id);
+    
+    CREATE TABLE IF NOT EXISTS payday_submissions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      guild_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      payday_id TEXT NOT NULL,
+      payment_type TEXT NOT NULL,
+      credentials TEXT NOT NULL,
+      amount_owed REAL NOT NULL,
+      submitted_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_payday_submissions ON payday_submissions(guild_id, payday_id);
   `);
 }
 
@@ -407,13 +432,15 @@ export function createPayPeriod(
 }
 
 // Mark pay period as paid
-export function markPayPeriodPaid(payPeriodId: number): void {
+export function markPayPeriodPaid(payPeriodId: number): boolean {
   const db = getDB();
-  db.prepare(`
+  const result = db.prepare(`
     UPDATE pay_periods
     SET paid = 1, paid_at = ?
     WHERE id = ?
   `).run(new Date().toISOString(), payPeriodId);
+  
+  return result.changes > 0;
 }
 
 // Get unpaid pay periods
@@ -833,6 +860,254 @@ export function getTodayNetWorkingMinutes(guildId: string, userId: string, inclu
   }
   
   return totalMinutes;
+}
+
+// Save payment method for user
+export function savePaymentMethod(
+  guildId: string,
+  userId: string,
+  paymentType: string,
+  credentials: string,
+  notes?: string
+): void {
+  const db = getDB();
+  const now = new Date().toISOString();
+  
+  db.prepare(`
+    INSERT INTO payment_methods (guild_id, user_id, payment_type, credentials, notes, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(guild_id, user_id)
+    DO UPDATE SET 
+      payment_type = ?,
+      credentials = ?,
+      notes = ?,
+      updated_at = ?
+  `).run(guildId, userId, paymentType, credentials, notes || null, now, now, paymentType, credentials, notes || null, now);
+}
+
+// Get payment method for user
+export function getPaymentMethod(guildId: string, userId: string): {
+  paymentType: string;
+  credentials: string;
+  notes?: string;
+} | null {
+  const db = getDB();
+  const row = db.prepare(`
+    SELECT payment_type, credentials, notes
+    FROM payment_methods
+    WHERE guild_id = ? AND user_id = ?
+  `).get(guildId, userId) as any;
+  
+  if (!row) return null;
+  
+  return {
+    paymentType: row.payment_type,
+    credentials: row.credentials,
+    notes: row.notes
+  };
+}
+
+// Record payday submission
+export function recordPaydaySubmission(
+  guildId: string,
+  userId: string,
+  paydayId: string,
+  paymentType: string,
+  credentials: string,
+  amountOwed: number
+): number {
+  const db = getDB();
+  const result = db.prepare(`
+    INSERT INTO payday_submissions (guild_id, user_id, payday_id, payment_type, credentials, amount_owed, submitted_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(guildId, userId, paydayId, paymentType, credentials, amountOwed, new Date().toISOString());
+  
+  return result.lastInsertRowid as number;
+}
+
+// Get all payday submissions for a payday session
+export function getPaydaySubmissions(guildId: string, paydayId: string): Array<{
+  userId: string;
+  paymentType: string;
+  credentials: string;
+  amountOwed: number;
+  submittedAt: string;
+}> {
+  const db = getDB();
+  const rows = db.prepare(`
+    SELECT user_id, payment_type, credentials, amount_owed, submitted_at
+    FROM payday_submissions
+    WHERE guild_id = ? AND payday_id = ?
+    ORDER BY submitted_at ASC
+  `).all(guildId, paydayId) as any[];
+  
+  return rows.map(row => ({
+    userId: row.user_id,
+    paymentType: row.payment_type,
+    credentials: row.credentials,
+    amountOwed: row.amount_owed,
+    submittedAt: row.submitted_at
+  }));
+}
+
+// Check if user has submitted for payday
+export function hasSubmittedForPayday(guildId: string, userId: string, paydayId: string): boolean {
+  const db = getDB();
+  const row = db.prepare(`
+    SELECT id FROM payday_submissions
+    WHERE guild_id = ? AND user_id = ? AND payday_id = ?
+  `).get(guildId, userId, paydayId);
+  
+  return !!row;
+}
+
+// Get current bi-weekly pay (last 14 days of shifts)
+export function getCurrentBiWeeklyPay(guildId: string, userId: string): {
+  totalHours: number;
+  totalPay: number;
+  shifts: number;
+  startDate: string;
+  endDate: string;
+} {
+  const config = getPayrollConfig(guildId);
+  const db = getDB();
+  const now = new Date();
+  const startDate = new Date(now);
+  startDate.setDate(now.getDate() - 14);
+  
+  const shifts = db.prepare(`
+    SELECT id, duration_minutes
+    FROM shifts
+    WHERE guild_id = ? AND user_id = ? 
+      AND clock_in >= ? AND clock_in <= ?
+      AND clock_out IS NOT NULL
+  `).all(guildId, userId, startDate.toISOString(), now.toISOString()) as any[];
+  
+  let totalMinutes = 0;
+  
+  for (const shift of shifts) {
+    let shiftMinutes = shift.duration_minutes;
+    
+    // Subtract break time
+    const breaks = db.prepare(`
+      SELECT COALESCE(SUM(duration_minutes), 0) as total
+      FROM breaks
+      WHERE shift_id = ? AND break_end IS NOT NULL
+    `).get(shift.id) as any;
+    
+    shiftMinutes -= breaks.total;
+    totalMinutes += shiftMinutes;
+  }
+  
+  const totalHours = totalMinutes / 60;
+  const totalPay = totalHours * config.hourly_rate;
+  
+  return {
+    totalHours: Math.round(totalHours * 100) / 100,
+    totalPay: Math.round(totalPay * 100) / 100,
+    shifts: shifts.length,
+    startDate: startDate.toISOString(),
+    endDate: now.toISOString()
+  };
+}
+
+// Get current monthly pay (this calendar month)
+export function getCurrentMonthlyPay(guildId: string, userId: string): {
+  totalHours: number;
+  totalPay: number;
+  shifts: number;
+  startDate: string;
+  endDate: string;
+} {
+  const config = getPayrollConfig(guildId);
+  const db = getDB();
+  const now = new Date();
+  const startDate = new Date(now.getFullYear(), now.getMonth(), 1); // First day of month
+  
+  const shifts = db.prepare(`
+    SELECT id, duration_minutes
+    FROM shifts
+    WHERE guild_id = ? AND user_id = ? 
+      AND clock_in >= ? AND clock_in <= ?
+      AND clock_out IS NOT NULL
+  `).all(guildId, userId, startDate.toISOString(), now.toISOString()) as any[];
+  
+  let totalMinutes = 0;
+  
+  for (const shift of shifts) {
+    let shiftMinutes = shift.duration_minutes;
+    
+    // Subtract break time
+    const breaks = db.prepare(`
+      SELECT COALESCE(SUM(duration_minutes), 0) as total
+      FROM breaks
+      WHERE shift_id = ? AND break_end IS NOT NULL
+    `).get(shift.id) as any;
+    
+    shiftMinutes -= breaks.total;
+    totalMinutes += shiftMinutes;
+  }
+  
+  const totalHours = totalMinutes / 60;
+  const totalPay = totalHours * config.hourly_rate;
+  
+  return {
+    totalHours: Math.round(totalHours * 100) / 100,
+    totalPay: Math.round(totalPay * 100) / 100,
+    shifts: shifts.length,
+    startDate: startDate.toISOString(),
+    endDate: now.toISOString()
+  };
+}
+
+// Get last month's pay (for historical reference)
+export function getLastMonthlyPay(guildId: string, userId: string): {
+  totalHours: number;
+  totalPay: number;
+  shifts: number;
+  startDate: string;
+  endDate: string;
+} {
+  const config = getPayrollConfig(guildId);
+  const db = getDB();
+  const now = new Date();
+  const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0); // Last day of previous month
+  const lastMonthStart = new Date(lastMonthEnd.getFullYear(), lastMonthEnd.getMonth(), 1); // First day of previous month
+  
+  const shifts = db.prepare(`
+    SELECT id, duration_minutes
+    FROM shifts
+    WHERE guild_id = ? AND user_id = ? 
+      AND clock_in >= ? AND clock_in <= ?
+      AND clock_out IS NOT NULL
+  `).all(guildId, userId, lastMonthStart.toISOString(), lastMonthEnd.toISOString()) as any[];
+  
+  let totalMinutes = 0;
+  
+  for (const shift of shifts) {
+    let shiftMinutes = shift.duration_minutes;
+    
+    // Subtract break time
+    const breaks = db.prepare(`
+      SELECT COALESCE(SUM(duration_minutes), 0) as total
+      FROM breaks
+      WHERE shift_id = ? AND break_end IS NOT NULL
+    `).get(shift.id) as any;
+    
+    shiftMinutes -= breaks.total;
+    totalMinutes += shiftMinutes;
+  }
+  
+  const totalHours = totalMinutes / 60;
+  const totalPay = totalHours * config.hourly_rate;
+  
+  return {
+    totalHours: Math.round(totalHours * 100) / 100,
+    totalPay: Math.round(totalPay * 100) / 100,
+    shifts: shifts.length,
+    startDate: lastMonthStart.toISOString(),
+    endDate: lastMonthEnd.toISOString()
+  };
 }
 
 // Initialize on import

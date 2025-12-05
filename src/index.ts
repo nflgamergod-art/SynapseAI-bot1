@@ -1104,7 +1104,8 @@ client.once('clientReady', async () => {
         { name: "days", description: "Days to reset (default 30)", type: 4, required: false }
       ] },
       { name: "enable", description: "Enable the clock-in system", type: 1 },
-      { name: "disable", description: "Disable the clock-in system", type: 1 }
+      { name: "disable", description: "Disable the clock-in system", type: 1 },
+      { name: "payday", description: "👑 Initiate payday - DM all staff for payment info", type: 1 }
     ] },
     // Server Stats Channels
     { name: "statschannels", description: "📊 Configure auto-updating stats channels", options: [
@@ -1429,6 +1430,79 @@ client.on('interactionCreate', async (interaction) => {
         }
       } catch {}
     }
+    return;
+  }
+
+  // Payday payment submission modal
+  if (customId.startsWith('payday_submit_')) {
+    await interaction.deferReply({ ephemeral: true });
+
+    const parts = customId.split('_');
+    const paymentType = parts[2]; // paypal, cashapp, venmo, btc, eth, ltc, usdt
+    const paydayId = parts.slice(3).join('_');
+
+    const credentials = interaction.fields.getTextInputValue('credentials');
+    const notes = interaction.fields.getTextInputValue('notes') || undefined;
+
+    const { savePaymentMethod, recordPaydaySubmission, getTotalUnpaidBalance, getEffectivePayMultiplier, hasSubmittedForPayday } = await import('./services/payroll');
+
+    // Double-check not already submitted
+    if (hasSubmittedForPayday(interaction.guildId!, interaction.user.id, paydayId)) {
+      return interaction.editReply({ content: '✅ You have already submitted your payment details for this payday!' });
+    }
+
+    // Calculate amount owed
+    const unpaidBalance = getTotalUnpaidBalance(interaction.guildId!, interaction.user.id);
+    const member = await interaction.guild!.members.fetch(interaction.user.id);
+    const multiplier = getEffectivePayMultiplier(interaction.guildId!, interaction.user.id, member.roles.cache.map(r => r.id));
+    const amountOwed = unpaidBalance.totalPay * multiplier;
+
+    // Save payment method for future use
+    savePaymentMethod(interaction.guildId!, interaction.user.id, paymentType, credentials, notes);
+
+    // Record submission
+    recordPaydaySubmission(interaction.guildId!, interaction.user.id, paydayId, paymentType, credentials, amountOwed);
+
+    // Confirm to user
+    await interaction.editReply({ 
+      content: `✅ **Payment details submitted successfully!**\n\n**Method:** ${paymentType.toUpperCase()}\n**Amount:** $${amountOwed.toFixed(2)}\n\nYour payment information has been sent to the owner. You will receive payment soon! 💰`
+    });
+
+    // Send to owner
+    try {
+      const guild = interaction.guild!;
+      const ownerIds = ['1272923881052704820']; // Your owner ID
+      
+      for (const ownerId of ownerIds) {
+        try {
+          const owner = await interaction.client.users.fetch(ownerId);
+          
+          const paymentEmbed = new EmbedBuilder()
+            .setTitle('💰 Payday Payment Submission')
+            .setColor(0x57F287)
+            .setDescription(`**Staff Member:** ${interaction.user.tag} (<@${interaction.user.id}>)`)
+            .addFields(
+              { name: '💵 Amount Owed', value: `$${amountOwed.toFixed(2)}`, inline: true },
+              { name: '💳 Payment Method', value: paymentType.toUpperCase(), inline: true },
+              { name: '⏱️ Hours Worked', value: `${unpaidBalance.totalHours.toFixed(2)}h`, inline: true },
+              { name: '📝 Payment Details', value: `\`${credentials}\``, inline: false }
+            )
+            .setFooter({ text: `Payday ID: ${paydayId} • User ID: ${interaction.user.id}` })
+            .setTimestamp();
+
+          if (notes) {
+            paymentEmbed.addFields({ name: '📋 Additional Notes', value: notes, inline: false });
+          }
+
+          await owner.send({ embeds: [paymentEmbed] });
+        } catch (error) {
+          console.error(`Failed to send payday notification to owner ${ownerId}:`, error);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to notify owners of payday submission:', error);
+    }
+
     return;
   }
   
@@ -2143,6 +2217,93 @@ client.on("interactionCreate", async (interaction) => {
       if (btn === 'bulk-cancel') {
         delete (client as any).bulkActionData?.[interaction.user.id];
         return interaction.update({ content: '❌ Cancelled.', components: [], embeds: [] });
+      }
+
+      // Payday payment method selection
+      if (btn.startsWith('payday_')) {
+        const parts = btn.split('_');
+        const paymentType = parts[1]; // paypal, cashapp, venmo, btc, eth, ltc, usdt
+        const paydayId = parts.slice(2).join('_'); // Rejoin in case ID contains underscores
+
+        const { hasSubmittedForPayday, getPaymentMethod } = await import('./services/payroll');
+
+        // Check if already submitted
+        if (hasSubmittedForPayday(interaction.guildId!, interaction.user.id, paydayId)) {
+          return interaction.reply({ 
+            content: '✅ You have already submitted your payment details for this payday!', 
+            ephemeral: true 
+          });
+        }
+
+        // Get previously saved payment method if exists
+        const savedMethod = getPaymentMethod(interaction.guildId!, interaction.user.id);
+        const prefilled = savedMethod && savedMethod.paymentType === paymentType ? savedMethod.credentials : '';
+
+        // Create modal for payment details
+        const modal = new ModalBuilder()
+          .setCustomId(`payday_submit_${paymentType}_${paydayId}`)
+          .setTitle(`${paymentType.toUpperCase()} Payment Details`);
+
+        let labelText = 'Your Payment Details';
+        let placeholderText = '';
+
+        switch (paymentType) {
+          case 'paypal':
+            labelText = 'PayPal Email Address';
+            placeholderText = 'example@email.com';
+            break;
+          case 'cashapp':
+            labelText = 'Cash App Username (with $)';
+            placeholderText = '$YourUsername';
+            break;
+          case 'venmo':
+            labelText = 'Venmo Username (with @)';
+            placeholderText = '@YourUsername';
+            break;
+          case 'btc':
+            labelText = 'Bitcoin (BTC) Wallet Address';
+            placeholderText = 'bc1q... or 1... or 3...';
+            break;
+          case 'eth':
+            labelText = 'Ethereum (ETH) Wallet Address';
+            placeholderText = '0x...';
+            break;
+          case 'ltc':
+            labelText = 'Litecoin (LTC) Wallet Address';
+            placeholderText = 'L... or M...';
+            break;
+          case 'usdt':
+            labelText = 'USDT Wallet Address (specify network)';
+            placeholderText = 'Address + network (e.g., TRC20, ERC20)';
+            break;
+        }
+
+        const credentialsInput = new TextInputBuilder()
+          .setCustomId('credentials')
+          .setLabel(labelText)
+          .setPlaceholder(placeholderText)
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true)
+          .setMaxLength(200);
+
+        if (prefilled) {
+          credentialsInput.setValue(prefilled);
+        }
+
+        const notesInput = new TextInputBuilder()
+          .setCustomId('notes')
+          .setLabel('Additional Notes (Optional)')
+          .setPlaceholder('Any special instructions or details')
+          .setStyle(TextInputStyle.Paragraph)
+          .setRequired(false)
+          .setMaxLength(500);
+
+        const row1 = new ActionRowBuilder<TextInputBuilder>().addComponents(credentialsInput);
+        const row2 = new ActionRowBuilder<TextInputBuilder>().addComponents(notesInput);
+
+        modal.addComponents(row1, row2);
+
+        return interaction.showModal(modal);
       }
 
       return; // handled button
@@ -3564,7 +3725,12 @@ client.on("interactionCreate", async (interaction) => {
 
     if (subCmd === "markpaid") {
       const periodId = interaction.options.getInteger('period_id', true);
-      markPayPeriodPaid(periodId);
+      const success = markPayPeriodPaid(periodId);
+      
+      if (!success) {
+        return await safeReply(interaction, `❌ Pay period #${periodId} not found or already marked as paid!`, { flags: MessageFlags.Ephemeral });
+      }
+      
       return await safeReply(interaction, `✅ Pay period #${periodId} marked as paid!`, { flags: MessageFlags.Ephemeral });
     }
 
@@ -3760,42 +3926,156 @@ client.on("interactionCreate", async (interaction) => {
       }
 
       const userToCheck = targetUser || interaction.user;
-      const { getTotalUnpaidBalance, getUnpaidPayPeriods, getEffectivePayMultiplier } = await import('./services/payroll');
+      const { getTotalUnpaidBalance, getCurrentBiWeeklyPay, getCurrentMonthlyPay, getLastMonthlyPay, getEffectivePayMultiplier } = await import('./services/payroll');
       
       const balance = getTotalUnpaidBalance(interaction.guild.id, userToCheck.id);
+      const biWeekly = getCurrentBiWeeklyPay(interaction.guild.id, userToCheck.id);
+      const thisMonth = getCurrentMonthlyPay(interaction.guild.id, userToCheck.id);
+      const lastMonth = getLastMonthlyPay(interaction.guild.id, userToCheck.id);
       
-      if (balance.totalPay === 0) {
-        return await safeReply(interaction, `${userToCheck.id === interaction.user.id ? 'You have' : `${userToCheck.tag} has`} no unpaid balance.`, { flags: MessageFlags.Ephemeral });
-      }
-
-      const periods = getUnpaidPayPeriods(interaction.guild.id, userToCheck.id).slice(0, 5);
       const member = await interaction.guild.members.fetch(userToCheck.id);
       const multiplier = getEffectivePayMultiplier(interaction.guild.id, userToCheck.id, member.roles.cache.map(r => r.id));
 
       const embed = new EmbedBuilder()
-        .setTitle(`💰 Unpaid Balance - ${userToCheck.tag}`)
+        .setTitle(`💰 Pay Summary - ${userToCheck.tag}`)
         .setColor(0xFEE75C)
+        .setDescription(`Pay rate: **$${(await import('./services/payroll')).getPayrollConfig(interaction.guild.id).hourly_rate}/hr** • Multiplier: **${multiplier}x**`)
         .addFields(
-          { name: '💵 Total Unpaid', value: `$${balance.totalPay.toFixed(2)}`, inline: true },
-          { name: '⏱️ Total Hours', value: `${balance.totalHours.toFixed(2)}h`, inline: true },
-          { name: '📋 Pay Periods', value: `${balance.periods}`, inline: true },
-          { name: '📊 Pay Multiplier', value: `${multiplier}x`, inline: true }
+          { 
+            name: '📅 Last 14 Days (Bi-Weekly)', 
+            value: biWeekly.shifts > 0 
+              ? `**$${(biWeekly.totalPay * multiplier).toFixed(2)}**\n${biWeekly.totalHours.toFixed(2)} hours • ${biWeekly.shifts} shifts`
+              : 'No shifts worked', 
+            inline: false 
+          },
+          { 
+            name: `� ${new Date().toLocaleString('default', { month: 'long', year: 'numeric' })} (This Month)`, 
+            value: thisMonth.shifts > 0
+              ? `**$${(thisMonth.totalPay * multiplier).toFixed(2)}**\n${thisMonth.totalHours.toFixed(2)} hours • ${thisMonth.shifts} shifts`
+              : 'No shifts worked', 
+            inline: true 
+          },
+          { 
+            name: `📆 ${new Date(new Date().setMonth(new Date().getMonth() - 1)).toLocaleString('default', { month: 'long', year: 'numeric' })} (Last Month)`, 
+            value: lastMonth.shifts > 0
+              ? `**$${(lastMonth.totalPay * multiplier).toFixed(2)}**\n${lastMonth.totalHours.toFixed(2)} hours • ${lastMonth.shifts} shifts`
+              : 'No shifts worked', 
+            inline: true 
+          }
         );
 
-      if (periods.length > 0) {
-        const breakdown = periods.map((period, idx) => {
-          const startDate = new Date(period.start_date).toLocaleDateString();
-          const endDate = new Date(period.end_date).toLocaleDateString();
-          return `${idx + 1}. ${startDate} - ${endDate}: **$${period.total_pay.toFixed(2)}** (${period.total_hours.toFixed(2)}h)`;
-        }).join('\n');
-
+      if (balance.totalPay > 0) {
         embed.addFields({
-          name: '📊 Recent Periods',
-          value: breakdown + (balance.periods > 5 ? `\n_...and ${balance.periods - 5} more_` : '')
+          name: '� Unpaid Balance (All Time)',
+          value: `**$${(balance.totalPay * multiplier).toFixed(2)}**\n${balance.totalHours.toFixed(2)} hours • ${balance.periods} pay periods`,
+          inline: false
         });
       }
 
       return await safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
+    }
+
+    if (subCmd === "payday") {
+      const { getAllUnpaidBalances, getEffectivePayMultiplier } = await import('./services/payroll');
+      
+      const unpaidUsers = getAllUnpaidBalances(interaction.guild.id);
+      
+      if (unpaidUsers.length === 0) {
+        return await safeReply(interaction, '✅ No staff have unpaid balances!', { flags: MessageFlags.Ephemeral });
+      }
+
+      await safeReply(interaction, `💰 **Payday initiated!** Sending DMs to ${unpaidUsers.length} staff member(s) with unpaid balances...`, { flags: MessageFlags.Ephemeral });
+
+      const paydayId = `payday_${Date.now()}`;
+      let successCount = 0;
+      let failCount = 0;
+
+      for (const userData of unpaidUsers) {
+        try {
+          const member = await interaction.guild.members.fetch(userData.userId);
+          const multiplier = getEffectivePayMultiplier(interaction.guild.id, userData.userId, member.roles.cache.map(r => r.id));
+          const amountOwed = (userData.totalPay * multiplier).toFixed(2);
+
+          const embed = new EmbedBuilder()
+            .setTitle('💰 Payday - Payment Information Required')
+            .setColor(0x57F287)
+            .setDescription(`Hello ${member.user.username}! It's payday! 🎉\n\nYou have **$${amountOwed}** in unpaid earnings.\n\nPlease select your preferred payment method and provide your payment details below.`)
+            .addFields(
+              { name: '💵 Amount Owed', value: `$${amountOwed}`, inline: true },
+              { name: '⏱️ Total Hours', value: `${userData.totalHours.toFixed(2)}h`, inline: true },
+              { name: '📋 Pay Periods', value: `${userData.periods}`, inline: true }
+            )
+            .setFooter({ text: 'Click a button below to submit your payment details' })
+            .setTimestamp();
+
+          const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder()
+              .setCustomId(`payday_paypal_${paydayId}`)
+              .setLabel('PayPal')
+              .setEmoji('💳')
+              .setStyle(ButtonStyle.Primary),
+            new ButtonBuilder()
+              .setCustomId(`payday_cashapp_${paydayId}`)
+              .setLabel('Cash App')
+              .setEmoji('💵')
+              .setStyle(ButtonStyle.Success),
+            new ButtonBuilder()
+              .setCustomId(`payday_venmo_${paydayId}`)
+              .setLabel('Venmo')
+              .setEmoji('💰')
+              .setStyle(ButtonStyle.Success)
+          );
+
+          const row2 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder()
+              .setCustomId(`payday_btc_${paydayId}`)
+              .setLabel('Bitcoin (BTC)')
+              .setEmoji('₿')
+              .setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder()
+              .setCustomId(`payday_eth_${paydayId}`)
+              .setLabel('Ethereum (ETH)')
+              .setEmoji('Ξ')
+              .setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder()
+              .setCustomId(`payday_ltc_${paydayId}`)
+              .setLabel('Litecoin (LTC)')
+              .setEmoji('Ł')
+              .setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder()
+              .setCustomId(`payday_usdt_${paydayId}`)
+              .setLabel('USDT (Tether)')
+              .setEmoji('₮')
+              .setStyle(ButtonStyle.Secondary)
+          );
+
+          await member.send({ embeds: [embed], components: [row, row2] });
+          successCount++;
+        } catch (error) {
+          console.error(`Failed to send payday DM to ${userData.userId}:`, error);
+          failCount++;
+        }
+      }
+
+      // Send summary to owner
+      try {
+        const owner = await interaction.client.users.fetch(interaction.user.id);
+        const summaryEmbed = new EmbedBuilder()
+          .setTitle('💰 Payday Summary')
+          .setColor(0xFEE75C)
+          .setDescription(`Payday initiated successfully!\n\n**ID:** ${paydayId}`)
+          .addFields(
+            { name: '✅ DMs Sent', value: `${successCount}`, inline: true },
+            { name: '❌ Failed', value: `${failCount}`, inline: true },
+            { name: '📊 Total Staff', value: `${unpaidUsers.length}`, inline: true }
+          )
+          .setFooter({ text: 'You will receive payment details as staff submit them' })
+          .setTimestamp();
+
+        await owner.send({ embeds: [summaryEmbed] });
+      } catch (error) {
+        console.error('Failed to send payday summary to owner:', error);
+      }
     }
 
     if (subCmd === "enable") {
