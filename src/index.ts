@@ -1055,7 +1055,7 @@ client.once('clientReady', async () => {
       ] }
     ] },
     // Payroll System
-    { name: "payroll", description: "💰 Payroll system management", options: [
+    { name: "payroll", description: "💰 Payroll system management", default_member_permissions: null, options: [
       { name: "config", description: "Configure payroll settings", type: 1, options: [
         { name: "hourly_rate", description: "Hourly pay rate", type: 10, required: false },
         { name: "max_hours_day", description: "Max hours per day (default 5)", type: 4, required: false },
