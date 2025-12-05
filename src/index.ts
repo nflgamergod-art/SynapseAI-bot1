@@ -3646,12 +3646,19 @@ client.on("interactionCreate", async (interaction) => {
     if (!interaction.guild) return await safeReply(interaction, 'This command can only be used in a server.', { flags: MessageFlags.Ephemeral });
     
     const subCmd = interaction.options.getSubcommand();
+    console.log(`[PAYROLL DEBUG] User ${interaction.user.id} attempting subcommand: ${subCmd}`);
+    console.log(`[PAYROLL DEBUG] isOwner check: ${isOwnerId(interaction.user.id)}`);
+    console.log(`[PAYROLL DEBUG] Should allow: ${subCmd === "viewbalance" || isOwnerId(interaction.user.id)}`);
+    
     const { getPayrollConfig, updatePayrollConfig, calculatePay, createPayPeriod, getUnpaidPayPeriods, markPayPeriodPaid, getUserPayPeriods } = await import('./services/payroll');
 
     // viewbalance is accessible to all staff, other commands require owner
     if (subCmd !== "viewbalance" && !isOwnerId(interaction.user.id)) {
+      console.log(`[PAYROLL DEBUG] BLOCKING user ${interaction.user.id} from ${subCmd}`);
       return await safeReply(interaction, '❌ Only the owner can manage payroll settings.', { flags: MessageFlags.Ephemeral });
     }
+    
+    console.log(`[PAYROLL DEBUG] ALLOWING user ${interaction.user.id} to use ${subCmd}`);
 
     if (subCmd === "config") {
       const hourlyRate = interaction.options.getNumber('hourly_rate');
