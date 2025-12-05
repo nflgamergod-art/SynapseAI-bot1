@@ -3644,12 +3644,14 @@ client.on("interactionCreate", async (interaction) => {
   // Payroll System
   if (name === "payroll") {
     if (!interaction.guild) return await safeReply(interaction, 'This command can only be used in a server.', { flags: MessageFlags.Ephemeral });
-    if (!isOwnerId(interaction.user.id)) {
-      return await safeReply(interaction, '❌ Only the owner can manage payroll settings.', { flags: MessageFlags.Ephemeral });
-    }
-
+    
     const subCmd = interaction.options.getSubcommand();
     const { getPayrollConfig, updatePayrollConfig, calculatePay, createPayPeriod, getUnpaidPayPeriods, markPayPeriodPaid, getUserPayPeriods } = await import('./services/payroll');
+
+    // viewbalance is accessible to all staff, other commands require owner
+    if (subCmd !== "viewbalance" && !isOwnerId(interaction.user.id)) {
+      return await safeReply(interaction, '❌ Only the owner can manage payroll settings.', { flags: MessageFlags.Ephemeral });
+    }
 
     if (subCmd === "config") {
       const hourlyRate = interaction.options.getNumber('hourly_rate');
