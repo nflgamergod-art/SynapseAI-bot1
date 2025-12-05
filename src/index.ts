@@ -3566,6 +3566,13 @@ client.on("interactionCreate", async (interaction) => {
 
       const writeupCount = getWriteupCount(interaction.guild.id, user.id);
 
+      // Check if demotion is needed (3 write-ups)
+      if (writeupCount >= 3) {
+        const { handleAutoDemotion } = await import('./services/attendanceTracking');
+        await handleAutoDemotion(interaction.guild.id, user.id, 'Three write-ups accumulated', interaction.client);
+        return await safeReply(interaction, `✅ Write-up issued to <@${user.id}>.\n**Reason:** ${reason}\n**Severity:** ${severity}\n**Total write-ups:** ${writeupCount}/3\n\n📉 **User has been automatically demoted due to reaching 3 write-ups.**`, { flags: MessageFlags.Ephemeral });
+      }
+
       // Send DM to user
       try {
         const dmEmbed = new EmbedBuilder()
@@ -3580,9 +3587,7 @@ client.on("interactionCreate", async (interaction) => {
           .setTimestamp();
 
         if (notes) dmEmbed.addFields({ name: 'Notes', value: notes });
-        if (writeupCount >= 3) {
-          dmEmbed.setDescription('⚠️ **You have reached 3 write-ups and will be demoted.**');
-        } else if (writeupCount >= 2) {
+        if (writeupCount >= 2) {
           dmEmbed.setDescription('⚠️ **Warning:** One more write-up will result in demotion!');
         }
 

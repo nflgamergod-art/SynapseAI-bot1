@@ -161,7 +161,7 @@ export async function handleMissedScheduledShift(
 }
 
 // Handle automatic demotion
-async function handleAutoDemotion(
+export async function handleAutoDemotion(
   guildId: string,
   userId: string,
   reason: string,
