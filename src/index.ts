@@ -1435,75 +1435,84 @@ client.on('interactionCreate', async (interaction) => {
 
   // Payday payment submission modal
   if (customId.startsWith('payday_submit_')) {
-    await interaction.deferReply({ ephemeral: true });
-
-    const parts = customId.split('_');
-    const paymentType = parts[2]; // paypal, cashapp, venmo, btc, eth, ltc, usdt
-    const paydayId = parts.slice(3).join('_');
-
-    const credentials = interaction.fields.getTextInputValue('credentials');
-    const notes = interaction.fields.getTextInputValue('notes') || undefined;
-
-    const { savePaymentMethod, recordPaydaySubmission, getTotalUnpaidBalance, getEffectivePayMultiplier, hasSubmittedForPayday } = await import('./services/payroll');
-
-    // Double-check not already submitted
-    if (hasSubmittedForPayday(interaction.guildId!, interaction.user.id, paydayId)) {
-      return interaction.editReply({ content: '✅ You have already submitted your payment details for this payday!' });
-    }
-
-    // Calculate amount owed
-    const unpaidBalance = getTotalUnpaidBalance(interaction.guildId!, interaction.user.id);
-    const member = await interaction.guild!.members.fetch(interaction.user.id);
-    const multiplier = getEffectivePayMultiplier(interaction.guildId!, interaction.user.id, member.roles.cache.map(r => r.id));
-    const amountOwed = unpaidBalance.totalPay * multiplier;
-
-    // Save payment method for future use
-    savePaymentMethod(interaction.guildId!, interaction.user.id, paymentType, credentials, notes);
-
-    // Record submission
-    recordPaydaySubmission(interaction.guildId!, interaction.user.id, paydayId, paymentType, credentials, amountOwed);
-
-    // Confirm to user
-    await interaction.editReply({ 
-      content: `✅ **Payment details submitted successfully!**\n\n**Method:** ${paymentType.toUpperCase()}\n**Amount:** $${amountOwed.toFixed(2)}\n\nYour payment information has been sent to the owner. You will receive payment soon! 💰`
-    });
-
-    // Send to owner
     try {
-      const guild = interaction.guild!;
-      const ownerIds = ['1272923881052704820']; // Your owner ID
-      
-      for (const ownerId of ownerIds) {
-        try {
-          const owner = await interaction.client.users.fetch(ownerId);
-          
-          const paymentEmbed = new EmbedBuilder()
-            .setTitle('💰 Payday Payment Submission')
-            .setColor(0x57F287)
-            .setDescription(`**Staff Member:** ${interaction.user.tag} (<@${interaction.user.id}>)`)
-            .addFields(
-              { name: '💵 Amount Owed', value: `$${amountOwed.toFixed(2)}`, inline: true },
-              { name: '💳 Payment Method', value: paymentType.toUpperCase(), inline: true },
-              { name: '⏱️ Hours Worked', value: `${unpaidBalance.totalHours.toFixed(2)}h`, inline: true },
-              { name: '📝 Payment Details', value: `\`${credentials}\``, inline: false }
-            )
-            .setFooter({ text: `Payday ID: ${paydayId} • User ID: ${interaction.user.id}` })
-            .setTimestamp();
+      await interaction.deferReply({ ephemeral: true });
 
-          if (notes) {
-            paymentEmbed.addFields({ name: '📋 Additional Notes', value: notes, inline: false });
-          }
-
-          await owner.send({ embeds: [paymentEmbed] });
-        } catch (error) {
-          console.error(`Failed to send payday notification to owner ${ownerId}:`, error);
-        }
+      // Check if we have guild context
+      if (!interaction.guild || !interaction.guildId) {
+        return interaction.editReply({ content: '❌ This command must be used in a server.' });
       }
-    } catch (error) {
-      console.error('Failed to notify owners of payday submission:', error);
-    }
 
-    return;
+      const parts = customId.split('_');
+      const paymentType = parts[2]; // paypal, cashapp, venmo, btc, eth, ltc, usdt
+      const paydayId = parts.slice(3).join('_');
+
+      const credentials = interaction.fields.getTextInputValue('credentials');
+      const notes = interaction.fields.getTextInputValue('notes') || undefined;
+
+      const { savePaymentMethod, recordPaydaySubmission, getTotalUnpaidBalance, getEffectivePayMultiplier, hasSubmittedForPayday } = await import('./services/payroll');
+
+      // Double-check not already submitted
+      if (hasSubmittedForPayday(interaction.guildId, interaction.user.id, paydayId)) {
+        return interaction.editReply({ content: '✅ You have already submitted your payment details for this payday!' });
+      }
+
+      // Calculate amount owed
+      const unpaidBalance = getTotalUnpaidBalance(interaction.guildId, interaction.user.id);
+      const member = await interaction.guild.members.fetch(interaction.user.id);
+      const multiplier = getEffectivePayMultiplier(interaction.guildId, interaction.user.id, member.roles.cache.map(r => r.id));
+      const amountOwed = unpaidBalance.totalPay * multiplier;
+
+      // Save payment method for future use
+      savePaymentMethod(interaction.guildId, interaction.user.id, paymentType, credentials, notes);
+
+      // Record submission
+      recordPaydaySubmission(interaction.guildId, interaction.user.id, paydayId, paymentType, credentials, amountOwed);
+
+      // Confirm to user
+      await interaction.editReply({ 
+        content: `✅ **Payment details submitted successfully!**\n\n**Method:** ${paymentType.toUpperCase()}\n**Amount:** $${amountOwed.toFixed(2)}\n\nYour payment information has been sent to the owner. You will receive payment soon! 💰`
+      });
+
+      // Send to owner (wrapped in try-catch so it doesn't block user confirmation)
+      try {
+        const ownerIds = ['1272923881052704820']; // Your owner ID
+        
+        for (const ownerId of ownerIds) {
+          try {
+            const owner = await interaction.client.users.fetch(ownerId);
+            
+            const paymentEmbed = new EmbedBuilder()
+              .setTitle('💰 Payday Payment Submission')
+              .setColor(0x57F287)
+              .setDescription(`**Staff Member:** ${interaction.user.tag} (<@${interaction.user.id}>)`)
+              .addFields(
+                { name: '💵 Amount Owed', value: `$${amountOwed.toFixed(2)}`, inline: true },
+                { name: '💳 Payment Method', value: paymentType.toUpperCase(), inline: true },
+                { name: '⏱️ Hours Worked', value: `${unpaidBalance.totalHours.toFixed(2)}h`, inline: true },
+                { name: '📝 Payment Details', value: `\`${credentials}\``, inline: false }
+              )
+              .setFooter({ text: `Payday ID: ${paydayId} • User ID: ${interaction.user.id}` })
+              .setTimestamp();
+
+            if (notes) {
+              paymentEmbed.addFields({ name: '📋 Additional Notes', value: notes, inline: false });
+            }
+
+            await owner.send({ embeds: [paymentEmbed] });
+          } catch (error) {
+            console.error(`Failed to send payday notification to owner ${ownerId}:`, error);
+          }
+        }
+      } catch (error) {
+        console.error('Failed to notify owners of payday submission:', error);
+      }
+
+      return;
+    } catch (error) {
+      console.error('Error processing payday submission modal:', error);
+      return interaction.editReply({ content: '❌ An error occurred while processing your payment details. Please try again or contact an administrator.' }).catch(() => {});
+    }
   }
   
   if (customId.startsWith('ticket-feedback-submit:')) {
