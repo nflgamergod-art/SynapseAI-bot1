@@ -2260,7 +2260,17 @@ client.on("interactionCreate", async (interaction) => {
           const userTickets = getUserTickets(interaction.guild.id, interaction.user.id);
           const openTicket = userTickets.find((t:any) => t.status !== 'closed');
           if (openTicket) {
-            return interaction.reply({ content: `❌ You already have an open ticket: <#${openTicket.channel_id}>`, ephemeral: true });
+            // Try to fetch the channel to see if it still exists
+            const channel = await interaction.guild.channels.fetch(openTicket.channel_id).catch(() => null);
+            if (!channel) {
+              // Channel doesn't exist anymore, force close the ticket
+              const { closeTicket } = await import('./services/tickets');
+              closeTicket(openTicket.channel_id);
+              console.log(`[Ticket] Force closed orphaned ticket #${openTicket.id} (channel deleted)`);
+              // Continue with ticket creation
+            } else {
+              return interaction.reply({ content: `❌ You already have an open ticket: <#${openTicket.channel_id}> (Status: ${openTicket.status})`, ephemeral: true });
+            }
           }
           
           // Check if categories exist - show category selection
