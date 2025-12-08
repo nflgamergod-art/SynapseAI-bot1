@@ -5038,8 +5038,8 @@ client.on("interactionCreate", async (interaction) => {
         .setDescription(`**${weekStartDate.toLocaleDateString()} - ${weekEndDate.toLocaleDateString()}**`)
         .setTimestamp();
 
-      // Organize by day
-      const daysOfWeek = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+      // Organize by day (Sunday through Saturday)
+      const daysOfWeek = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
       const daySchedules = new Map<string, string[]>();
 
       daysOfWeek.forEach(day => daySchedules.set(day, []));
