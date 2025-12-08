@@ -369,6 +369,10 @@ client.once('clientReady', async () => {
   initSchedulingSchema();
   initSchedulingCron(client);
   
+  // Initialize tickets schema and run migrations
+  const { initTicketsSchema } = await import('./services/tickets');
+  initTicketsSchema();
+  
   // Start attendance tracking cron jobs (daily missed shift checks)
   const { initAttendanceCron } = await import('./services/attendanceCron');
   initAttendanceCron(client);
