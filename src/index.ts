@@ -1260,6 +1260,68 @@ client.once('clientReady', async () => {
       { name: "remove", description: "Remove a temp channel config", type: 1, options: [
         { name: "trigger", description: "Trigger channel to remove", type: 7, required: true }
       ] }
+    ] },
+    
+    // ==================== PHASE 1: ADVANCED TICKET FEATURES ====================
+    // SLA Management
+    { name: "ticketsla", description: "⏱️ Configure and monitor ticket SLA times", options: [
+      { name: "set", description: "Set SLA response and resolution times", type: 1, options: [
+        { name: "response_time", description: "Minutes for first response (default: 30)", type: 4, required: true, min_value: 1 },
+        { name: "resolution_time", description: "Minutes for resolution (default: 180)", type: 4, required: true, min_value: 1 },
+        { name: "priority_response", description: "Minutes for priority response (default: 5)", type: 4, required: true, min_value: 1 }
+      ] },
+      { name: "view", description: "View current SLA times", type: 1 },
+      { name: "check", description: "Check tickets breaching SLA", type: 1 }
+    ] },
+    
+    // Tag System
+    { name: "tickettag", description: "🏷️ Manage ticket tags for organization", options: [
+      { name: "create", description: "Create a new ticket tag", type: 1, options: [
+        { name: "name", description: "Tag name (e.g., bug, feature, urgent)", type: 3, required: true },
+        { name: "color", description: "Tag color", type: 3, required: true, choices: [
+          { name: "🔴 Red", value: "red" },
+          { name: "🔵 Blue", value: "blue" },
+          { name: "🟢 Green", value: "green" },
+          { name: "🟡 Yellow", value: "yellow" },
+          { name: "🟣 Purple", value: "purple" },
+          { name: "🟠 Orange", value: "orange" }
+        ] },
+        { name: "description", description: "Tag description", type: 3, required: false }
+      ] },
+      { name: "delete", description: "Delete a ticket tag", type: 1, options: [
+        { name: "name", description: "Tag name to delete", type: 3, required: true }
+      ] },
+      { name: "list", description: "List all available ticket tags", type: 1 },
+      { name: "add", description: "Add a tag to a ticket", type: 1, options: [
+        { name: "ticket_id", description: "Ticket ID", type: 4, required: true },
+        { name: "tag", description: "Tag name", type: 3, required: true }
+      ] },
+      { name: "remove", description: "Remove a tag from a ticket", type: 1, options: [
+        { name: "ticket_id", description: "Ticket ID", type: 4, required: true },
+        { name: "tag", description: "Tag name", type: 3, required: true }
+      ] },
+      { name: "search", description: "Find tickets with a specific tag", type: 1, options: [
+        { name: "tag", description: "Tag name", type: 3, required: true }
+      ] }
+    ] },
+    
+    // Private Notes
+    { name: "ticketnote", description: "📝 Manage private staff notes on tickets", options: [
+      { name: "add", description: "Add a private note to a ticket", type: 1, options: [
+        { name: "ticket_id", description: "Ticket ID", type: 4, required: true },
+        { name: "note", description: "Private note (only visible to staff)", type: 3, required: true }
+      ] },
+      { name: "view", description: "View all notes for a ticket", type: 1, options: [
+        { name: "ticket_id", description: "Ticket ID", type: 4, required: true }
+      ] },
+      { name: "delete", description: "Delete a note", type: 1, options: [
+        { name: "note_id", description: "Note ID", type: 4, required: true }
+      ] }
+    ] },
+    
+    // Analytics Dashboard
+    { name: "ticketanalytics", description: "📊 View comprehensive ticket analytics", options: [
+      { name: "days", description: "Number of days to analyze (default: 30)", type: 4, required: false, min_value: 1, max_value: 365 }
     ] }
   ];
 
@@ -10197,9 +10259,38 @@ setInterval(async () => {
 }, 600000); // Update every 10 minutes
 
 client.on('interactionCreate', async (interaction) => {
-  if (interaction.isChatInputCommand() && interaction.commandName === 'whitelist') {
-    const { handleWhitelist } = await import('./commands/enhancedCommands');
-    await handleWhitelist(interaction);
+  if (interaction.isChatInputCommand()) {
+    // Enhanced commands
+    if (interaction.commandName === 'whitelist') {
+      const { handleWhitelist } = await import('./commands/enhancedCommands');
+      await handleWhitelist(interaction);
+      return;
+    }
+    
+    // Phase 1 Advanced Ticket Features
+    if (interaction.commandName === 'ticketsla') {
+      const { handleTicketSLA } = await import('./commands/advancedTickets');
+      await handleTicketSLA(interaction);
+      return;
+    }
+    
+    if (interaction.commandName === 'tickettag') {
+      const { handleTicketTag } = await import('./commands/advancedTickets');
+      await handleTicketTag(interaction);
+      return;
+    }
+    
+    if (interaction.commandName === 'ticketnote') {
+      const { handleTicketNote } = await import('./commands/advancedTickets');
+      await handleTicketNote(interaction);
+      return;
+    }
+    
+    if (interaction.commandName === 'ticketanalytics') {
+      const { handleTicketAnalytics } = await import('./commands/advancedTickets');
+      await handleTicketAnalytics(interaction);
+      return;
+    }
   }
 });
 
