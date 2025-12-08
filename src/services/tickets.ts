@@ -174,6 +174,51 @@ function migrateTicketsSchema() {
       db.exec('ALTER TABLE tickets ADD COLUMN last_user_message_at TEXT');
       console.log('✅ Added last_user_message_at column to tickets table.');
     }
+    
+    // Check for Phase 1 columns (first_response_at, tags, sla_breach)
+    const hasFirstResponseAt = ticketsResult.some(col => col.name === 'first_response_at');
+    const hasTags = ticketsResult.some(col => col.name === 'tags');
+    const hasSLABreach = ticketsResult.some(col => col.name === 'sla_breach');
+    
+    if (!hasFirstResponseAt) {
+      console.log('Adding first_response_at column to tickets table...');
+      db.exec('ALTER TABLE tickets ADD COLUMN first_response_at TEXT');
+      console.log('✅ Added first_response_at column.');
+    }
+    
+    if (!hasTags) {
+      console.log('Adding tags column to tickets table...');
+      db.exec('ALTER TABLE tickets ADD COLUMN tags TEXT');
+      console.log('✅ Added tags column.');
+    }
+    
+    if (!hasSLABreach) {
+      console.log('Adding sla_breach column to tickets table...');
+      db.exec('ALTER TABLE tickets ADD COLUMN sla_breach INTEGER DEFAULT 0');
+      console.log('✅ Added sla_breach column.');
+    }
+    
+    // Check for Phase 1 SLA columns in ticket_configs
+    const configColumns = db.prepare("PRAGMA table_info(ticket_configs)").all() as any[];
+    const hasSLAResponseTime = configColumns.some(col => col.name === 'sla_response_time');
+    const hasSLAResolutionTime = configColumns.some(col => col.name === 'sla_resolution_time');
+    const hasSLAPriorityTime = configColumns.some(col => col.name === 'sla_priority_response_time');
+    
+    if (!hasSLAResponseTime) {
+      console.log('Adding SLA columns to ticket_configs...');
+      db.exec('ALTER TABLE ticket_configs ADD COLUMN sla_response_time INTEGER DEFAULT 30');
+      console.log('✅ Added sla_response_time column.');
+    }
+    
+    if (!hasSLAResolutionTime) {
+      db.exec('ALTER TABLE ticket_configs ADD COLUMN sla_resolution_time INTEGER DEFAULT 180');
+      console.log('✅ Added sla_resolution_time column.');
+    }
+    
+    if (!hasSLAPriorityTime) {
+      db.exec('ALTER TABLE ticket_configs ADD COLUMN sla_priority_response_time INTEGER DEFAULT 5');
+      console.log('✅ Added sla_priority_response_time column.');
+    }
   } catch (error) {
     console.error('Migration error:', error);
   }
