@@ -1575,7 +1575,7 @@ client.once('clientReady', async () => {
     'diagcommands', // Ensure diagcommands is prioritized
     'help', 'ping', 'redeploy', 'cmdpermissions', 'abusebypass',
     // Shift commands - essential for staff management
-    'clockin', 'clockout', 'shifts', 'shiftstats', 'whosonduty',
+    'clockin', 'clockout', 'shifts', 'shiftstats', 'whosonduty', 'balance',
     // Ticket system commands - PRIORITY
     'ticket', 'ticketsla', 'tickettag', 'ticketnote', 'ticketanalytics', 'ticketcategory',
     'ticketfeedback', 'autoresponse', 'staffexpertise', 'ticketrouting'
