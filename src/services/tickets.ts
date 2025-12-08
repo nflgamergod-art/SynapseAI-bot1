@@ -16,6 +16,10 @@ export interface Ticket {
   last_user_message_at?: string; // Timestamp of last message from ticket owner
   priority?: number; // 1 if priority ticket, 0 otherwise
   priority_set_at?: string; // Timestamp when priority was set
+  // Phase 1 additions
+  first_response_at?: string; // When staff first responded
+  tags?: string; // JSON array of tags
+  sla_breach?: number; // 1 if SLA was breached, 0 otherwise
 }
 
 export interface TicketConfig {
@@ -25,6 +29,36 @@ export interface TicketConfig {
   support_role_ids?: string; // JSON array of role IDs
   vouch_channel_id?: string;
   enabled: boolean;
+  // Phase 1: SLA settings
+  sla_response_time?: number; // Minutes for first response
+  sla_resolution_time?: number; // Minutes for ticket resolution
+  sla_priority_response_time?: number; // Minutes for priority tickets
+}
+
+export interface TicketNote {
+  id: number;
+  ticket_id: number;
+  user_id: string;
+  note: string;
+  created_at: string;
+}
+
+export interface TicketTag {
+  name: string;
+  color: string;
+  description?: string;
+}
+
+export interface TicketAnalytics {
+  total_tickets: number;
+  open_tickets: number;
+  closed_tickets: number;
+  avg_response_time: number; // Minutes
+  avg_resolution_time: number; // Minutes
+  sla_compliance_rate: number; // Percentage
+  tickets_by_category: { [category: string]: number };
+  tickets_by_tag: { [tag: string]: number };
+  top_staff: { user_id: string; ticket_count: number; avg_rating: number }[];
 }
 
 // Initialize tickets tables
@@ -37,7 +71,10 @@ export function initTicketsSchema() {
       log_channel_id TEXT,
       support_role_ids TEXT,
       vouch_channel_id TEXT,
-      enabled INTEGER NOT NULL DEFAULT 1
+      enabled INTEGER NOT NULL DEFAULT 1,
+      sla_response_time INTEGER DEFAULT 30,
+      sla_resolution_time INTEGER DEFAULT 180,
+      sla_priority_response_time INTEGER DEFAULT 5
     );
     
     CREATE TABLE IF NOT EXISTS tickets (
@@ -53,7 +90,10 @@ export function initTicketsSchema() {
       transcript TEXT,
       support_interaction_id INTEGER,
       helpers TEXT,
-      last_user_message_at TEXT
+      last_user_message_at TEXT,
+      first_response_at TEXT,
+      tags TEXT,
+      sla_breach INTEGER DEFAULT 0
     );
     CREATE INDEX IF NOT EXISTS idx_tickets_guild ON tickets(guild_id);
     CREATE INDEX IF NOT EXISTS idx_tickets_user ON tickets(user_id);
@@ -71,6 +111,26 @@ export function initTicketsSchema() {
       removed_at TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_ticket_blacklist_guild_user ON ticket_blacklist(guild_id, user_id, is_active);
+    
+    CREATE TABLE IF NOT EXISTS ticket_notes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ticket_id INTEGER NOT NULL,
+      user_id TEXT NOT NULL,
+      note TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (ticket_id) REFERENCES tickets(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_ticket_notes_ticket ON ticket_notes(ticket_id);
+    
+    CREATE TABLE IF NOT EXISTS ticket_tags_config (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      guild_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      color TEXT NOT NULL,
+      description TEXT,
+      UNIQUE(guild_id, name)
+    );
+    CREATE INDEX IF NOT EXISTS idx_ticket_tags_guild ON ticket_tags_config(guild_id);
   `);
   
   // Migrate existing database if needed
@@ -185,7 +245,7 @@ export function createTicket(
 export function getTicket(channelId: string): Ticket | null {
   const db = getDB();
   const row = db.prepare(`
-    SELECT id, guild_id, channel_id, user_id, claimed_by, status, category, created_at, closed_at, transcript, support_interaction_id, helpers
+    SELECT id, guild_id, channel_id, user_id, claimed_by, status, category, created_at, closed_at, transcript, support_interaction_id, helpers, first_response_at, tags, sla_breach
     FROM tickets
     WHERE channel_id = ?
   `).get(channelId) as any;
@@ -204,7 +264,10 @@ export function getTicket(channelId: string): Ticket | null {
     closed_at: row.closed_at,
     transcript: row.transcript,
     support_interaction_id: row.support_interaction_id,
-    helpers: row.helpers
+    helpers: row.helpers,
+    first_response_at: row.first_response_at,
+    tags: row.tags,
+    sla_breach: row.sla_breach
   };
 }
 
@@ -212,7 +275,7 @@ export function getTicket(channelId: string): Ticket | null {
 export function getTicketById(ticketId: number): Ticket | null {
   const db = getDB();
   const row = db.prepare(`
-    SELECT id, guild_id, channel_id, user_id, claimed_by, status, category, created_at, closed_at, transcript, support_interaction_id, helpers
+    SELECT id, guild_id, channel_id, user_id, claimed_by, status, category, created_at, closed_at, transcript, support_interaction_id, helpers, first_response_at, tags, sla_breach
     FROM tickets
     WHERE id = ?
   `).get(ticketId) as any;
@@ -231,7 +294,10 @@ export function getTicketById(ticketId: number): Ticket | null {
     closed_at: row.closed_at,
     transcript: row.transcript,
     support_interaction_id: row.support_interaction_id,
-    helpers: row.helpers
+    helpers: row.helpers,
+    first_response_at: row.first_response_at,
+    tags: row.tags,
+    sla_breach: row.sla_breach
   };
 }
 
@@ -345,11 +411,42 @@ export function getOpenTickets(guildId: string): Ticket[] {
   }));
 }
 
+// Get all tickets for guild
+export function getGuildTickets(guildId: string): Ticket[] {
+  const db = getDB();
+  const rows = db.prepare(`
+    SELECT id, guild_id, channel_id, user_id, claimed_by, status, category, created_at, closed_at, transcript, support_interaction_id, helpers, priority, priority_set_at, first_response_at, tags, sla_breach
+    FROM tickets
+    WHERE guild_id = ?
+    ORDER BY created_at DESC
+  `).all(guildId) as any[];
+  
+  return rows.map(row => ({
+    id: row.id,
+    guild_id: row.guild_id,
+    channel_id: row.channel_id,
+    user_id: row.user_id,
+    claimed_by: row.claimed_by,
+    status: row.status,
+    category: row.category,
+    created_at: row.created_at,
+    closed_at: row.closed_at,
+    transcript: row.transcript,
+    support_interaction_id: row.support_interaction_id,
+    helpers: row.helpers,
+    priority: row.priority,
+    priority_set_at: row.priority_set_at,
+    first_response_at: row.first_response_at,
+    tags: row.tags,
+    sla_breach: row.sla_breach
+  }));
+}
+
 // Get user's tickets
 export function getUserTickets(guildId: string, userId: string): Ticket[] {
   const db = getDB();
   const rows = db.prepare(`
-    SELECT id, guild_id, channel_id, user_id, claimed_by, status, category, created_at, closed_at, transcript, support_interaction_id, helpers, priority, priority_set_at
+    SELECT id, guild_id, channel_id, user_id, claimed_by, status, category, created_at, closed_at, transcript, support_interaction_id, helpers, priority, priority_set_at, first_response_at, tags, sla_breach
     FROM tickets
     WHERE guild_id = ? AND user_id = ?
     ORDER BY created_at DESC
@@ -369,7 +466,10 @@ export function getUserTickets(guildId: string, userId: string): Ticket[] {
     support_interaction_id: row.support_interaction_id,
     helpers: row.helpers,
     priority: row.priority,
-    priority_set_at: row.priority_set_at
+    priority_set_at: row.priority_set_at,
+    first_response_at: row.first_response_at,
+    tags: row.tags,
+    sla_breach: row.sla_breach
   }));
 }
 
@@ -532,6 +632,404 @@ export function removeSupportRole(guildId: string, roleId: string): boolean {
   roleIds.splice(index, 1);
   setSupportRoleIds(guildId, roleIds);
   return true;
+}
+
+// ============================================
+// PHASE 1: ADVANCED TICKET FEATURES
+// ============================================
+
+// -------------------- SLA FUNCTIONS --------------------
+
+// Set SLA times for guild
+export function setSLATimes(guildId: string, responseTime: number, resolutionTime: number, priorityResponseTime: number): boolean {
+  const db = getDB();
+  const result = db.prepare(`
+    UPDATE ticket_configs
+    SET sla_response_time = ?, sla_resolution_time = ?, sla_priority_response_time = ?
+    WHERE guild_id = ?
+  `).run(responseTime, resolutionTime, priorityResponseTime, guildId);
+  
+  return result.changes > 0;
+}
+
+// Get SLA times
+export function getSLATimes(guildId: string): { response: number; resolution: number; priorityResponse: number } {
+  const db = getDB();
+  const config = db.prepare(`
+    SELECT sla_response_time, sla_resolution_time, sla_priority_response_time
+    FROM ticket_configs
+    WHERE guild_id = ?
+  `).get(guildId) as any;
+  
+  if (!config) return { response: 30, resolution: 180, priorityResponse: 5 };
+  
+  return {
+    response: config.sla_response_time || 30,
+    resolution: config.sla_resolution_time || 180,
+    priorityResponse: config.sla_priority_response_time || 5
+  };
+}
+
+// Check if ticket breached SLA
+export function checkSLABreach(ticket: Ticket, guildId: string): { breached: boolean; type: 'response' | 'resolution' | null; minutesOver: number } {
+  const sla = getSLATimes(guildId);
+  const now = new Date();
+  const createdAt = new Date(ticket.created_at);
+  
+  // Check response time SLA
+  if (!ticket.first_response_at && ticket.status !== 'closed') {
+    const minutesSinceCreated = (now.getTime() - createdAt.getTime()) / 60000;
+    const slaTime = ticket.priority ? sla.priorityResponse : sla.response;
+    
+    if (minutesSinceCreated > slaTime) {
+      return { breached: true, type: 'response', minutesOver: Math.floor(minutesSinceCreated - slaTime) };
+    }
+  }
+  
+  // Check resolution time SLA
+  if (ticket.status !== 'closed') {
+    const minutesSinceCreated = (now.getTime() - createdAt.getTime()) / 60000;
+    
+    if (minutesSinceCreated > sla.resolution) {
+      return { breached: true, type: 'resolution', minutesOver: Math.floor(minutesSinceCreated - sla.resolution) };
+    }
+  }
+  
+  return { breached: false, type: null, minutesOver: 0 };
+}
+
+// Mark ticket SLA as breached
+export function markSLABreached(ticketId: number): boolean {
+  const db = getDB();
+  const result = db.prepare(`
+    UPDATE tickets
+    SET sla_breach = 1
+    WHERE id = ?
+  `).run(ticketId);
+  
+  return result.changes > 0;
+}
+
+// Record first response time
+export function recordFirstResponse(channelId: string): boolean {
+  const db = getDB();
+  const now = new Date().toISOString();
+  
+  const result = db.prepare(`
+    UPDATE tickets
+    SET first_response_at = ?
+    WHERE channel_id = ? AND first_response_at IS NULL
+  `).run(now, channelId);
+  
+  return result.changes > 0;
+}
+
+// Get tickets breaching SLA
+export function getTicketsBreachingSLA(guildId: string): Ticket[] {
+  const tickets = getGuildTickets(guildId).filter(t => t.status !== 'closed');
+  const breaching: Ticket[] = [];
+  
+  for (const ticket of tickets) {
+    const breach = checkSLABreach(ticket, guildId);
+    if (breach.breached) {
+      breaching.push(ticket);
+    }
+  }
+  
+  return breaching;
+}
+
+// -------------------- TAG FUNCTIONS --------------------
+
+// Create or update tag
+export function createTicketTag(guildId: string, name: string, color: string, description?: string): boolean {
+  const db = getDB();
+  
+  try {
+    db.prepare(`
+      INSERT INTO ticket_tags_config (guild_id, name, color, description)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(guild_id, name) DO UPDATE SET
+        color = excluded.color,
+        description = excluded.description
+    `).run(guildId, name, color, description || null);
+    return true;
+  } catch (e) {
+    console.error('Failed to create ticket tag:', e);
+    return false;
+  }
+}
+
+// Delete tag
+export function deleteTicketTag(guildId: string, name: string): boolean {
+  const db = getDB();
+  const result = db.prepare(`
+    DELETE FROM ticket_tags_config
+    WHERE guild_id = ? AND name = ?
+  `).run(guildId, name);
+  
+  return result.changes > 0;
+}
+
+// Get all tags for guild
+export function getTicketTags(guildId: string): TicketTag[] {
+  const db = getDB();
+  const rows = db.prepare(`
+    SELECT name, color, description
+    FROM ticket_tags_config
+    WHERE guild_id = ?
+    ORDER BY name ASC
+  `).all(guildId) as any[];
+  
+  return rows.map(row => ({
+    name: row.name,
+    color: row.color,
+    description: row.description
+  }));
+}
+
+// Add tag to ticket
+export function addTagToTicket(ticketId: number, tag: string): boolean {
+  const db = getDB();
+  const ticket = getTicketById(ticketId);
+  if (!ticket) return false;
+  
+  const tags: string[] = ticket.tags ? JSON.parse(ticket.tags) : [];
+  if (tags.includes(tag)) return false; // Already has tag
+  
+  tags.push(tag);
+  
+  const result = db.prepare(`
+    UPDATE tickets
+    SET tags = ?
+    WHERE id = ?
+  `).run(JSON.stringify(tags), ticketId);
+  
+  return result.changes > 0;
+}
+
+// Remove tag from ticket
+export function removeTagFromTicket(ticketId: number, tag: string): boolean {
+  const db = getDB();
+  const ticket = getTicketById(ticketId);
+  if (!ticket) return false;
+  
+  const tags: string[] = ticket.tags ? JSON.parse(ticket.tags) : [];
+  const index = tags.indexOf(tag);
+  if (index === -1) return false; // Tag not found
+  
+  tags.splice(index, 1);
+  
+  const result = db.prepare(`
+    UPDATE tickets
+    SET tags = ?
+    WHERE id = ?
+  `).run(JSON.stringify(tags), ticketId);
+  
+  return result.changes > 0;
+}
+
+// Get tickets by tag
+export function getTicketsByTag(guildId: string, tag: string): Ticket[] {
+  const db = getDB();
+  const rows = db.prepare(`
+    SELECT * FROM tickets
+    WHERE guild_id = ? AND tags LIKE ?
+  `).all(guildId, `%"${tag}"%`) as any[];
+  
+  return rows.map(row => ({
+    id: row.id,
+    guild_id: row.guild_id,
+    channel_id: row.channel_id,
+    user_id: row.user_id,
+    claimed_by: row.claimed_by,
+    status: row.status,
+    category: row.category,
+    created_at: row.created_at,
+    closed_at: row.closed_at,
+    transcript: row.transcript,
+    support_interaction_id: row.support_interaction_id,
+    helpers: row.helpers,
+    first_response_at: row.first_response_at,
+    tags: row.tags,
+    sla_breach: row.sla_breach
+  }));
+}
+
+// -------------------- NOTES FUNCTIONS --------------------
+
+// Add private note to ticket
+export function addTicketNote(ticketId: number, userId: string, note: string): number {
+  const db = getDB();
+  const now = new Date().toISOString();
+  
+  const result = db.prepare(`
+    INSERT INTO ticket_notes (ticket_id, user_id, note, created_at)
+    VALUES (?, ?, ?, ?)
+  `).run(ticketId, userId, note, now);
+  
+  return result.lastInsertRowid as number;
+}
+
+// Get all notes for ticket
+export function getTicketNotes(ticketId: number): TicketNote[] {
+  const db = getDB();
+  const rows = db.prepare(`
+    SELECT id, ticket_id, user_id, note, created_at
+    FROM ticket_notes
+    WHERE ticket_id = ?
+    ORDER BY created_at ASC
+  `).all(ticketId) as any[];
+  
+  return rows.map(row => ({
+    id: row.id,
+    ticket_id: row.ticket_id,
+    user_id: row.user_id,
+    note: row.note,
+    created_at: row.created_at
+  }));
+}
+
+// Delete note
+export function deleteTicketNote(noteId: number): boolean {
+  const db = getDB();
+  const result = db.prepare(`
+    DELETE FROM ticket_notes
+    WHERE id = ?
+  `).run(noteId);
+  
+  return result.changes > 0;
+}
+
+// -------------------- ANALYTICS FUNCTIONS --------------------
+
+// Get comprehensive ticket analytics
+export function getTicketAnalytics(guildId: string, days: number = 30): TicketAnalytics {
+  const db = getDB();
+  const cutoffDate = new Date();
+  cutoffDate.setDate(cutoffDate.getDate() - days);
+  const cutoffISO = cutoffDate.toISOString();
+  
+  // Total and status counts
+  const totalTickets = db.prepare(`
+    SELECT COUNT(*) as count FROM tickets WHERE guild_id = ? AND created_at >= ?
+  `).get(guildId, cutoffISO) as any;
+  
+  const openTickets = db.prepare(`
+    SELECT COUNT(*) as count FROM tickets WHERE guild_id = ? AND status != 'closed'
+  `).get(guildId) as any;
+  
+  const closedTickets = db.prepare(`
+    SELECT COUNT(*) as count FROM tickets WHERE guild_id = ? AND status = 'closed' AND created_at >= ?
+  `).get(guildId, cutoffISO) as any;
+  
+  // Average response time (minutes)
+  const avgResponseTime = db.prepare(`
+    SELECT AVG((julianday(first_response_at) - julianday(created_at)) * 24 * 60) as avg
+    FROM tickets
+    WHERE guild_id = ? AND first_response_at IS NOT NULL AND created_at >= ?
+  `).get(guildId, cutoffISO) as any;
+  
+  // Average resolution time (minutes)
+  const avgResolutionTime = db.prepare(`
+    SELECT AVG((julianday(closed_at) - julianday(created_at)) * 24 * 60) as avg
+    FROM tickets
+    WHERE guild_id = ? AND closed_at IS NOT NULL AND created_at >= ?
+  `).get(guildId, cutoffISO) as any;
+  
+  // SLA compliance rate
+  const slaBreached = db.prepare(`
+    SELECT COUNT(*) as count FROM tickets WHERE guild_id = ? AND sla_breach = 1 AND created_at >= ?
+  `).get(guildId, cutoffISO) as any;
+  
+  const slaCompliance = totalTickets.count > 0 
+    ? ((totalTickets.count - slaBreached.count) / totalTickets.count) * 100 
+    : 100;
+  
+  // Tickets by category
+  const byCategory = db.prepare(`
+    SELECT category, COUNT(*) as count
+    FROM tickets
+    WHERE guild_id = ? AND created_at >= ?
+    GROUP BY category
+  `).all(guildId, cutoffISO) as any[];
+  
+  const ticketsByCategory: { [key: string]: number } = {};
+  byCategory.forEach(row => {
+    ticketsByCategory[row.category] = row.count;
+  });
+  
+  // Tickets by tag
+  const allTickets = db.prepare(`
+    SELECT tags FROM tickets WHERE guild_id = ? AND tags IS NOT NULL AND created_at >= ?
+  `).all(guildId, cutoffISO) as any[];
+  
+  const ticketsByTag: { [key: string]: number } = {};
+  allTickets.forEach(row => {
+    if (row.tags) {
+      const tags = JSON.parse(row.tags) as string[];
+      tags.forEach(tag => {
+        ticketsByTag[tag] = (ticketsByTag[tag] || 0) + 1;
+      });
+    }
+  });
+  
+  // Top staff by tickets handled
+  const topStaffRaw = db.prepare(`
+    SELECT claimed_by as user_id, COUNT(*) as ticket_count
+    FROM tickets
+    WHERE guild_id = ? AND claimed_by IS NOT NULL AND created_at >= ?
+    GROUP BY claimed_by
+    ORDER BY ticket_count DESC
+    LIMIT 10
+  `).all(guildId, cutoffISO) as any[];
+  
+  // Get ratings for top staff (requires support_interactions table)
+  const topStaff = topStaffRaw.map(staff => {
+    const avgRating = db.prepare(`
+      SELECT AVG(rating) as avg
+      FROM support_interactions
+      WHERE staff_user_id = ? AND created_at >= ?
+    `).get(staff.user_id, cutoffISO) as any;
+    
+    return {
+      user_id: staff.user_id,
+      ticket_count: staff.ticket_count,
+      avg_rating: avgRating?.avg || 0
+    };
+  });
+  
+  return {
+    total_tickets: totalTickets.count,
+    open_tickets: openTickets.count,
+    closed_tickets: closedTickets.count,
+    avg_response_time: Math.round(avgResponseTime?.avg || 0),
+    avg_resolution_time: Math.round(avgResolutionTime?.avg || 0),
+    sla_compliance_rate: Math.round(slaCompliance * 10) / 10,
+    tickets_by_category: ticketsByCategory,
+    tickets_by_tag: ticketsByTag,
+    top_staff: topStaff
+  };
+}
+
+// Get ticket wait time in minutes
+export function getTicketWaitTime(ticket: Ticket): number {
+  const now = new Date();
+  const createdAt = new Date(ticket.created_at);
+  return Math.floor((now.getTime() - createdAt.getTime()) / 60000);
+}
+
+// Get estimated resolution time based on category averages
+export function getEstimatedResolutionTime(guildId: string, category: string): number {
+  const db = getDB();
+  const result = db.prepare(`
+    SELECT AVG((julianday(closed_at) - julianday(created_at)) * 24 * 60) as avg
+    FROM tickets
+    WHERE guild_id = ? AND category = ? AND closed_at IS NOT NULL
+    LIMIT 100
+  `).get(guildId, category) as any;
+  
+  return Math.round(result?.avg || 60); // Default 60 minutes if no data
 }
 
 // Initialize schema on import
