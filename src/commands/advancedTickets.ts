@@ -141,6 +141,76 @@ export const commands = [
       .setRequired(false)
       .setMinValue(1)
       .setMaxValue(365))
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+
+  // ==================== CATEGORY COMMAND ====================
+  new SlashCommandBuilder()
+    .setName('ticketcategory')
+    .setDescription('Manage ticket categories with custom fields')
+    .addSubcommand(sub => sub
+      .setName('create')
+      .setDescription('Create a new ticket category')
+      .addStringOption(opt => opt
+        .setName('name')
+        .setDescription('Category name (e.g., Bug Report, Feature Request)')
+        .setRequired(true))
+      .addStringOption(opt => opt
+        .setName('emoji')
+        .setDescription('Category emoji (e.g., 🐛, ✨, 💡)')
+        .setRequired(false))
+      .addStringOption(opt => opt
+        .setName('description')
+        .setDescription('Category description')
+        .setRequired(false))
+      .addStringOption(opt => opt
+        .setName('color')
+        .setDescription('Embed color hex (e.g., #FF0000)')
+        .setRequired(false)))
+    .addSubcommand(sub => sub
+      .setName('list')
+      .setDescription('List all ticket categories'))
+    .addSubcommand(sub => sub
+      .setName('delete')
+      .setDescription('Delete a ticket category')
+      .addStringOption(opt => opt
+        .setName('name')
+        .setDescription('Category name to delete')
+        .setRequired(true)))
+    .addSubcommand(sub => sub
+      .setName('addfield')
+      .setDescription('Add a custom field to a category')
+      .addStringOption(opt => opt
+        .setName('category')
+        .setDescription('Category name')
+        .setRequired(true))
+      .addStringOption(opt => opt
+        .setName('field_name')
+        .setDescription('Field identifier (e.g., bug_severity, os_version)')
+        .setRequired(true))
+      .addStringOption(opt => opt
+        .setName('field_label')
+        .setDescription('Field label shown to users')
+        .setRequired(true))
+      .addStringOption(opt => opt
+        .setName('field_type')
+        .setDescription('Field input type')
+        .setRequired(true)
+        .addChoices(
+          { name: 'Short Text', value: 'text' },
+          { name: 'Long Text', value: 'multiline' },
+          { name: 'Number', value: 'number' },
+          { name: 'Selection', value: 'select' }))
+      .addBooleanOption(opt => opt
+        .setName('required')
+        .setDescription('Is this field required?')
+        .setRequired(true)))
+    .addSubcommand(sub => sub
+      .setName('view')
+      .setDescription('View category details and custom fields')
+      .addStringOption(opt => opt
+        .setName('name')
+        .setDescription('Category name')
+        .setRequired(true)))
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
 ];
 
@@ -523,4 +593,161 @@ export async function handleTicketAnalytics(interaction: ChatInputCommandInterac
   }
   
   return interaction.editReply({ embeds: [embed] });
+}
+
+export async function handleTicketCategory(interaction: ChatInputCommandInteraction) {
+  if (!interaction.guild) return;
+  
+  const subcommand = interaction.options.getSubcommand();
+  const guildId = interaction.guild.id;
+  
+  if (subcommand === 'create') {
+    const name = interaction.options.getString('name', true);
+    const emoji = interaction.options.getString('emoji');
+    const description = interaction.options.getString('description');
+    const color = interaction.options.getString('color');
+    
+    const category: tickets.TicketCategory = {
+      guild_id: guildId,
+      name: name,
+      emoji: emoji || undefined,
+      description: description || undefined,
+      color: color || '#5865F2',
+      custom_fields: [],
+      auto_tags: [],
+      priority: 0
+    };
+    
+    const success = tickets.createTicketCategory(category);
+    
+    if (success) {
+      const embed = new EmbedBuilder()
+        .setTitle(`✅ Category Created: ${emoji || '📁'} ${name}`)
+        .setColor(parseInt(category.color!.replace('#', ''), 16))
+        .setDescription(description || 'No description provided')
+        .addFields(
+          { name: 'Next Steps', value: 'Use `/ticketcategory addfield` to add custom fields for this category!' }
+        )
+        .setTimestamp();
+      
+      return interaction.reply({ embeds: [embed], ephemeral: true });
+    } else {
+      return interaction.reply({ content: '❌ Failed to create category. It may already exist.', ephemeral: true });
+    }
+  }
+  
+  if (subcommand === 'list') {
+    const categories = tickets.getTicketCategories(guildId);
+    
+    if (categories.length === 0) {
+      return interaction.reply({ content: '❌ No ticket categories found. Create one with `/ticketcategory create`.', ephemeral: true });
+    }
+    
+    const embed = new EmbedBuilder()
+      .setTitle('📂 Ticket Categories')
+      .setColor(0x5865F2)
+      .setDescription(`${categories.length} category(ies) configured:`)
+      .setTimestamp();
+    
+    categories.forEach(cat => {
+      const emoji = cat.emoji || '📁';
+      const fields = cat.custom_fields?.length || 0;
+      const tags = cat.auto_tags?.length || 0;
+      embed.addFields({
+        name: `${emoji} ${cat.name}`,
+        value: `${cat.description || 'No description'}\n**Custom Fields:** ${fields} | **Auto Tags:** ${tags}`,
+        inline: false
+      });
+    });
+    
+    return interaction.reply({ embeds: [embed], ephemeral: true });
+  }
+  
+  if (subcommand === 'delete') {
+    const name = interaction.options.getString('name', true);
+    
+    const success = tickets.deleteTicketCategory(guildId, name);
+    
+    if (success) {
+      return interaction.reply({ content: `✅ Category **${name}** deleted.`, ephemeral: true });
+    } else {
+      return interaction.reply({ content: `❌ Category **${name}** not found.`, ephemeral: true });
+    }
+  }
+  
+  if (subcommand === 'addfield') {
+    const categoryName = interaction.options.getString('category', true);
+    const fieldName = interaction.options.getString('field_name', true);
+    const fieldLabel = interaction.options.getString('field_label', true);
+    const fieldType = interaction.options.getString('field_type', true) as 'text' | 'number' | 'select' | 'multiline';
+    const required = interaction.options.getBoolean('required', true);
+    
+    const category = tickets.getTicketCategory(guildId, categoryName);
+    
+    if (!category) {
+      return interaction.reply({ content: `❌ Category **${categoryName}** not found.`, ephemeral: true });
+    }
+    
+    const newField: tickets.CustomFieldDefinition = {
+      name: fieldName,
+      type: fieldType,
+      label: fieldLabel,
+      required: required
+    };
+    
+    const customFields = category.custom_fields || [];
+    customFields.push(newField);
+    
+    const success = tickets.updateTicketCategory(guildId, categoryName, {
+      custom_fields: customFields
+    });
+    
+    if (success) {
+      const embed = new EmbedBuilder()
+        .setTitle(`✅ Field Added to ${category.emoji || '📁'} ${categoryName}`)
+        .setColor(0x00FF00)
+        .addFields(
+          { name: 'Field Name', value: fieldName, inline: true },
+          { name: 'Label', value: fieldLabel, inline: true },
+          { name: 'Type', value: fieldType, inline: true },
+          { name: 'Required', value: required ? 'Yes' : 'No', inline: true }
+        )
+        .setTimestamp();
+      
+      return interaction.reply({ embeds: [embed], ephemeral: true });
+    } else {
+      return interaction.reply({ content: '❌ Failed to add field to category.', ephemeral: true });
+    }
+  }
+  
+  if (subcommand === 'view') {
+    const name = interaction.options.getString('name', true);
+    
+    const category = tickets.getTicketCategory(guildId, name);
+    
+    if (!category) {
+      return interaction.reply({ content: `❌ Category **${name}** not found.`, ephemeral: true });
+    }
+    
+    const embed = new EmbedBuilder()
+      .setTitle(`${category.emoji || '📁'} ${category.name}`)
+      .setColor(parseInt(category.color!.replace('#', ''), 16))
+      .setDescription(category.description || 'No description')
+      .setTimestamp();
+    
+    if (category.custom_fields && category.custom_fields.length > 0) {
+      const fieldsText = category.custom_fields.map(f => 
+        `**${f.label}** (${f.name})\nType: ${f.type} | Required: ${f.required ? 'Yes' : 'No'}`
+      ).join('\n\n');
+      embed.addFields({ name: '📝 Custom Fields', value: fieldsText });
+    } else {
+      embed.addFields({ name: '📝 Custom Fields', value: 'None' });
+    }
+    
+    if (category.auto_tags && category.auto_tags.length > 0) {
+      embed.addFields({ name: '🏷️ Auto Tags', value: category.auto_tags.map(t => `\`${t}\``).join(', ') });
+    }
+    
+    return interaction.reply({ embeds: [embed], ephemeral: true });
+  }
 }

@@ -131,6 +131,29 @@ export function initTicketsSchema() {
       UNIQUE(guild_id, name)
     );
     CREATE INDEX IF NOT EXISTS idx_ticket_tags_guild ON ticket_tags_config(guild_id);
+    
+    CREATE TABLE IF NOT EXISTS ticket_categories (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      guild_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      emoji TEXT,
+      description TEXT,
+      color TEXT DEFAULT '#5865F2',
+      custom_fields TEXT,
+      auto_tags TEXT,
+      priority INTEGER DEFAULT 0,
+      UNIQUE(guild_id, name)
+    );
+    CREATE INDEX IF NOT EXISTS idx_ticket_categories_guild ON ticket_categories(guild_id);
+    
+    CREATE TABLE IF NOT EXISTS ticket_custom_fields (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ticket_id INTEGER NOT NULL,
+      field_name TEXT NOT NULL,
+      field_value TEXT NOT NULL,
+      FOREIGN KEY (ticket_id) REFERENCES tickets(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_ticket_custom_fields_ticket ON ticket_custom_fields(ticket_id);
   `);
   
   // Migrate existing database if needed
@@ -1055,6 +1078,206 @@ export function getTicketAnalytics(guildId: string, days: number = 30): TicketAn
     tickets_by_tag: ticketsByTag,
     top_staff: topStaff
   };
+}
+
+// -------------------- TICKET CATEGORIES --------------------
+
+export interface TicketCategory {
+  id?: number;
+  guild_id: string;
+  name: string;
+  emoji?: string;
+  description?: string;
+  color?: string;
+  custom_fields?: CustomFieldDefinition[];
+  auto_tags?: string[];
+  priority?: number;
+}
+
+export interface CustomFieldDefinition {
+  name: string;
+  type: 'text' | 'number' | 'select' | 'multiline';
+  label: string;
+  required: boolean;
+  options?: string[]; // For select type
+  placeholder?: string;
+}
+
+export interface TicketCustomField {
+  id?: number;
+  ticket_id: number;
+  field_name: string;
+  field_value: string;
+}
+
+// Create ticket category
+export function createTicketCategory(category: TicketCategory): boolean {
+  const db = getDB();
+  try {
+    db.prepare(`
+      INSERT INTO ticket_categories (guild_id, name, emoji, description, color, custom_fields, auto_tags, priority)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      category.guild_id,
+      category.name,
+      category.emoji || null,
+      category.description || null,
+      category.color || '#5865F2',
+      category.custom_fields ? JSON.stringify(category.custom_fields) : null,
+      category.auto_tags ? JSON.stringify(category.auto_tags) : null,
+      category.priority || 0
+    );
+    return true;
+  } catch (e) {
+    console.error('Failed to create ticket category:', e);
+    return false;
+  }
+}
+
+// Update ticket category
+export function updateTicketCategory(guildId: string, name: string, updates: Partial<TicketCategory>): boolean {
+  const db = getDB();
+  const fields: string[] = [];
+  const values: any[] = [];
+  
+  if (updates.emoji !== undefined) {
+    fields.push('emoji = ?');
+    values.push(updates.emoji);
+  }
+  if (updates.description !== undefined) {
+    fields.push('description = ?');
+    values.push(updates.description);
+  }
+  if (updates.color !== undefined) {
+    fields.push('color = ?');
+    values.push(updates.color);
+  }
+  if (updates.custom_fields !== undefined) {
+    fields.push('custom_fields = ?');
+    values.push(JSON.stringify(updates.custom_fields));
+  }
+  if (updates.auto_tags !== undefined) {
+    fields.push('auto_tags = ?');
+    values.push(JSON.stringify(updates.auto_tags));
+  }
+  if (updates.priority !== undefined) {
+    fields.push('priority = ?');
+    values.push(updates.priority);
+  }
+  
+  if (fields.length === 0) return false;
+  
+  values.push(guildId, name);
+  
+  const result = db.prepare(`
+    UPDATE ticket_categories
+    SET ${fields.join(', ')}
+    WHERE guild_id = ? AND name = ?
+  `).run(...values);
+  
+  return result.changes > 0;
+}
+
+// Delete ticket category
+export function deleteTicketCategory(guildId: string, name: string): boolean {
+  const db = getDB();
+  const result = db.prepare(`
+    DELETE FROM ticket_categories
+    WHERE guild_id = ? AND name = ?
+  `).run(guildId, name);
+  
+  return result.changes > 0;
+}
+
+// Get ticket categories
+export function getTicketCategories(guildId: string): TicketCategory[] {
+  const db = getDB();
+  const rows = db.prepare(`
+    SELECT * FROM ticket_categories
+    WHERE guild_id = ?
+    ORDER BY priority DESC, name ASC
+  `).all(guildId) as any[];
+  
+  return rows.map(row => ({
+    id: row.id,
+    guild_id: row.guild_id,
+    name: row.name,
+    emoji: row.emoji,
+    description: row.description,
+    color: row.color,
+    custom_fields: row.custom_fields ? JSON.parse(row.custom_fields) : [],
+    auto_tags: row.auto_tags ? JSON.parse(row.auto_tags) : [],
+    priority: row.priority
+  }));
+}
+
+// Get single ticket category
+export function getTicketCategory(guildId: string, name: string): TicketCategory | null {
+  const db = getDB();
+  const row = db.prepare(`
+    SELECT * FROM ticket_categories
+    WHERE guild_id = ? AND name = ?
+  `).get(guildId, name) as any;
+  
+  if (!row) return null;
+  
+  return {
+    id: row.id,
+    guild_id: row.guild_id,
+    name: row.name,
+    emoji: row.emoji,
+    description: row.description,
+    color: row.color,
+    custom_fields: row.custom_fields ? JSON.parse(row.custom_fields) : [],
+    auto_tags: row.auto_tags ? JSON.parse(row.auto_tags) : [],
+    priority: row.priority
+  };
+}
+
+// Set custom field values for a ticket
+export function setTicketCustomField(ticketId: number, fieldName: string, fieldValue: string): boolean {
+  const db = getDB();
+  try {
+    // Check if field exists, update or insert
+    const existing = db.prepare(`
+      SELECT id FROM ticket_custom_fields
+      WHERE ticket_id = ? AND field_name = ?
+    `).get(ticketId, fieldName) as any;
+    
+    if (existing) {
+      db.prepare(`
+        UPDATE ticket_custom_fields
+        SET field_value = ?
+        WHERE id = ?
+      `).run(fieldValue, existing.id);
+    } else {
+      db.prepare(`
+        INSERT INTO ticket_custom_fields (ticket_id, field_name, field_value)
+        VALUES (?, ?, ?)
+      `).run(ticketId, fieldName, fieldValue);
+    }
+    return true;
+  } catch (e) {
+    console.error('Failed to set custom field:', e);
+    return false;
+  }
+}
+
+// Get custom fields for a ticket
+export function getTicketCustomFields(ticketId: number): { [key: string]: string } {
+  const db = getDB();
+  const rows = db.prepare(`
+    SELECT field_name, field_value
+    FROM ticket_custom_fields
+    WHERE ticket_id = ?
+  `).all(ticketId) as any[];
+  
+  const fields: { [key: string]: string } = {};
+  rows.forEach(row => {
+    fields[row.field_name] = row.field_value;
+  });
+  
+  return fields;
 }
 
 // Get ticket wait time in minutes

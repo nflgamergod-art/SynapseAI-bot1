@@ -1338,6 +1338,35 @@ client.once('clientReady', async () => {
     // Analytics Dashboard
     { name: "ticketanalytics", description: "📊 View comprehensive ticket analytics", options: [
       { name: "days", description: "Number of days to analyze (default: 30)", type: 4, required: false, min_value: 1, max_value: 365 }
+    ] },
+    
+    // Ticket Categories with Custom Fields
+    { name: "ticketcategory", description: "📂 Manage ticket categories with custom fields", options: [
+      { name: "create", description: "Create a new ticket category", type: 1, options: [
+        { name: "name", description: "Category name", type: 3, required: true },
+        { name: "emoji", description: "Category emoji", type: 3, required: false },
+        { name: "description", description: "Category description", type: 3, required: false },
+        { name: "color", description: "Embed color hex (e.g., #FF0000)", type: 3, required: false }
+      ] },
+      { name: "list", description: "List all ticket categories", type: 1 },
+      { name: "delete", description: "Delete a ticket category", type: 1, options: [
+        { name: "name", description: "Category name to delete", type: 3, required: true }
+      ] },
+      { name: "addfield", description: "Add a custom field to a category", type: 1, options: [
+        { name: "category", description: "Category name", type: 3, required: true },
+        { name: "field_name", description: "Field identifier", type: 3, required: true },
+        { name: "field_label", description: "Field label shown to users", type: 3, required: true },
+        { name: "field_type", description: "Field input type", type: 3, required: true, choices: [
+          { name: "Short Text", value: "text" },
+          { name: "Long Text", value: "multiline" },
+          { name: "Number", value: "number" },
+          { name: "Selection", value: "select" }
+        ] },
+        { name: "required", description: "Is this field required?", type: 5, required: true }
+      ] },
+      { name: "view", description: "View category details and custom fields", type: 1, options: [
+        { name: "name", description: "Category name", type: 3, required: true }
+      ] }
     ] }
   ];
 
@@ -1383,7 +1412,7 @@ client.once('clientReady', async () => {
     // Shift commands - essential for staff management
     'clockin', 'clockout', 'shifts', 'shiftstats', 'whosonduty',
     // Phase 1 Advanced Ticket Commands - PRIORITY
-    'ticketsla', 'tickettag', 'ticketnote', 'ticketanalytics'
+    'ticketsla', 'tickettag', 'ticketnote', 'ticketanalytics', 'ticketcategory'
   ]);
   
   // Adjust the buildFinalCommands function to ensure prioritized commands are included
@@ -3032,6 +3061,12 @@ client.on("interactionCreate", async (interaction) => {
   if (name === 'ticketanalytics') {
     const { handleTicketAnalytics } = await import('./commands/advancedTickets');
     await handleTicketAnalytics(interaction);
+    return;
+  }
+  
+  if (name === 'ticketcategory') {
+    const { handleTicketCategory } = await import('./commands/advancedTickets');
+    await handleTicketCategory(interaction);
     return;
   }
 
