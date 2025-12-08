@@ -302,17 +302,24 @@ export async function handleTicketTag(interaction: ChatInputCommandInteraction) 
     const ticketId = interaction.options.getInteger('ticket_id', true);
     const tag = interaction.options.getString('tag', true).toLowerCase();
     
+    // Get ticket before updating to check channel
+    const ticketBefore = tickets.getTicketById(ticketId);
+    if (!ticketBefore) {
+      return interaction.reply({ content: `❌ Ticket #${ticketId} not found.`, ephemeral: true });
+    }
+    
     const success = tickets.addTagToTicket(ticketId, tag);
     
     if (success) {
+      // Get updated ticket after adding tag
+      const ticket = tickets.getTicketById(ticketId);
+      
       // Try to send a message to the ticket channel
       try {
-        const ticket = tickets.getTicketById(ticketId);
         if (ticket && interaction.guild) {
           const channel = await interaction.guild.channels.fetch(ticket.channel_id).catch(() => null);
           if (channel && channel.isTextBased()) {
             const tags = ticket.tags ? JSON.parse(ticket.tags) : [];
-            tags.push(tag);
             const tagsDisplay = tags.map((t: string) => `\`${t}\``).join(', ');
             await (channel as any).send(`🏷️ Tag **${tag}** added by <@${interaction.user.id}>\n**Current tags:** ${tagsDisplay}`);
           }
@@ -322,7 +329,7 @@ export async function handleTicketTag(interaction: ChatInputCommandInteraction) 
       }
       return interaction.reply({ content: `✅ Tag **${tag}** added to ticket #${ticketId}.`, ephemeral: true });
     } else {
-      return interaction.reply({ content: `❌ Failed to add tag. Ticket may not exist or already has this tag.`, ephemeral: true });
+      return interaction.reply({ content: `❌ This ticket already has the tag **${tag}**.`, ephemeral: true });
     }
   }
   
@@ -330,16 +337,24 @@ export async function handleTicketTag(interaction: ChatInputCommandInteraction) 
     const ticketId = interaction.options.getInteger('ticket_id', true);
     const tag = interaction.options.getString('tag', true).toLowerCase();
     
+    // Get ticket before updating to check channel
+    const ticketBefore = tickets.getTicketById(ticketId);
+    if (!ticketBefore) {
+      return interaction.reply({ content: `❌ Ticket #${ticketId} not found.`, ephemeral: true });
+    }
+    
     const success = tickets.removeTagFromTicket(ticketId, tag);
     
     if (success) {
+      // Get updated ticket after removing tag
+      const ticket = tickets.getTicketById(ticketId);
+      
       // Try to send a message to the ticket channel
       try {
-        const ticket = tickets.getTicketById(ticketId);
         if (ticket && interaction.guild) {
           const channel = await interaction.guild.channels.fetch(ticket.channel_id).catch(() => null);
           if (channel && channel.isTextBased()) {
-            const tags = ticket.tags ? JSON.parse(ticket.tags).filter((t: string) => t !== tag) : [];
+            const tags = ticket.tags ? JSON.parse(ticket.tags) : [];
             const tagsDisplay = tags.length > 0 ? tags.map((t: string) => `\`${t}\``).join(', ') : 'None';
             await (channel as any).send(`🏷️ Tag **${tag}** removed by <@${interaction.user.id}>\n**Current tags:** ${tagsDisplay}`);
           }
@@ -349,7 +364,7 @@ export async function handleTicketTag(interaction: ChatInputCommandInteraction) 
       }
       return interaction.reply({ content: `✅ Tag **${tag}** removed from ticket #${ticketId}.`, ephemeral: true });
     } else {
-      return interaction.reply({ content: `❌ Failed to remove tag. Ticket may not exist or doesn't have this tag.`, ephemeral: true });
+      return interaction.reply({ content: `❌ This ticket doesn't have the tag **${tag}**.`, ephemeral: true });
     }
   }
   
