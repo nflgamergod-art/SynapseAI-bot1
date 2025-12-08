@@ -1440,12 +1440,15 @@ client.on('interactionCreate', async (interaction) => {
   // Payday payment submission modal
   if (customId.startsWith('payday_submit_')) {
     try {
+      console.log(`[Payday] Processing payment submission for ${interaction.user.tag} - Type: ${customId.split('_')[2]}`);
       await interaction.deferReply({ ephemeral: true });
 
       const parts = customId.split('_');
       const paymentType = parts[2]; // paypal, cashapp, venmo, btc, eth, ltc, usdt
       const guildId = parts[3]; // Guild ID embedded in modal
       const paydayId = parts.slice(4).join('_');
+
+      console.log(`[Payday] Payment type: ${paymentType}, Guild: ${guildId}, Payday ID: ${paydayId}`);
 
       const credentials = interaction.fields.getTextInputValue('credentials');
       const notes = interaction.fields.getTextInputValue('notes') || undefined;
@@ -1454,28 +1457,44 @@ client.on('interactionCreate', async (interaction) => {
 
       // Double-check not already submitted
       if (hasSubmittedForPayday(guildId, interaction.user.id, paydayId)) {
+        console.log(`[Payday] User ${interaction.user.tag} already submitted for this payday`);
         return interaction.editReply({ content: '✅ You have already submitted your payment details for this payday!' });
       }
 
-      // Get guild and fetch member to calculate pay
-      const guild = await interaction.client.guilds.fetch(guildId);
-      const member = await guild.members.fetch(interaction.user.id);
+      // Get guild and fetch member to calculate pay (with timeout)
+      console.log(`[Payday] Fetching guild ${guildId}...`);
+      const guild = await Promise.race([
+        interaction.client.guilds.fetch(guildId),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Guild fetch timeout')), 5000))
+      ]) as any;
+      
+      console.log(`[Payday] Fetching member ${interaction.user.id}...`);
+      const member = await Promise.race([
+        guild.members.fetch(interaction.user.id),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Member fetch timeout')), 5000))
+      ]) as any;
 
       // Calculate amount owed
+      console.log(`[Payday] Calculating amount owed...`);
       const unpaidBalance = getTotalUnpaidBalance(guildId, interaction.user.id);
-      const multiplier = getEffectivePayMultiplier(guildId, interaction.user.id, member.roles.cache.map(r => r.id));
+      const multiplier = getEffectivePayMultiplier(guildId, interaction.user.id, member.roles.cache.map((r: any) => r.id));
       const amountOwed = unpaidBalance.totalPay * multiplier;
+      console.log(`[Payday] Amount owed: $${amountOwed.toFixed(2)}`);
 
       // Save payment method for future use
+      console.log(`[Payday] Saving payment method...`);
       savePaymentMethod(guildId, interaction.user.id, paymentType, credentials, notes);
 
       // Record submission
+      console.log(`[Payday] Recording submission...`);
       recordPaydaySubmission(guildId, interaction.user.id, paydayId, paymentType, credentials, amountOwed);
 
       // Confirm to user
+      console.log(`[Payday] Sending confirmation to user...`);
       await interaction.editReply({ 
         content: `✅ **Payment details submitted successfully!**\n\n**Method:** ${paymentType.toUpperCase()}\n**Amount:** $${amountOwed.toFixed(2)}\n\nYour payment information has been sent to the owner. You will receive payment soon! 💰`
       });
+      console.log(`[Payday] User confirmation sent successfully`);
 
       // Send to owner (wrapped in try-catch so it doesn't block user confirmation)
       try {
@@ -1512,9 +1531,20 @@ client.on('interactionCreate', async (interaction) => {
       }
 
       return;
-    } catch (error) {
-      console.error('Error processing payday submission modal:', error);
-      return interaction.editReply({ content: '❌ An error occurred while processing your payment details. Please try again or contact an administrator.' }).catch(() => {});
+    } catch (error: any) {
+      console.error('[Payday] Error processing payday submission modal:', error);
+      console.error('[Payday] Error details:', {
+        message: error?.message,
+        stack: error?.stack,
+        userId: interaction.user.id,
+        customId: customId
+      });
+      const errorMsg = error?.message || 'Unknown error';
+      return interaction.editReply({ 
+        content: `❌ An error occurred while processing your payment details.\n\n**Error:** ${errorMsg}\n\nPlease try again or contact an administrator.` 
+      }).catch(e => {
+        console.error('[Payday] Failed to send error message:', e);
+      });
     }
   }
   
@@ -1967,17 +1997,28 @@ client.on("interactionCreate", async (interaction) => {
         try {
           const [, ticketIdStr] = btn.split(':');
           const ticketId = parseInt(ticketIdStr);
+          console.log(`[Ticket] Close button clicked - Ticket ID: ${ticketId}, Channel: ${interaction.channel?.id}`);
 
           if (!interaction.guild || !interaction.channel) {
+            console.log(`[Ticket] Invalid context - Guild: ${!!interaction.guild}, Channel: ${!!interaction.channel}`);
             return interaction.reply({ content: '❌ Invalid context.', ephemeral: true });
           }
 
-          const { getTicketById, closeTicket } = await import('./services/tickets');
-          const ticket = getTicketById(ticketId);
+          const { getTicketById, closeTicket, getTicket } = await import('./services/tickets');
+          
+          // Try both methods to find the ticket
+          let ticket = getTicketById(ticketId);
+          if (!ticket) {
+            console.log(`[Ticket] Not found by ID ${ticketId}, trying by channel ${interaction.channel.id}`);
+            ticket = getTicket(interaction.channel.id);
+          }
 
           if (!ticket) {
-            return interaction.reply({ content: '❌ Ticket not found.', ephemeral: true });
+            console.log(`[Ticket] Ticket not found - ID: ${ticketId}, Channel: ${interaction.channel.id}`);
+            return interaction.reply({ content: `❌ Ticket not found. (ID: ${ticketId})`, ephemeral: true });
           }
+          
+          console.log(`[Ticket] Found ticket - ID: ${ticket.id}, Status: ${ticket.status}, Owner: ${ticket.user_id}`);
 
           if (ticket.status === 'closed') {
             return interaction.reply({ content: '❌ This ticket is already closed.', ephemeral: true });
@@ -5140,6 +5181,8 @@ client.on("interactionCreate", async (interaction) => {
     }
 
     if (subCmd === "claim") {
+      console.log(`[Ticket] Claim command used in channel ${interaction.channel?.id} by ${interaction.user.tag}`);
+      
       if (!interaction.channel || !('guild' in interaction.channel)) {
         return interaction.reply({ content: 'This command must be used in a ticket channel.', ephemeral: true });
       }
@@ -5148,8 +5191,11 @@ client.on("interactionCreate", async (interaction) => {
       const ticket = getTicket(interaction.channel.id);
 
       if (!ticket) {
+        console.log(`[Ticket] No ticket found for channel ${interaction.channel.id}`);
         return interaction.reply({ content: '❌ This is not a ticket channel.', ephemeral: true });
       }
+      
+      console.log(`[Ticket] Found ticket - ID: ${ticket.id}, Claimed by: ${ticket.claimed_by || 'none'}`);
 
       if (ticket.claimed_by) {
         return interaction.reply({ content: `❌ This ticket is already claimed by <@${ticket.claimed_by}>.`, ephemeral: true });
@@ -9373,17 +9419,10 @@ client.on("messageCreate", async (message: Message) => {
 
   // Wake word or mention -> conversational reply
   try {
-    // If this is a reply to the bot's message, don't trigger wake word handler (already handled by handleReply)
-    if (message.reference?.messageId) {
-      try {
-        const repliedTo = await message.channel.messages.fetch(message.reference.messageId);
-        if (repliedTo.author.id === client.user?.id) {
-          console.log(`[DEBUG] Skipping wake word check - this is a reply to bot's message (already handled)`);
-          return; // Already handled by handleReply above, don't process again
-        }
-      } catch (e) {
-        // Message might be deleted, continue processing
-      }
+    // If this is a reply to the bot's message, handleReply already processed it above
+    if (message.reference?.messageId && handledByReplySystem) {
+      console.log(`[DEBUG] Skipping wake word check - reply was already handled by handleReply`);
+      return; // Already handled, don't process again to avoid double responses
     }
     
     if (isWakeWord(message, wakeWord)) {
