@@ -1344,6 +1344,85 @@ client.once('clientReady', async () => {
         { name: "enabled", description: "Enable or disable", type: 5, required: true }
       ] }
     ] },
+    // Shift Management System
+    { name: "clockin", description: "⏰ Clock in for your shift", options: [] },
+    { name: "clockout", description: "⏰ Clock out from your shift", options: [] },
+    { name: "shifts", description: "📊 View shift information", options: [
+      { name: "user", description: "View shifts for a specific user", type: 6, required: false }
+    ] },
+    { name: "shiftstats", description: "📈 View detailed shift statistics", options: [
+      { name: "user", description: "View stats for a specific user", type: 6, required: false }
+    ] },
+    { name: "whosonduty", description: "👥 See who's currently on duty", options: [] },
+    // Payroll System
+    { name: "payroll", description: "💰 Manage payroll and compensation", options: [
+      { name: "viewbalance", description: "View your unpaid balance", type: 1, options: [
+        { name: "user", description: "User to check (owner only)", type: 6, required: false }
+      ] },
+      { name: "config", description: "Configure payroll settings (owner only)", type: 1, options: [
+        { name: "hourly_rate", description: "Hourly pay rate", type: 10, required: false },
+        { name: "bonus_rate", description: "Bonus rate per ticket", type: 10, required: false }
+      ] },
+      { name: "calculate", description: "Calculate pay for a period (owner only)", type: 1, options: [
+        { name: "user", description: "User to calculate pay for", type: 6, required: true },
+        { name: "start_date", description: "Start date (YYYY-MM-DD)", type: 3, required: true },
+        { name: "end_date", description: "End date (YYYY-MM-DD)", type: 3, required: true }
+      ] },
+      { name: "unpaid", description: "View unpaid pay periods (owner only)", type: 1, options: [
+        { name: "user", description: "Filter by user", type: 6, required: false }
+      ] },
+      { name: "markpaid", description: "Mark pay period as paid (owner only)", type: 1, options: [
+        { name: "period_id", description: "Pay period ID", type: 4, required: true }
+      ] },
+      { name: "history", description: "View payment history (owner only)", type: 1, options: [
+        { name: "user", description: "User to view history for", type: 6, required: true }
+      ] },
+      { name: "adjust", description: "Adjust pay multiplier (owner only)", type: 1, options: [
+        { name: "user", description: "User to adjust (optional)", type: 6, required: false },
+        { name: "role", description: "Role to adjust (optional)", type: 8, required: false },
+        { name: "multiplier", description: "Pay multiplier (e.g., 1.5 for 50% bonus)", type: 10, required: true },
+        { name: "reason", description: "Reason for adjustment", type: 3, required: true }
+      ] },
+      { name: "removeadjustment", description: "Remove pay adjustment (owner only)", type: 1, options: [
+        { name: "user", description: "User to remove adjustment from", type: 6, required: false },
+        { name: "role", description: "Role to remove adjustment from", type: 8, required: false }
+      ] },
+      { name: "listpay", description: "List all pay adjustments (owner only)", type: 1 }
+    ] },
+    // Attendance & UPT System
+    { name: "upt", description: "💳 Manage Unpaid Time Off (UPT)", options: [
+      { name: "balance", description: "Check your UPT balance", type: 1 },
+      { name: "history", description: "View your UPT usage history", type: 1 },
+      { name: "leaderboard", description: "View UPT leaderboard", type: 1 },
+      { name: "adjust", description: "Adjust UPT balance (owner only)", type: 1, options: [
+        { name: "user", description: "User to adjust", type: 6, required: true },
+        { name: "minutes", description: "Minutes to add (positive) or remove (negative)", type: 4, required: true },
+        { name: "reason", description: "Reason for adjustment", type: 3, required: true }
+      ] }
+    ] },
+    { name: "attendance", description: "📋 Attendance and write-up management", options: [
+      { name: "stats", description: "View your attendance stats", type: 1 },
+      { name: "writeup", description: "Issue a write-up (owner only)", type: 1, options: [
+        { name: "user", description: "User to write up", type: 6, required: true },
+        { name: "reason", description: "Reason for write-up", type: 3, required: true },
+        { name: "severity", description: "Severity level", type: 3, required: true, choices: [
+          { name: "Standard", value: "standard" },
+          { name: "Severe", value: "severe" }
+        ] },
+        { name: "notes", description: "Additional notes", type: 3, required: false }
+      ] },
+      { name: "clear", description: "Clear all write-ups for a user (owner only)", type: 1, options: [
+        { name: "user", description: "User to clear write-ups for", type: 6, required: true }
+      ] },
+      { name: "report", description: "View attendance report (owner only)", type: 1, options: [
+        { name: "user", description: "User to view report for", type: 6, required: true }
+      ] }
+    ] },
+    // Scheduling System
+    { name: "schedule", description: "📅 View and manage staff schedules", options: [
+      { name: "view", description: "View the current weekly schedule", type: 1 },
+      { name: "generate", description: "Generate a new schedule (owner only)", type: 1 }
+    ] },
     // Staff Promotion System
     { name: "promotion", description: "🎯 Manage staff promotion system", options: [
       { name: "check", description: "Run promotion check now", type: 1 },
