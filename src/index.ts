@@ -1650,14 +1650,22 @@ client.once('clientReady', async () => {
 
   // Update the PRIORITY_NAMES set to include the new commands
   const PRIORITY_NAMES = new Set<string>([
-    'achievements', 'claimperks', 'kb', 'leaderboard', 'perks', 'setcolor', 'supportstats', 'whitelist',
-    'diagcommands', // Ensure diagcommands is prioritized
-    'help', 'ping', 'redeploy', 'cmdpermissions', 'abusebypass',
-    // Shift commands - essential for staff management
-    'clockin', 'clockout', 'shifts', 'shiftstats', 'whosonduty', 'balance',
+    // Core system commands
+    'help', 'ping', 'redeploy', 'diagcommands', 'cmdpermissions', 'abusebypass',
+    // Shift & Payroll - CRITICAL for staff operations
+    'clockin', 'clockout', 'shifts', 'shiftstats', 'whosonduty', 'payroll', 'schedule',
+    'upt', 'attendance',
+    // Staff Management - CRITICAL
+    'staffactivity', 'promotion', 'staffsuspension',
     // Ticket system commands - PRIORITY
     'ticket', 'ticketsla', 'tickettag', 'ticketnote', 'ticketanalytics', 'ticketcategory',
-    'ticketfeedback', 'autoresponse', 'staffexpertise', 'ticketrouting'
+    'ticketfeedback', 'autoresponse', 'staffexpertise', 'ticketrouting',
+    // Support & Rewards
+    'supportstats', 'achievements', 'claimperks', 'perks', 'leaderboard',
+    // Moderation essentials
+    'warn', 'mute', 'unmute', 'kick', 'ban', 'unban', 'timeout', 'cases',
+    // Configuration
+    'kb', 'setcolor', 'whitelist', 'appeal', 'appealhistory'
   ]);
   
   // Adjust the buildFinalCommands function to ensure prioritized commands are included
