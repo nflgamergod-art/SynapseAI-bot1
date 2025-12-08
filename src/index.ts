@@ -1484,6 +1484,54 @@ client.once('clientReady', async () => {
       { name: "view", description: "View category details and custom fields", type: 1, options: [
         { name: "name", description: "Category name", type: 3, required: true }
       ] }
+    ] },
+    // Advanced Ticket Feature Commands
+    { name: "ticketfeedback", description: "📊 View ticket feedback and staff performance", default_member_permissions: "32", options: [
+      { name: "staff-stats", description: "View staff performance metrics", type: 1, options: [
+        { name: "staff", description: "Staff member to view stats for", type: 6, required: true }
+      ] }
+    ] },
+    { name: "autoresponse", description: "🤖 Manage automatic responses for common questions", default_member_permissions: "32", options: [
+      { name: "create", description: "Create an auto-response", type: 1, options: [
+        { name: "keywords", description: "Trigger keywords (comma-separated)", type: 3, required: true },
+        { name: "response", description: "Response message", type: 3, required: true },
+        { name: "category", description: "Limit to specific category (optional)", type: 3, required: false }
+      ] },
+      { name: "list", description: "List all auto-responses", type: 1 },
+      { name: "delete", description: "Delete an auto-response", type: 1, options: [
+        { name: "id", description: "Auto-response ID", type: 4, required: true }
+      ] },
+      { name: "toggle", description: "Enable/disable an auto-response", type: 1, options: [
+        { name: "id", description: "Auto-response ID", type: 4, required: true },
+        { name: "enabled", description: "Enable or disable", type: 5, required: true }
+      ] }
+    ] },
+    { name: "staffexpertise", description: "🎓 Manage staff expertise for smart ticket routing", default_member_permissions: "32", options: [
+      { name: "set", description: "Set staff expertise tags", type: 1, options: [
+        { name: "staff", description: "Staff member", type: 6, required: true },
+        { name: "tags", description: "Expertise tags (comma-separated)", type: 3, required: true },
+        { name: "specialization", description: "Brief specialization description", type: 3, required: false },
+        { name: "auto_assign", description: "Enable auto-assignment", type: 5, required: false }
+      ] },
+      { name: "view", description: "View staff expertise", type: 1, options: [
+        { name: "staff", description: "Staff member", type: 6, required: true }
+      ] },
+      { name: "list", description: "List all staff expertise", type: 1 }
+    ] },
+    { name: "ticketrouting", description: "🎯 Configure automatic ticket assignment", default_member_permissions: "32", options: [
+      { name: "config", description: "Configure routing settings", type: 1, options: [
+        { name: "mode", description: "Routing mode", type: 3, required: false, choices: [
+          { name: "Round Robin - Fair rotation", value: "round-robin" },
+          { name: "Load Balance - Assign to least busy", value: "load-balance" },
+          { name: "Expertise - Match tags with staff skills", value: "expertise" },
+          { name: "Shift Based - Only clocked-in staff", value: "shift-based" },
+          { name: "Manual - Disable auto-assignment", value: "manual" }
+        ] },
+        { name: "auto_assign", description: "Enable automatic assignment", type: 5, required: false },
+        { name: "require_on_duty", description: "Only assign to clocked-in staff", type: 5, required: false },
+        { name: "max_tickets_per_staff", description: "Maximum open tickets per staff member", type: 4, required: false }
+      ] },
+      { name: "workload", description: "View current staff workload", type: 1 }
     ] }
   ];
 
