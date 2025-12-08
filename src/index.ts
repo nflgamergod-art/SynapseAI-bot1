@@ -11,7 +11,7 @@ if (dotenvResult.error) {
 } else {
   console.log(`[Env] Loaded .env from ${envPath}. Keys: ${Object.keys(dotenvResult.parsed || {}).join(', ')}`);
 }
-import { Client, GatewayIntentBits, Partials, Message, PermissionsBitField, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, MessageFlags, ChannelType, ColorResolvable, ModalBuilder, TextInputBuilder, TextInputStyle } from "discord.js";
+import { Client, GatewayIntentBits, Partials, Message, PermissionsBitField, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, MessageFlags, ChannelType, ColorResolvable, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder } from "discord.js";
 import { isWakeWord, handleConversationalReply } from "./utils/responder";
 
 import { isOwnerId } from "./utils/owner";
@@ -264,6 +264,123 @@ client.on('interactionCreate', async (interaction) => {
     } catch (error) {
       console.error('Failed to create/assign color role:', error);
       return interaction.reply({ content: '❌ An error occurred while setting your color. Please try again or contact an admin.', ephemeral: true });
+    }
+  }
+  
+  // Handle ticket category selection
+  if (interaction.isStringSelectMenu() && interaction.customId === 'ticket-category-select') {
+    if (!interaction.guild) return;
+    
+    const categoryName = interaction.values[0];
+    const { getTicketCategory } = await import('./services/tickets');
+    const category = getTicketCategory(interaction.guild.id, categoryName);
+    
+    if (!category) {
+      return interaction.reply({ content: '❌ Category not found.', ephemeral: true });
+    }
+    
+    // Check if category has custom fields
+    if (category.custom_fields && category.custom_fields.length > 0) {
+      // Show modal with custom fields
+      const modal = new ModalBuilder()
+        .setCustomId(`ticket-modal:${categoryName}`)
+        .setTitle(`${category.emoji || '📁'} ${categoryName}`.slice(0, 45));
+      
+      // Add up to 5 fields (Discord modal limit)
+      const fieldsToShow = category.custom_fields.slice(0, 5);
+      
+      for (const field of fieldsToShow) {
+        const input = new TextInputBuilder()
+          .setCustomId(field.name)
+          .setLabel(field.label.slice(0, 45))
+          .setStyle(field.type === 'multiline' ? TextInputStyle.Paragraph : TextInputStyle.Short)
+          .setRequired(field.required)
+          .setPlaceholder(field.placeholder?.slice(0, 100) || `Enter ${field.label.toLowerCase()}`);
+        
+        if (field.type === 'multiline') {
+          input.setMinLength(10).setMaxLength(1000);
+        } else if (field.type === 'text') {
+          input.setMaxLength(200);
+        } else if (field.type === 'number') {
+          input.setMaxLength(20);
+        }
+        
+        const row = new ActionRowBuilder<TextInputBuilder>().addComponents(input);
+        modal.addComponents(row);
+      }
+      
+      await interaction.showModal(modal);
+    } else {
+      // No custom fields - create ticket directly
+      await interaction.deferReply({ ephemeral: true });
+      
+      const { createTicket, getTicketConfig, getSupportRoleIds, getTicketById } = await import('./services/tickets');
+      const config = getTicketConfig(interaction.guild.id);
+      
+      if (!config) {
+        return interaction.editReply({ content: '❌ Ticket system is not configured.' });
+      }
+      
+      const supportRoleIds = getSupportRoleIds(interaction.guild.id);
+      
+      // Create permission overwrites
+      const permissionOverwrites: any[] = [
+        { id: interaction.guild.id, deny: [PermissionsBitField.Flags.ViewChannel] },
+        { id: interaction.user.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory] },
+        { id: interaction.client.user!.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.ManageChannels] }
+      ];
+      
+      for (const roleId of supportRoleIds) {
+        permissionOverwrites.push({
+          id: roleId,
+          allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.AttachFiles, PermissionsBitField.Flags.EmbedLinks]
+        });
+      }
+      
+      try {
+        const ticketChannel = await interaction.guild.channels.create({
+          name: `ticket-${interaction.user.username}`,
+          type: 0,
+          parent: config.category_id,
+          permissionOverwrites: permissionOverwrites
+        });
+        
+        const ticketId = createTicket(interaction.guild.id, ticketChannel.id, interaction.user.id, categoryName);
+        const newTicket = getTicketById(ticketId);
+        
+        // Apply auto-tags if configured
+        if (category.auto_tags && category.auto_tags.length > 0) {
+          const { addTagToTicket } = await import('./services/tickets');
+          for (const tag of category.auto_tags) {
+            addTagToTicket(ticketId, tag);
+          }
+        }
+        
+        const tagsDisplay = newTicket ? formatTicketTags(newTicket) : '';
+        
+        const ticketEmbed = new EmbedBuilder()
+          .setTitle(`${category.emoji || '📁'} Ticket #${ticketId}`)
+          .setColor(parseInt(category.color?.replace('#', '') || '5865F2', 16))
+          .setDescription(`**Category:** ${categoryName}\n**Opened by:** <@${interaction.user.id}>${tagsDisplay}\n\nThanks for opening a ticket. Please wait for staff assistance.`)
+          .setFooter({ text: 'Use the button below or /ticket close to close this ticket' });
+        
+        const ticketActions = new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder().setCustomId(`ticket-close:${ticketId}`).setLabel('🔒 Close Ticket').setStyle(ButtonStyle.Danger)
+        );
+        
+        const supportMentions = supportRoleIds.length > 0 ? supportRoleIds.map(id => `<@&${id}>`).join(' ') : 'New ticket!';
+        
+        await ticketChannel.send({ 
+          content: `${supportMentions} - <@${interaction.user.id}>`, 
+          embeds: [ticketEmbed],
+          components: [ticketActions]
+        });
+        
+        return interaction.editReply({ content: `✅ Ticket created: <#${ticketChannel.id}>` });
+      } catch (e) {
+        console.error('[Ticket] Failed to create ticket:', e);
+        return interaction.editReply({ content: '❌ Failed to create ticket. Please try again or contact staff.' });
+      }
     }
   }
 });
@@ -1546,6 +1663,120 @@ client.on('interactionCreate', async (interaction) => {
     return;
   }
 
+  // Ticket creation modal with custom fields
+  if (customId.startsWith('ticket-modal:')) {
+    try {
+      if (!interaction.guild) return;
+      
+      const categoryName = customId.split(':')[1];
+      const { getTicketCategory, createTicket, getTicketConfig, getSupportRoleIds, getTicketById, setTicketCustomField, addTagToTicket } = await import('./services/tickets');
+      
+      const category = getTicketCategory(interaction.guild.id, categoryName);
+      if (!category) {
+        return interaction.reply({ content: '❌ Category not found.', ephemeral: true });
+      }
+      
+      const config = getTicketConfig(interaction.guild.id);
+      if (!config) {
+        return interaction.reply({ content: '❌ Ticket system is not configured.', ephemeral: true });
+      }
+      
+      await interaction.deferReply({ ephemeral: true });
+      
+      // Collect custom field values
+      const customFieldValues: { [key: string]: string } = {};
+      if (category.custom_fields) {
+        for (const field of category.custom_fields) {
+          const value = interaction.fields.getTextInputValue(field.name);
+          customFieldValues[field.name] = value;
+        }
+      }
+      
+      const supportRoleIds = getSupportRoleIds(interaction.guild.id);
+      
+      // Create permission overwrites
+      const permissionOverwrites: any[] = [
+        { id: interaction.guild.id, deny: [PermissionsBitField.Flags.ViewChannel] },
+        { id: interaction.user.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory] },
+        { id: interaction.client.user!.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.ManageChannels] }
+      ];
+      
+      for (const roleId of supportRoleIds) {
+        permissionOverwrites.push({
+          id: roleId,
+          allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.AttachFiles, PermissionsBitField.Flags.EmbedLinks]
+        });
+      }
+      
+      try {
+        const ticketChannel = await interaction.guild.channels.create({
+          name: `ticket-${interaction.user.username}`,
+          type: 0,
+          parent: config.category_id,
+          permissionOverwrites: permissionOverwrites
+        });
+        
+        const ticketId = createTicket(interaction.guild.id, ticketChannel.id, interaction.user.id, categoryName);
+        
+        // Save custom field values
+        for (const [fieldName, fieldValue] of Object.entries(customFieldValues)) {
+          setTicketCustomField(ticketId, fieldName, fieldValue);
+        }
+        
+        // Apply auto-tags if configured
+        if (category.auto_tags && category.auto_tags.length > 0) {
+          for (const tag of category.auto_tags) {
+            addTagToTicket(ticketId, tag);
+          }
+        }
+        
+        const newTicket = getTicketById(ticketId);
+        const tagsDisplay = newTicket ? formatTicketTags(newTicket) : '';
+        
+        // Build custom fields display
+        let fieldsDisplay = '';
+        if (category.custom_fields && category.custom_fields.length > 0) {
+          fieldsDisplay = '\n\n**Ticket Information:**\n';
+          for (const field of category.custom_fields) {
+            const value = customFieldValues[field.name] || 'Not provided';
+            fieldsDisplay += `**${field.label}:** ${value.length > 100 ? value.slice(0, 100) + '...' : value}\n`;
+          }
+        }
+        
+        const ticketEmbed = new EmbedBuilder()
+          .setTitle(`${category.emoji || '📁'} Ticket #${ticketId}`)
+          .setColor(parseInt(category.color?.replace('#', '') || '5865F2', 16))
+          .setDescription(`**Category:** ${categoryName}\n**Opened by:** <@${interaction.user.id}>${tagsDisplay}${fieldsDisplay}\n\nThanks for opening a ticket. Please wait for staff assistance.`)
+          .setFooter({ text: 'Use the button below or /ticket close to close this ticket' });
+        
+        const ticketActions = new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder().setCustomId(`ticket-close:${ticketId}`).setLabel('🔒 Close Ticket').setStyle(ButtonStyle.Danger)
+        );
+        
+        const supportMentions = supportRoleIds.length > 0 ? supportRoleIds.map(id => `<@&${id}>`).join(' ') : 'New ticket!';
+        
+        await ticketChannel.send({ 
+          content: `${supportMentions} - <@${interaction.user.id}>`, 
+          embeds: [ticketEmbed],
+          components: [ticketActions]
+        });
+        
+        return interaction.editReply({ content: `✅ Ticket created: <#${ticketChannel.id}>` });
+      } catch (e) {
+        console.error('[Ticket] Failed to create ticket with custom fields:', e);
+        return interaction.editReply({ content: '❌ Failed to create ticket. Please try again or contact staff.' });
+      }
+    } catch (e:any) {
+      console.error('Ticket modal handler failed:', e);
+      try {
+        if (!interaction.replied && !interaction.deferred) {
+          await interaction.reply({ content: '❌ Something went wrong creating the ticket.', ephemeral: true });
+        }
+      } catch {}
+    }
+    return;
+  }
+
   // Payday payment submission modal
   if (customId.startsWith('payday_submit_')) {
     try {
@@ -2009,7 +2240,7 @@ client.on("interactionCreate", async (interaction) => {
       if (btn === 'ticket-open') {
         try {
           if (!interaction.guild) return interaction.reply({ content: 'This can only be used in a server.', ephemeral: true });
-          const { getTicketConfig, createTicket, getUserTickets, isTicketBlacklisted, getTicketBlacklist } = await import('./services/tickets');
+          const { getTicketConfig, createTicket, getUserTickets, isTicketBlacklisted, getTicketBlacklist, getTicketCategories } = await import('./services/tickets');
           
           // Check if user is blacklisted
           if (isTicketBlacklisted(interaction.user.id, interaction.guild.id)) {
@@ -2031,6 +2262,31 @@ client.on("interactionCreate", async (interaction) => {
           if (openTicket) {
             return interaction.reply({ content: `❌ You already have an open ticket: <#${openTicket.channel_id}>`, ephemeral: true });
           }
+          
+          // Check if categories exist - show category selection
+          const categories = getTicketCategories(interaction.guild.id);
+          if (categories.length > 0) {
+            // Show category selection dropdown
+            const selectMenu = new StringSelectMenuBuilder()
+              .setCustomId('ticket-category-select')
+              .setPlaceholder('Select a ticket category')
+              .addOptions(categories.map(cat => ({
+                label: cat.name,
+                value: cat.name,
+                description: cat.description?.slice(0, 100) || 'No description',
+                emoji: cat.emoji || '📁'
+              })));
+            
+            const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
+            
+            return interaction.reply({
+              content: '**Please select a ticket category:**',
+              components: [row],
+              ephemeral: true
+            });
+          }
+          
+          // No categories - use old flow (continue with default ticket creation)
           
           // Get support roles to grant them access
           const { getSupportRoleIds } = await import('./services/tickets');
