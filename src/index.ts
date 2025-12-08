@@ -1948,7 +1948,11 @@ client.on("interactionCreate", async (interaction) => {
             parent: config.category_id,
             permissionOverwrites
           });
+          
+          // Create ticket in database AFTER channel is created successfully
           const ticketId = createTicket(interaction.guild.id, (ticketChannel as any).id, interaction.user.id, 'general');
+          console.log(`[Ticket] Created ticket #${ticketId} in channel ${ticketChannel.id} for user ${interaction.user.id}`);
+          
           const ticketEmbed = new EmbedBuilder()
             .setTitle(`🎫 Ticket #${ticketId}`)
             .setColor(0x00AE86)
@@ -1963,13 +1967,25 @@ client.on("interactionCreate", async (interaction) => {
             ? supportRoleIds.map(id => `<@&${id}>`).join(' ')
             : 'New ticket!';
 
-          await (ticketChannel as any).send({ 
-            content: `${supportMentions} - <@${interaction.user.id}>`, 
-            embeds: [ticketEmbed],
-            components: [ticketActions]
-          });
+          try {
+            await (ticketChannel as any).send({ 
+              content: `${supportMentions} - <@${interaction.user.id}>`, 
+              embeds: [ticketEmbed],
+              components: [ticketActions]
+            });
+            console.log(`[Ticket] Successfully sent initial message to ticket #${ticketId}`);
+          } catch (sendError) {
+            console.error(`[Ticket] Failed to send initial message to ticket #${ticketId}:`, sendError);
+            // Ticket still exists, just notify user with warning
+            return interaction.reply({ 
+              content: `⚠️ Ticket created but initial message failed. Please use <#${(ticketChannel as any).id}> - Ticket #${ticketId}`, 
+              ephemeral: true 
+            });
+          }
+          
           return interaction.reply({ content: `✅ Ticket created: <#${(ticketChannel as any).id}>`, ephemeral: true });
         } catch (e) {
+          console.error('[Ticket] Failed to create ticket:', e);
           return interaction.reply({ content: '❌ Failed to create ticket. Please try again or contact staff.', ephemeral: true });
         }
       }
