@@ -2987,6 +2987,31 @@ client.on("interactionCreate", async (interaction) => {
   const enhancedHandled = await handleEnhancedCommands(interaction as any);
   if (enhancedHandled) return;
 
+  // Phase 1 Advanced Ticket Commands
+  if (name === 'ticketsla') {
+    const { handleTicketSLA } = await import('./commands/advancedTickets');
+    await handleTicketSLA(interaction);
+    return;
+  }
+  
+  if (name === 'tickettag') {
+    const { handleTicketTag } = await import('./commands/advancedTickets');
+    await handleTicketTag(interaction);
+    return;
+  }
+  
+  if (name === 'ticketnote') {
+    const { handleTicketNote } = await import('./commands/advancedTickets');
+    await handleTicketNote(interaction);
+    return;
+  }
+  
+  if (name === 'ticketanalytics') {
+    const { handleTicketAnalytics } = await import('./commands/advancedTickets');
+    await handleTicketAnalytics(interaction);
+    return;
+  }
+
   // Auto-Moderation Commands
   if (name === "automod") {
     if (!(await hasCommandAccess(interaction.member, 'automod', interaction.guild?.id || null))) {
