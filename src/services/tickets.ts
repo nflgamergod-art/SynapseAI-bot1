@@ -1032,9 +1032,9 @@ export function getTicketAnalytics(guildId: string, days: number = 30): TicketAn
   // Get ratings for top staff (requires support_interactions table)
   const topStaff = topStaffRaw.map(staff => {
     const avgRating = db.prepare(`
-      SELECT AVG(rating) as avg
+      SELECT AVG(satisfaction_rating) as avg
       FROM support_interactions
-      WHERE staff_user_id = ? AND created_at >= ?
+      WHERE support_member_id = ? AND started_at >= ?
     `).get(staff.user_id, cutoffISO) as any;
     
     return {
