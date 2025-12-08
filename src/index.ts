@@ -174,6 +174,18 @@ export const client = new Client({
   }
 });
 
+// Helper function to format ticket tags for display
+function formatTicketTags(ticket: any): string {
+  if (!ticket.tags) return '';
+  try {
+    const tags = JSON.parse(ticket.tags) as string[];
+    if (tags.length === 0) return '';
+    return `\n🏷️ **Tags:** ${tags.map((t: string) => `\`${t}\``).join(', ')}`;
+  } catch {
+    return '';
+  }
+}
+
 // Move the `interactionCreate` handler to ensure it is added after the `client` initialization
 client.on('interactionCreate', async (interaction) => {
   if (interaction.isStringSelectMenu() && interaction.customId === 'setcolor-menu') {
@@ -1770,10 +1782,11 @@ async function closeTicketWithFeedback(interaction: any, ticket: any, rating: nu
   if (config?.log_channel_id) {
     try {
       const logChannel = await interaction.guild?.channels.fetch(config.log_channel_id) as any;
+      const tagsDisplay = formatTicketTags(ticket);
       const logEmbed = new EmbedBuilder()
         .setTitle('🎫 Ticket Closed')
         .setColor(0x5865F2)
-        .setDescription(`**Rating:** ${rating}/10`)
+        .setDescription(`**Rating:** ${rating}/10${tagsDisplay}`)
         .addFields(
           { name: 'Ticket', value: `#${ticket.id} - ${ticket.category}`, inline: true },
           { name: 'User', value: `<@${ticket.user_id}>`, inline: true },
@@ -2021,10 +2034,14 @@ client.on("interactionCreate", async (interaction) => {
           const ticketId = createTicket(interaction.guild.id, (ticketChannel as any).id, interaction.user.id, 'general');
           console.log(`[Ticket] Created ticket #${ticketId} in channel ${ticketChannel.id} for user ${interaction.user.id}`);
           
+          const { getTicketById } = await import('./services/tickets');
+          const newTicket = getTicketById(ticketId);
+          const tagsDisplay = newTicket ? formatTicketTags(newTicket) : '';
+          
           const ticketEmbed = new EmbedBuilder()
             .setTitle(`🎫 Ticket #${ticketId}`)
             .setColor(0x00AE86)
-            .setDescription(`**Opened by:** <@${interaction.user.id}>\n\nThanks for opening a ticket. Please describe your issue and any details that can help us assist you.`)
+            .setDescription(`**Opened by:** <@${interaction.user.id}>${tagsDisplay}\n\nThanks for opening a ticket. Please describe your issue and any details that can help us assist you.`)
             .setFooter({ text: 'Use the button below or /ticket close to close this ticket' });
 
           const ticketActions = new ActionRowBuilder<ButtonBuilder>().addComponents(

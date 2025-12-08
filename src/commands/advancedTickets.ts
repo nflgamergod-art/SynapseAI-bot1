@@ -305,6 +305,21 @@ export async function handleTicketTag(interaction: ChatInputCommandInteraction) 
     const success = tickets.addTagToTicket(ticketId, tag);
     
     if (success) {
+      // Try to send a message to the ticket channel
+      try {
+        const ticket = tickets.getTicketById(ticketId);
+        if (ticket && interaction.guild) {
+          const channel = await interaction.guild.channels.fetch(ticket.channel_id).catch(() => null);
+          if (channel && channel.isTextBased()) {
+            const tags = ticket.tags ? JSON.parse(ticket.tags) : [];
+            tags.push(tag);
+            const tagsDisplay = tags.map((t: string) => `\`${t}\``).join(', ');
+            await (channel as any).send(`🏷️ Tag **${tag}** added by <@${interaction.user.id}>\n**Current tags:** ${tagsDisplay}`);
+          }
+        }
+      } catch (e) {
+        console.error('Failed to send tag update to channel:', e);
+      }
       return interaction.reply({ content: `✅ Tag **${tag}** added to ticket #${ticketId}.`, ephemeral: true });
     } else {
       return interaction.reply({ content: `❌ Failed to add tag. Ticket may not exist or already has this tag.`, ephemeral: true });
@@ -318,6 +333,20 @@ export async function handleTicketTag(interaction: ChatInputCommandInteraction) 
     const success = tickets.removeTagFromTicket(ticketId, tag);
     
     if (success) {
+      // Try to send a message to the ticket channel
+      try {
+        const ticket = tickets.getTicketById(ticketId);
+        if (ticket && interaction.guild) {
+          const channel = await interaction.guild.channels.fetch(ticket.channel_id).catch(() => null);
+          if (channel && channel.isTextBased()) {
+            const tags = ticket.tags ? JSON.parse(ticket.tags).filter((t: string) => t !== tag) : [];
+            const tagsDisplay = tags.length > 0 ? tags.map((t: string) => `\`${t}\``).join(', ') : 'None';
+            await (channel as any).send(`🏷️ Tag **${tag}** removed by <@${interaction.user.id}>\n**Current tags:** ${tagsDisplay}`);
+          }
+        }
+      } catch (e) {
+        console.error('Failed to send tag update to channel:', e);
+      }
       return interaction.reply({ content: `✅ Tag **${tag}** removed from ticket #${ticketId}.`, ephemeral: true });
     } else {
       return interaction.reply({ content: `❌ Failed to remove tag. Ticket may not exist or doesn't have this tag.`, ephemeral: true });
