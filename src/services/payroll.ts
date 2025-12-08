@@ -562,11 +562,48 @@ export function checkDailyLimitReached(guildId: string, userId: string, currentS
   return false;
 }
 
-// Set 24h clock-in cooldown
-export function set24HourCooldown(guildId: string, userId: string): void {
+// Set smart cooldown based on schedule
+export function setSmartCooldown(guildId: string, userId: string): void {
   const db = getDB();
-  const cooldownUntil = new Date();
-  cooldownUntil.setHours(cooldownUntil.getHours() + 24);
+  const { getStaffSchedule, getCurrentWeekStart, getDayName } = require('./scheduling');
+  
+  const now = new Date();
+  const schedule = getStaffSchedule(guildId, userId, getCurrentWeekStart());
+  
+  // Default to 24 hours if no schedule
+  if (!schedule || schedule.length === 0) {
+    const cooldownUntil = new Date(now);
+    cooldownUntil.setHours(cooldownUntil.getHours() + 24);
+    
+    db.prepare(`
+      INSERT INTO payroll_cooldowns (guild_id, user_id, cooldown_until)
+      VALUES (?, ?, ?)
+      ON CONFLICT(guild_id, user_id)
+      DO UPDATE SET cooldown_until = ?
+    `).run(guildId, userId, cooldownUntil.toISOString(), cooldownUntil.toISOString());
+    return;
+  }
+  
+  // Get today and tomorrow
+  const today = getDayName(now);
+  const tomorrow = new Date(now);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const tomorrowDay = getDayName(tomorrow);
+  
+  // Check if scheduled tomorrow (back-to-back)
+  const isScheduledTomorrow = schedule.includes(tomorrowDay);
+  
+  let cooldownUntil: Date;
+  
+  if (isScheduledTomorrow) {
+    // Back-to-back shifts: Set cooldown to midnight (12 AM) tomorrow
+    cooldownUntil = new Date(tomorrow);
+    cooldownUntil.setHours(0, 0, 0, 0);
+  } else {
+    // Not scheduled tomorrow: Standard 24-hour cooldown
+    cooldownUntil = new Date(now);
+    cooldownUntil.setHours(cooldownUntil.getHours() + 24);
+  }
   
   db.prepare(`
     INSERT INTO payroll_cooldowns (guild_id, user_id, cooldown_until)
@@ -574,6 +611,11 @@ export function set24HourCooldown(guildId: string, userId: string): void {
     ON CONFLICT(guild_id, user_id)
     DO UPDATE SET cooldown_until = ?
   `).run(guildId, userId, cooldownUntil.toISOString(), cooldownUntil.toISOString());
+}
+
+// Set 24h clock-in cooldown (legacy function - now calls smart cooldown)
+export function set24HourCooldown(guildId: string, userId: string): void {
+  setSmartCooldown(guildId, userId);
 }
 
 // Check if user is on cooldown
