@@ -223,7 +223,7 @@ export function generateWeeklySchedule(guildId: string, weekStart: string): Map<
     return schedule;
   }
   
-  const daysOfWeek = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+  const daysOfWeek = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
   const dayAssignments = new Map<string, string[]>(); // day -> [userIds]
   
   // Initialize day assignments
@@ -234,7 +234,7 @@ export function generateWeeklySchedule(guildId: string, weekStart: string): Map<
     a.preferredDays.length - b.preferredDays.length
   );
   
-  // Assign 3-4 days to each staff member based on their preferences
+  // ENSURE ALL STAFF GET SCHEDULED: Assign 3-4 days to EVERY staff member
   for (const staff of sortedStaff) {
     const targetDays = Math.random() < 0.5 ? 3 : 4; // Random between 3-4 days
     const assignedDays: string[] = [];
@@ -254,14 +254,15 @@ export function generateWeeklySchedule(guildId: string, weekStart: string): Map<
       const dayLower = day.toLowerCase();
       const currentAssigned = dayAssignments.get(dayLower) || [];
       
-      // Limit to avoid overloading one day (max 3 staff per day for balance)
-      if (currentAssigned.length < 3) {
+      // Limit to avoid overloading one day (max 5 staff per day for balance - increased from 3)
+      if (currentAssigned.length < 5) {
         assignedDays.push(dayLower);
         currentAssigned.push(staff.userId);
         dayAssignments.set(dayLower, currentAssigned);
       }
     }
     
+    // CRITICAL: Ensure minimum days are assigned to ALL staff
     // If still need more days, assign from less-crowded days
     if (assignedDays.length < targetDays) {
       const remainingDays = daysOfWeek
@@ -286,6 +287,7 @@ export function generateWeeklySchedule(guildId: string, weekStart: string): Map<
       daysOfWeek.indexOf(a) - daysOfWeek.indexOf(b)
     );
     
+    // ALWAYS add staff to schedule map - ensures ALL staff are scheduled
     schedule.set(staff.userId, sortedDays);
   }
   
