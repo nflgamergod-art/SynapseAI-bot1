@@ -1365,7 +1365,9 @@ client.once('clientReady', async () => {
     'diagcommands', // Ensure diagcommands is prioritized
     'help', 'ping', 'redeploy', 'cmdpermissions', 'abusebypass',
     // Shift commands - essential for staff management
-    'clockin', 'clockout', 'shifts', 'shiftstats', 'whosonduty'
+    'clockin', 'clockout', 'shifts', 'shiftstats', 'whosonduty',
+    // Phase 1 Advanced Ticket Commands - PRIORITY
+    'ticketsla', 'tickettag', 'ticketnote', 'ticketanalytics'
   ]);
   
   // Adjust the buildFinalCommands function to ensure prioritized commands are included
