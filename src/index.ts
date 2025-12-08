@@ -8928,6 +8928,22 @@ client.on("messageCreate", async (message: Message) => {
       const ticket = getTicket(message.channel.id);
       if (ticket && ticket.user_id === message.author.id && ticket.status !== 'closed') {
         updateTicketLastMessage(message.channel.id);
+        
+        // Check for auto-responses when ticket owner sends a message
+        try {
+          const { findMatchingAutoResponse } = await import('./services/tickets');
+          const autoResponse = findMatchingAutoResponse(message.guild!.id, message.content, ticket.category);
+          
+          if (autoResponse) {
+            await message.reply({
+              content: `🤖 **Auto-Response:**\n\n${autoResponse.response_message}`,
+              allowedMentions: { repliedUser: false }
+            });
+            console.log(`[AutoResponse] Sent auto-response ${autoResponse.id} in ticket #${ticket.id}`);
+          }
+        } catch (err) {
+          console.error('[AutoResponse] Failed to check/send auto-response:', err);
+        }
       }
     } catch (err) {
       console.error('[Tickets] Failed to update last message timestamp:', err);
