@@ -211,6 +211,132 @@ export const commands = [
         .setName('name')
         .setDescription('Category name')
         .setRequired(true)))
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+
+  // ==================== FEEDBACK COMMANDS ====================
+  new SlashCommandBuilder()
+    .setName('ticketfeedback')
+    .setDescription('View ticket feedback and staff performance')
+    .addSubcommand(sub => sub
+      .setName('staff-stats')
+      .setDescription('View staff performance metrics')
+      .addUserOption(opt => opt
+        .setName('staff')
+        .setDescription('Staff member to view stats for')
+        .setRequired(true)))
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+
+  // ==================== AUTO-RESPONSE COMMANDS ====================
+  new SlashCommandBuilder()
+    .setName('autoresponse')
+    .setDescription('Manage automatic responses for common questions')
+    .addSubcommand(sub => sub
+      .setName('create')
+      .setDescription('Create an auto-response')
+      .addStringOption(opt => opt
+        .setName('keywords')
+        .setDescription('Trigger keywords (comma-separated)')
+        .setRequired(true))
+      .addStringOption(opt => opt
+        .setName('response')
+        .setDescription('Response message')
+        .setRequired(true))
+      .addStringOption(opt => opt
+        .setName('category')
+        .setDescription('Limit to specific category (optional)')
+        .setRequired(false)))
+    .addSubcommand(sub => sub
+      .setName('list')
+      .setDescription('List all auto-responses'))
+    .addSubcommand(sub => sub
+      .setName('delete')
+      .setDescription('Delete an auto-response')
+      .addIntegerOption(opt => opt
+        .setName('id')
+        .setDescription('Auto-response ID')
+        .setRequired(true)))
+    .addSubcommand(sub => sub
+      .setName('toggle')
+      .setDescription('Enable/disable an auto-response')
+      .addIntegerOption(opt => opt
+        .setName('id')
+        .setDescription('Auto-response ID')
+        .setRequired(true))
+      .addBooleanOption(opt => opt
+        .setName('enabled')
+        .setDescription('Enable or disable')
+        .setRequired(true)))
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+
+  // ==================== STAFF EXPERTISE COMMANDS ====================
+  new SlashCommandBuilder()
+    .setName('staffexpertise')
+    .setDescription('Manage staff expertise for smart ticket routing')
+    .addSubcommand(sub => sub
+      .setName('set')
+      .setDescription('Set staff expertise tags')
+      .addUserOption(opt => opt
+        .setName('staff')
+        .setDescription('Staff member')
+        .setRequired(true))
+      .addStringOption(opt => opt
+        .setName('tags')
+        .setDescription('Expertise tags (comma-separated, e.g., billing, technical, refunds)')
+        .setRequired(true))
+      .addStringOption(opt => opt
+        .setName('specialization')
+        .setDescription('Brief specialization description')
+        .setRequired(false))
+      .addBooleanOption(opt => opt
+        .setName('auto_assign')
+        .setDescription('Enable auto-assignment for this staff member')
+        .setRequired(false)))
+    .addSubcommand(sub => sub
+      .setName('view')
+      .setDescription('View staff expertise')
+      .addUserOption(opt => opt
+        .setName('staff')
+        .setDescription('Staff member')
+        .setRequired(true)))
+    .addSubcommand(sub => sub
+      .setName('list')
+      .setDescription('List all staff expertise'))
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+
+  // ==================== TICKET ROUTING COMMANDS ====================
+  new SlashCommandBuilder()
+    .setName('ticketrouting')
+    .setDescription('Configure automatic ticket assignment')
+    .addSubcommand(sub => sub
+      .setName('config')
+      .setDescription('Configure routing settings')
+      .addStringOption(opt => opt
+        .setName('mode')
+        .setDescription('Routing mode')
+        .setRequired(false)
+        .addChoices(
+          { name: 'Round Robin - Fair rotation', value: 'round-robin' },
+          { name: 'Load Balance - Assign to least busy', value: 'load-balance' },
+          { name: 'Expertise - Match tags with staff skills', value: 'expertise' },
+          { name: 'Shift Based - Only clocked-in staff', value: 'shift-based' },
+          { name: 'Manual - Disable auto-assignment', value: 'manual' }))
+      .addBooleanOption(opt => opt
+        .setName('auto_assign')
+        .setDescription('Enable automatic assignment')
+        .setRequired(false))
+      .addBooleanOption(opt => opt
+        .setName('require_on_duty')
+        .setDescription('Only assign to clocked-in staff')
+        .setRequired(false))
+      .addIntegerOption(opt => opt
+        .setName('max_tickets_per_staff')
+        .setDescription('Maximum open tickets per staff member')
+        .setRequired(false)
+        .setMinValue(1)
+        .setMaxValue(20)))
+    .addSubcommand(sub => sub
+      .setName('workload')
+      .setDescription('View current staff workload'))
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
 ];
 

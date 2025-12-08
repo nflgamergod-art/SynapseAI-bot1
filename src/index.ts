@@ -1529,7 +1529,8 @@ client.once('clientReady', async () => {
     // Shift commands - essential for staff management
     'clockin', 'clockout', 'shifts', 'shiftstats', 'whosonduty',
     // Ticket system commands - PRIORITY
-    'ticket', 'ticketsla', 'tickettag', 'ticketnote', 'ticketanalytics', 'ticketcategory'
+    'ticket', 'ticketsla', 'tickettag', 'ticketnote', 'ticketanalytics', 'ticketcategory',
+    'ticketfeedback', 'autoresponse', 'staffexpertise', 'ticketrouting'
   ]);
   
   // Adjust the buildFinalCommands function to ensure prioritized commands are included
@@ -1946,6 +1947,43 @@ async function closeTicketWithFeedback(interaction: any, ticket: any, rating: nu
     } catch (e) {
       console.error('Failed to end support interaction:', e);
     }
+  }
+
+  // Save detailed feedback to new system
+  try {
+    const { submitTicketFeedback, markFeedbackRewardGiven } = await import('./services/tickets');
+    const { awardDirectPoints } = await import('./services/rewards');
+    
+    // Determine helpful/improvement tags based on rating
+    const helpfulTags = rating >= 8 ? ['quick-response', 'professional', 'helpful'] : rating >= 6 ? ['resolved'] : [];
+    const improvementTags = rating < 6 ? ['response-time', 'clarity'] : [];
+    
+    const feedbackId = submitTicketFeedback(
+      ticket.id,
+      ticket.guild_id,
+      ticket.user_id,
+      ticket.claimed_by,
+      rating,
+      feedback,
+      helpfulTags.length > 0 ? helpfulTags : undefined,
+      improvementTags.length > 0 ? improvementTags : undefined
+    );
+    
+    // Check for automatic reward eligibility (rating >= 9)
+    if (rating >= 9 && ticket.claimed_by) {
+      const REWARD_POINTS = 50; // Bonus points for excellent support
+      awardDirectPoints(
+        ticket.claimed_by,
+        ticket.guild_id,
+        REWARD_POINTS,
+        `Excellent Support Bonus - Ticket #${ticket.id} (${rating}/10 rating)`,
+        'support' // Use support category for bonus
+      );
+      markFeedbackRewardGiven(feedbackId);
+      console.log(`🎁 Awarded ${REWARD_POINTS} bonus points to ${ticket.claimed_by} for ${rating}/10 rating`);
+    }
+  } catch (e) {
+    console.error('Failed to save feedback:', e);
   }
 
   // Award points to claimer and helpers based on rating and feedback
@@ -3333,6 +3371,31 @@ client.on("interactionCreate", async (interaction) => {
   if (name === 'ticketcategory') {
     const { handleTicketCategory } = await import('./commands/advancedTickets');
     await handleTicketCategory(interaction);
+    return;
+  }
+  
+  // Advanced Ticket Feature Commands
+  if (name === 'ticketfeedback') {
+    const { handleTicketFeedback } = await import('./commands/advancedTicketFeatures');
+    await handleTicketFeedback(interaction);
+    return;
+  }
+  
+  if (name === 'autoresponse') {
+    const { handleAutoResponse } = await import('./commands/advancedTicketFeatures');
+    await handleAutoResponse(interaction);
+    return;
+  }
+  
+  if (name === 'staffexpertise') {
+    const { handleStaffExpertise } = await import('./commands/advancedTicketFeatures');
+    await handleStaffExpertise(interaction);
+    return;
+  }
+  
+  if (name === 'ticketrouting') {
+    const { handleTicketRouting } = await import('./commands/advancedTicketFeatures');
+    await handleTicketRouting(interaction);
     return;
   }
 

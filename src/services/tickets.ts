@@ -61,6 +61,58 @@ export interface TicketAnalytics {
   top_staff: { user_id: string; ticket_count: number; avg_rating: number }[];
 }
 
+export interface TicketFeedback {
+  id: number;
+  ticket_id: number;
+  guild_id: string;
+  user_id: string;
+  staff_id?: string;
+  rating: number; // 1-5
+  feedback_text?: string;
+  helpful_tags?: string; // JSON array
+  improvement_tags?: string; // JSON array
+  created_at: string;
+  reward_given: number;
+}
+
+export interface TicketAutoResponse {
+  id: number;
+  guild_id: string;
+  trigger_keywords: string; // JSON array
+  response_message: string;
+  category?: string;
+  enabled: number;
+  use_count: number;
+  created_at: string;
+}
+
+export interface TicketAISuggestion {
+  id: number;
+  ticket_id: number;
+  suggestion_text: string;
+  confidence: number;
+  helpful: number;
+  not_helpful: number;
+  created_at: string;
+}
+
+export interface StaffExpertise {
+  guild_id: string;
+  user_id: string;
+  expertise_tags: string; // JSON array
+  specialization?: string;
+  auto_assign: number;
+}
+
+export interface TicketRoutingConfig {
+  guild_id: string;
+  routing_mode: 'round-robin' | 'load-balance' | 'expertise' | 'shift-based' | 'manual';
+  auto_assign_enabled: number;
+  require_on_duty: number;
+  max_tickets_per_staff: number;
+  last_assigned_staff_id?: string;
+}
+
 // Initialize tickets tables
 export function initTicketsSchema() {
   const db = getDB();
@@ -154,6 +206,80 @@ export function initTicketsSchema() {
       FOREIGN KEY (ticket_id) REFERENCES tickets(id)
     );
     CREATE INDEX IF NOT EXISTS idx_ticket_custom_fields_ticket ON ticket_custom_fields(ticket_id);
+    
+    CREATE TABLE IF NOT EXISTS ticket_feedback (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ticket_id INTEGER NOT NULL,
+      guild_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      staff_id TEXT,
+      rating INTEGER NOT NULL CHECK(rating >= 1 AND rating <= 5),
+      feedback_text TEXT,
+      helpful_tags TEXT,
+      improvement_tags TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      reward_given INTEGER DEFAULT 0,
+      FOREIGN KEY (ticket_id) REFERENCES tickets(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_ticket_feedback_ticket ON ticket_feedback(ticket_id);
+    CREATE INDEX IF NOT EXISTS idx_ticket_feedback_staff ON ticket_feedback(staff_id);
+    CREATE INDEX IF NOT EXISTS idx_ticket_feedback_guild ON ticket_feedback(guild_id);
+    
+    CREATE TABLE IF NOT EXISTS ticket_auto_responses (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      guild_id TEXT NOT NULL,
+      trigger_keywords TEXT NOT NULL,
+      response_message TEXT NOT NULL,
+      category TEXT,
+      enabled INTEGER DEFAULT 1,
+      use_count INTEGER DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_ticket_auto_responses_guild ON ticket_auto_responses(guild_id);
+    
+    CREATE TABLE IF NOT EXISTS ticket_ai_suggestions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ticket_id INTEGER NOT NULL,
+      suggestion_text TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      helpful INTEGER DEFAULT 0,
+      not_helpful INTEGER DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (ticket_id) REFERENCES tickets(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_ticket_ai_suggestions_ticket ON ticket_ai_suggestions(ticket_id);
+    
+    CREATE TABLE IF NOT EXISTS staff_expertise (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      guild_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      expertise_tags TEXT NOT NULL,
+      specialization TEXT,
+      auto_assign INTEGER DEFAULT 1,
+      UNIQUE(guild_id, user_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_staff_expertise_guild ON staff_expertise(guild_id);
+    
+    CREATE TABLE IF NOT EXISTS ticket_routing_config (
+      guild_id TEXT PRIMARY KEY,
+      routing_mode TEXT DEFAULT 'round-robin' CHECK(routing_mode IN ('round-robin', 'load-balance', 'expertise', 'shift-based', 'manual')),
+      auto_assign_enabled INTEGER DEFAULT 1,
+      require_on_duty INTEGER DEFAULT 1,
+      max_tickets_per_staff INTEGER DEFAULT 5,
+      last_assigned_staff_id TEXT
+    );
+    
+    CREATE TABLE IF NOT EXISTS ticket_assignment_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ticket_id INTEGER NOT NULL,
+      staff_id TEXT NOT NULL,
+      assigned_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      assigned_by TEXT,
+      assignment_reason TEXT,
+      FOREIGN KEY (ticket_id) REFERENCES tickets(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_ticket_assignment_history_ticket ON ticket_assignment_history(ticket_id);
+    CREATE INDEX IF NOT EXISTS idx_ticket_assignment_history_staff ON ticket_assignment_history(staff_id);
   `);
   
   // Migrate existing database if needed
@@ -1298,6 +1424,437 @@ export function getEstimatedResolutionTime(guildId: string, category: string): n
   `).get(guildId, category) as any;
   
   return Math.round(result?.avg || 60); // Default 60 minutes if no data
+}
+
+// ==================== FEEDBACK SYSTEM ====================
+
+// Submit feedback for a ticket
+export function submitTicketFeedback(
+  ticketId: number,
+  guildId: string,
+  userId: string,
+  staffId: string | undefined,
+  rating: number,
+  feedbackText?: string,
+  helpfulTags?: string[],
+  improvementTags?: string[]
+): number {
+  const db = getDB();
+  const result = db.prepare(`
+    INSERT INTO ticket_feedback (
+      ticket_id, guild_id, user_id, staff_id, rating, feedback_text, 
+      helpful_tags, improvement_tags
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    ticketId, guildId, userId, staffId || null, rating, feedbackText || null,
+    helpfulTags ? JSON.stringify(helpfulTags) : null,
+    improvementTags ? JSON.stringify(improvementTags) : null
+  );
+  
+  return result.lastInsertRowid as number;
+}
+
+// Get feedback for a ticket
+export function getTicketFeedback(ticketId: number): TicketFeedback | null {
+  const db = getDB();
+  return db.prepare('SELECT * FROM ticket_feedback WHERE ticket_id = ?').get(ticketId) as TicketFeedback | null;
+}
+
+// Get staff performance metrics
+export function getStaffPerformanceMetrics(guildId: string, staffId: string): {
+  total_tickets: number;
+  avg_rating: number;
+  rating_count: number;
+  rating_breakdown: { [rating: number]: number };
+  avg_response_time: number;
+  avg_resolution_time: number;
+  positive_feedback_count: number;
+} {
+  const db = getDB();
+  
+  const feedbackStats = db.prepare(`
+    SELECT 
+      COUNT(*) as rating_count,
+      AVG(rating) as avg_rating,
+      SUM(CASE WHEN rating >= 4 THEN 1 ELSE 0 END) as positive_count
+    FROM ticket_feedback
+    WHERE guild_id = ? AND staff_id = ?
+  `).get(guildId, staffId) as any;
+  
+  const ratingBreakdown = db.prepare(`
+    SELECT rating, COUNT(*) as count
+    FROM ticket_feedback
+    WHERE guild_id = ? AND staff_id = ?
+    GROUP BY rating
+  `).all(guildId, staffId) as any[];
+  
+  const breakdown: { [rating: number]: number } = {};
+  ratingBreakdown.forEach(row => breakdown[row.rating] = row.count);
+  
+  const ticketStats = db.prepare(`
+    SELECT 
+      COUNT(*) as total_tickets,
+      AVG((julianday(first_response_at) - julianday(created_at)) * 24 * 60) as avg_response_time,
+      AVG((julianday(closed_at) - julianday(created_at)) * 24 * 60) as avg_resolution_time
+    FROM tickets
+    WHERE guild_id = ? AND claimed_by = ? AND closed_at IS NOT NULL
+  `).get(guildId, staffId) as any;
+  
+  return {
+    total_tickets: ticketStats?.total_tickets || 0,
+    avg_rating: feedbackStats?.avg_rating || 0,
+    rating_count: feedbackStats?.rating_count || 0,
+    rating_breakdown: breakdown,
+    avg_response_time: Math.round(ticketStats?.avg_response_time || 0),
+    avg_resolution_time: Math.round(ticketStats?.avg_resolution_time || 0),
+    positive_feedback_count: feedbackStats?.positive_count || 0
+  };
+}
+
+// Mark reward as given for feedback
+export function markFeedbackRewardGiven(feedbackId: number): void {
+  const db = getDB();
+  db.prepare('UPDATE ticket_feedback SET reward_given = 1 WHERE id = ?').run(feedbackId);
+}
+
+// ==================== AUTO-RESPONSES ====================
+
+// Create auto-response
+export function createAutoResponse(
+  guildId: string,
+  triggerKeywords: string[],
+  responseMessage: string,
+  category?: string
+): number {
+  const db = getDB();
+  const result = db.prepare(`
+    INSERT INTO ticket_auto_responses (guild_id, trigger_keywords, response_message, category)
+    VALUES (?, ?, ?, ?)
+  `).run(guildId, JSON.stringify(triggerKeywords), responseMessage, category || null);
+  
+  return result.lastInsertRowid as number;
+}
+
+// Get all auto-responses for guild
+export function getAutoResponses(guildId: string): TicketAutoResponse[] {
+  const db = getDB();
+  return db.prepare(`
+    SELECT * FROM ticket_auto_responses 
+    WHERE guild_id = ? AND enabled = 1
+    ORDER BY use_count DESC
+  `).all(guildId) as TicketAutoResponse[];
+}
+
+// Find matching auto-response
+export function findMatchingAutoResponse(guildId: string, message: string, category?: string): TicketAutoResponse | null {
+  const responses = getAutoResponses(guildId);
+  const messageLower = message.toLowerCase();
+  
+  for (const response of responses) {
+    if (category && response.category && response.category !== category) continue;
+    
+    const keywords = JSON.parse(response.trigger_keywords) as string[];
+    const matches = keywords.some(keyword => messageLower.includes(keyword.toLowerCase()));
+    
+    if (matches) {
+      // Increment use count
+      const db = getDB();
+      db.prepare('UPDATE ticket_auto_responses SET use_count = use_count + 1 WHERE id = ?').run(response.id);
+      return response;
+    }
+  }
+  
+  return null;
+}
+
+// Delete auto-response
+export function deleteAutoResponse(guildId: string, id: number): boolean {
+  const db = getDB();
+  const result = db.prepare('DELETE FROM ticket_auto_responses WHERE guild_id = ? AND id = ?').run(guildId, id);
+  return result.changes > 0;
+}
+
+// Toggle auto-response
+export function toggleAutoResponse(guildId: string, id: number, enabled: boolean): boolean {
+  const db = getDB();
+  const result = db.prepare('UPDATE ticket_auto_responses SET enabled = ? WHERE guild_id = ? AND id = ?')
+    .run(enabled ? 1 : 0, guildId, id);
+  return result.changes > 0;
+}
+
+// ==================== AI SUGGESTIONS ====================
+
+// Create AI suggestion
+export function createAISuggestion(ticketId: number, suggestionText: string, confidence: number): number {
+  const db = getDB();
+  const result = db.prepare(`
+    INSERT INTO ticket_ai_suggestions (ticket_id, suggestion_text, confidence)
+    VALUES (?, ?, ?)
+  `).run(ticketId, suggestionText, confidence);
+  
+  return result.lastInsertRowid as number;
+}
+
+// Get AI suggestions for ticket
+export function getAISuggestions(ticketId: number): TicketAISuggestion[] {
+  const db = getDB();
+  return db.prepare(`
+    SELECT * FROM ticket_ai_suggestions 
+    WHERE ticket_id = ? 
+    ORDER BY confidence DESC
+  `).all(ticketId) as TicketAISuggestion[];
+}
+
+// Rate AI suggestion
+export function rateAISuggestion(suggestionId: number, helpful: boolean): void {
+  const db = getDB();
+  const field = helpful ? 'helpful' : 'not_helpful';
+  db.prepare(`UPDATE ticket_ai_suggestions SET ${field} = ${field} + 1 WHERE id = ?`).run(suggestionId);
+}
+
+// ==================== STAFF EXPERTISE ====================
+
+// Set staff expertise
+export function setStaffExpertise(
+  guildId: string,
+  userId: string,
+  expertiseTags: string[],
+  specialization?: string,
+  autoAssign: boolean = true
+): void {
+  const db = getDB();
+  db.prepare(`
+    INSERT INTO staff_expertise (guild_id, user_id, expertise_tags, specialization, auto_assign)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(guild_id, user_id) DO UPDATE SET
+      expertise_tags = excluded.expertise_tags,
+      specialization = excluded.specialization,
+      auto_assign = excluded.auto_assign
+  `).run(guildId, userId, JSON.stringify(expertiseTags), specialization || null, autoAssign ? 1 : 0);
+}
+
+// Get staff expertise
+export function getStaffExpertise(guildId: string, userId: string): StaffExpertise | null {
+  const db = getDB();
+  return db.prepare('SELECT * FROM staff_expertise WHERE guild_id = ? AND user_id = ?')
+    .get(guildId, userId) as StaffExpertise | null;
+}
+
+// Get all staff with expertise
+export function getAllStaffExpertise(guildId: string): StaffExpertise[] {
+  const db = getDB();
+  return db.prepare('SELECT * FROM staff_expertise WHERE guild_id = ? AND auto_assign = 1')
+    .all(guildId) as StaffExpertise[];
+}
+
+// ==================== TICKET ROUTING ====================
+
+// Get or create routing config
+export function getRoutingConfig(guildId: string): TicketRoutingConfig {
+  const db = getDB();
+  let config = db.prepare('SELECT * FROM ticket_routing_config WHERE guild_id = ?')
+    .get(guildId) as TicketRoutingConfig | null;
+  
+  if (!config) {
+    db.prepare(`
+      INSERT INTO ticket_routing_config (guild_id)
+      VALUES (?)
+    `).run(guildId);
+    config = db.prepare('SELECT * FROM ticket_routing_config WHERE guild_id = ?')
+      .get(guildId) as TicketRoutingConfig;
+  }
+  
+  return config;
+}
+
+// Update routing config
+export function updateRoutingConfig(
+  guildId: string,
+  updates: Partial<Omit<TicketRoutingConfig, 'guild_id'>>
+): void {
+  const db = getDB();
+  const fields: string[] = [];
+  const values: any[] = [];
+  
+  if (updates.routing_mode !== undefined) {
+    fields.push('routing_mode = ?');
+    values.push(updates.routing_mode);
+  }
+  if (updates.auto_assign_enabled !== undefined) {
+    fields.push('auto_assign_enabled = ?');
+    values.push(updates.auto_assign_enabled);
+  }
+  if (updates.require_on_duty !== undefined) {
+    fields.push('require_on_duty = ?');
+    values.push(updates.require_on_duty);
+  }
+  if (updates.max_tickets_per_staff !== undefined) {
+    fields.push('max_tickets_per_staff = ?');
+    values.push(updates.max_tickets_per_staff);
+  }
+  if (updates.last_assigned_staff_id !== undefined) {
+    fields.push('last_assigned_staff_id = ?');
+    values.push(updates.last_assigned_staff_id);
+  }
+  
+  if (fields.length === 0) return;
+  
+  values.push(guildId);
+  db.prepare(`UPDATE ticket_routing_config SET ${fields.join(', ')} WHERE guild_id = ?`).run(...values);
+}
+
+// Get staff workload (open tickets count)
+export function getStaffWorkload(guildId: string, staffId: string): number {
+  const db = getDB();
+  const result = db.prepare(`
+    SELECT COUNT(*) as count FROM tickets
+    WHERE guild_id = ? AND claimed_by = ? AND status != 'closed'
+  `).get(guildId, staffId) as any;
+  
+  return result?.count || 0;
+}
+
+// Get all staff workloads
+export function getAllStaffWorkloads(guildId: string): { staff_id: string; workload: number }[] {
+  const db = getDB();
+  return db.prepare(`
+    SELECT claimed_by as staff_id, COUNT(*) as workload
+    FROM tickets
+    WHERE guild_id = ? AND status != 'closed' AND claimed_by IS NOT NULL
+    GROUP BY claimed_by
+  `).all(guildId) as any[];
+}
+
+// Auto-assign ticket based on routing config
+export async function autoAssignTicket(
+  guildId: string,
+  ticketId: number,
+  category: string,
+  tags: string[]
+): Promise<string | null> {
+  const config = getRoutingConfig(guildId);
+  
+  if (!config.auto_assign_enabled) return null;
+  
+  const db = getDB();
+  let selectedStaffId: string | null = null;
+  
+  // Get available staff
+  const { getPayrollConfig } = await import('./payroll');
+  const { getActiveStaff } = await import('./shifts');
+  const payrollConfig = getPayrollConfig(guildId);
+  
+  if (!payrollConfig) return null;
+  
+  // Get all staff with expertise (if using expertise routing)
+  const staffExpertise = getAllStaffExpertise(guildId);
+  
+  // Filter staff based on requirements
+  let availableStaff: string[] = [];
+  
+  if (config.require_on_duty) {
+    const clockedIn = getActiveStaff(guildId);
+    availableStaff = clockedIn.map((s: any) => s.user_id);
+  } else {
+    // Get all support staff from ticket config
+    const ticketConfig = getTicketConfig(guildId);
+    if (ticketConfig?.support_role_ids) {
+      availableStaff = JSON.parse(ticketConfig.support_role_ids);
+    }
+  }
+  
+  // Filter by max workload
+  availableStaff = availableStaff.filter(staffId => {
+    const workload = getStaffWorkload(guildId, staffId);
+    return workload < config.max_tickets_per_staff;
+  });
+  
+  if (availableStaff.length === 0) return null;
+  
+  // Apply routing logic
+  switch (config.routing_mode) {
+    case 'load-balance':
+      // Assign to staff with least tickets
+      const workloads = availableStaff.map(staffId => ({
+        staffId,
+        workload: getStaffWorkload(guildId, staffId)
+      }));
+      workloads.sort((a, b) => a.workload - b.workload);
+      selectedStaffId = workloads[0].staffId;
+      break;
+      
+    case 'expertise':
+      // Match ticket tags with staff expertise
+      const matchingStaff = staffExpertise.filter(expert => {
+        const expertTags = JSON.parse(expert.expertise_tags) as string[];
+        return tags.some(tag => expertTags.includes(tag));
+      });
+      
+      if (matchingStaff.length > 0) {
+        // Among matching staff, pick least busy
+        const expertWorkloads = matchingStaff.map(expert => ({
+          staffId: expert.user_id,
+          workload: getStaffWorkload(guildId, expert.user_id)
+        }));
+        expertWorkloads.sort((a, b) => a.workload - b.workload);
+        selectedStaffId = expertWorkloads[0].staffId;
+      } else {
+        // Fallback to load balance
+        const fallbackWorkloads = availableStaff.map(staffId => ({
+          staffId,
+          workload: getStaffWorkload(guildId, staffId)
+        }));
+        fallbackWorkloads.sort((a, b) => a.workload - b.workload);
+        selectedStaffId = fallbackWorkloads[0].staffId;
+      }
+      break;
+      
+    case 'round-robin':
+      // Rotate through staff
+      const lastAssigned = config.last_assigned_staff_id;
+      if (lastAssigned && availableStaff.includes(lastAssigned)) {
+        const currentIndex = availableStaff.indexOf(lastAssigned);
+        const nextIndex = (currentIndex + 1) % availableStaff.length;
+        selectedStaffId = availableStaff[nextIndex];
+      } else {
+        selectedStaffId = availableStaff[0];
+      }
+      updateRoutingConfig(guildId, { last_assigned_staff_id: selectedStaffId });
+      break;
+      
+    case 'shift-based':
+      // Only assign to on-duty staff (same as require_on_duty filter)
+      const shiftWorkloads = availableStaff.map(staffId => ({
+        staffId,
+        workload: getStaffWorkload(guildId, staffId)
+      }));
+      shiftWorkloads.sort((a, b) => a.workload - b.workload);
+      selectedStaffId = shiftWorkloads[0]?.staffId || null;
+      break;
+      
+    default:
+      return null;
+  }
+  
+  if (selectedStaffId) {
+    // Record assignment
+    db.prepare(`
+      INSERT INTO ticket_assignment_history (ticket_id, staff_id, assigned_by, assignment_reason)
+      VALUES (?, ?, ?, ?)
+    `).run(ticketId, selectedStaffId, 'auto-assign', config.routing_mode);
+  }
+  
+  return selectedStaffId;
+}
+
+// Get assignment history for ticket
+export function getTicketAssignmentHistory(ticketId: number): any[] {
+  const db = getDB();
+  return db.prepare(`
+    SELECT * FROM ticket_assignment_history 
+    WHERE ticket_id = ? 
+    ORDER BY assigned_at DESC
+  `).all(ticketId);
 }
 
 // Initialize schema on import
