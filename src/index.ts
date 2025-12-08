@@ -1528,8 +1528,8 @@ client.once('clientReady', async () => {
     'help', 'ping', 'redeploy', 'cmdpermissions', 'abusebypass',
     // Shift commands - essential for staff management
     'clockin', 'clockout', 'shifts', 'shiftstats', 'whosonduty',
-    // Phase 1 Advanced Ticket Commands - PRIORITY
-    'ticketsla', 'tickettag', 'ticketnote', 'ticketanalytics', 'ticketcategory'
+    // Ticket system commands - PRIORITY
+    'ticket', 'ticketsla', 'tickettag', 'ticketnote', 'ticketanalytics', 'ticketcategory'
   ]);
   
   // Adjust the buildFinalCommands function to ensure prioritized commands are included
