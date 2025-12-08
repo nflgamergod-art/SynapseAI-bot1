@@ -1679,6 +1679,16 @@ client.once('clientReady', async () => {
       if (PRIORITY_NAMES.has(c.name)) prioritized.push(c);
     });
   
+    console.log(`[COMMAND PRIORITY] Found ${prioritized.length} priority commands out of ${PRIORITY_NAMES.size} requested`);
+    console.log(`[COMMAND PRIORITY] Priority commands found: ${prioritized.map(c => c.name).sort().join(', ')}`);
+    
+    // Check which priority commands are missing
+    const foundPriorityNames = new Set(prioritized.map(c => c.name));
+    const missingPriority = Array.from(PRIORITY_NAMES).filter(name => !foundPriorityNames.has(name));
+    if (missingPriority.length > 0) {
+      console.warn(`[COMMAND PRIORITY] Missing ${missingPriority.length} priority commands: ${missingPriority.join(', ')}`);
+    }
+  
     // Add the rest of the commands, ensuring no duplicates
     const rest = all.filter(c => !PRIORITY_NAMES.has(c.name));
     const combined: any[] = [];
@@ -1693,7 +1703,10 @@ client.once('clientReady', async () => {
     // Truncate to 100 commands if necessary
     if (combined.length > 100) {
       console.warn(`Command count (${combined.length}) exceeds Discord limit (100). Truncating to first 100.`);
-      return combined.slice(0, 100);
+      const truncated = combined.slice(0, 100);
+      const removed = combined.slice(100).map(c => c.name);
+      console.warn(`[COMMAND PRIORITY] Removed commands: ${removed.join(', ')}`);
+      return truncated;
     }
   
     return combined;
