@@ -1224,10 +1224,10 @@ client.once('clientReady', async () => {
         { name: "user", description: "User to view history for", type: 6, required: true }
       ] },
       { name: "adjust", description: "Adjust pay multiplier (owner only)", type: 1, options: [
-        { name: "user", description: "User to adjust (optional)", type: 6, required: false },
-        { name: "role", description: "Role to adjust (optional)", type: 8, required: false },
         { name: "multiplier", description: "Pay multiplier (e.g., 1.5 for 50% bonus)", type: 10, required: true },
-        { name: "reason", description: "Reason for adjustment", type: 3, required: true }
+        { name: "reason", description: "Reason for adjustment", type: 3, required: true },
+        { name: "user", description: "User to adjust (optional)", type: 6, required: false },
+        { name: "role", description: "Role to adjust (optional)", type: 8, required: false }
       ] },
       { name: "removeadjustment", description: "Remove pay adjustment (owner only)", type: 1, options: [
         { name: "user", description: "User to remove adjustment from", type: 6, required: false },
