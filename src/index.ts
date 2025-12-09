@@ -1616,7 +1616,13 @@ client.once('clientReady', async () => {
       console.warn(`Command count (${combined.length}) exceeds Discord limit (100). Truncating to first 100.`);
       const truncated = combined.slice(0, 100);
       const removed = combined.slice(100).map(c => c.name);
-      console.warn(`[COMMAND PRIORITY] Removed commands: ${removed.join(', ')}`);
+      console.error(`❌ REMOVED COMMANDS (${removed.length}): ${removed.join(', ')}`);
+      
+      // Check if any priority commands were removed
+      const removedPriority = removed.filter(name => PRIORITY_NAMES.has(name));
+      if (removedPriority.length > 0) {
+        console.error(`🚨 WARNING: ${removedPriority.length} PRIORITY commands were removed: ${removedPriority.join(', ')}`);
+      }
       return truncated;
     }
   
