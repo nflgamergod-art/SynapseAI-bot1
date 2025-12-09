@@ -1597,6 +1597,9 @@ client.once('clientReady', async () => {
     all.forEach(c => {
       if (PRIORITY_NAMES.has(c.name)) prioritized.push(c);
     });
+    
+    console.log(`[BUILD] Total commands: ${all.length}, Priority found: ${prioritized.length}/${PRIORITY_NAMES.size}`);
+    console.log(`[BUILD] Priority: ${prioritized.map(c => c.name).join(', ')}`);
   
     console.log(`[COMMAND PRIORITY] Found ${prioritized.length} priority commands out of ${PRIORITY_NAMES.size} requested`);
     console.log(`[COMMAND PRIORITY] Priority commands found: ${prioritized.map(c => c.name).sort().join(', ')}`);
