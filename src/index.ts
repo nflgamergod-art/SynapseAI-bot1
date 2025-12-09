@@ -1086,74 +1086,9 @@ client.once('clientReady', async () => {
     { name: "cancelreminder", description: "⏰ Cancel a reminder", options: [
       { name: "id", description: "Reminder ID", type: 4, required: true }
     ] },
-    // Staff Shifts
-    { name: "clockin", description: "🕒 Clock in for your shift" },
-    { name: "clockout", description: "🕒 Clock out from your shift" },
-    { name: "forceclockout", description: "👑 Owner: Force clock out a user", options: [
+    // Force clock out command (standalone)
+    { name: "forceclockout", description: "� Owner: Force clock out a user", options: [
       { name: "user", description: "User to force clock out", type: 6, required: true }
-    ] },
-    { name: "shifts", description: "🕒 Shift management system", options: [
-      { name: "history", description: "View shift history", type: 1, options: [
-        { name: "user", description: "User to check (defaults to you)", type: 6, required: false },
-        { name: "limit", description: "Number of shifts to show (default 10)", type: 4, required: false }
-      ] },
-      { name: "detail", description: "View detailed shift breakdown (with breaks)", type: 1, options: [
-        { name: "shift_id", description: "Shift ID to view details for", type: 4, required: true }
-      ] },
-      { name: "panel", description: "Post a live shift tracker panel in this channel", type: 1 }
-    ] },
-    { name: "shiftstats", description: "📊 View shift statistics", options: [
-      { name: "user", description: "User to check (defaults to you)", type: 6, required: false },
-      { name: "days", description: "Days to analyze (default 30)", type: 4, required: false }
-    ] },
-    { name: "whosonduty", description: "👥 View currently clocked-in staff" },
-    // Scheduling System
-    { name: "schedule", description: "📅 Staff scheduling system", options: [
-      { name: "view", description: "View the weekly schedule", type: 1, options: [
-        { name: "week", description: "Which week (current/next)", type: 3, required: false, choices: [
-          { name: "Current Week", value: "current" },
-          { name: "Next Week", value: "next" }
-        ] }
-      ] },
-      { name: "setavailability", description: "Set your preferred work days and times", type: 1, options: [
-        { name: "days", description: "Preferred days (comma-separated: monday,tuesday,etc)", type: 3, required: true },
-        { name: "start_time", description: "Preferred start time (HH:MM format, e.g., 09:00)", type: 3, required: true },
-        { name: "end_time", description: "Preferred end time (HH:MM format, e.g., 17:00)", type: 3, required: true }
-      ] },
-      { name: "drop", description: "Drop a shift for others to pick up", type: 1, options: [
-        { name: "day", description: "Day to drop", type: 3, required: true, choices: [
-          { name: "Monday", value: "monday" },
-          { name: "Tuesday", value: "tuesday" },
-          { name: "Wednesday", value: "wednesday" },
-          { name: "Thursday", value: "thursday" },
-          { name: "Friday", value: "friday" },
-          { name: "Saturday", value: "saturday" },
-          { name: "Sunday", value: "sunday" }
-        ] }
-      ] },
-      { name: "swap", description: "Request to swap a shift with another staff member", type: 1, options: [
-        { name: "give_day", description: "Day you want to give away", type: 3, required: true, choices: [
-          { name: "Monday", value: "monday" },
-          { name: "Tuesday", value: "tuesday" },
-          { name: "Wednesday", value: "wednesday" },
-          { name: "Thursday", value: "thursday" },
-          { name: "Friday", value: "friday" },
-          { name: "Saturday", value: "saturday" },
-          { name: "Sunday", value: "sunday" }
-        ] },
-        { name: "receive_day", description: "Day you want in return", type: 3, required: true, choices: [
-          { name: "Monday", value: "monday" },
-          { name: "Tuesday", value: "tuesday" },
-          { name: "Wednesday", value: "wednesday" },
-          { name: "Thursday", value: "thursday" },
-          { name: "Friday", value: "friday" },
-          { name: "Saturday", value: "saturday" },
-          { name: "Sunday", value: "sunday" }
-        ] },
-        { name: "target_user", description: "Staff member to swap with", type: 6, required: true }
-      ] },
-      { name: "myschedule", description: "View your personal schedule", type: 1 },
-      { name: "generate", description: "👑 Owner: Generate schedules for next week", type: 1 }
     ] },
     // Server Stats Channels
     { name: "statschannels", description: "📊 Configure auto-updating stats channels", options: [
