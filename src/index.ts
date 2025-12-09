@@ -1560,23 +1560,24 @@ client.once('clientReady', async () => {
   const sanitizedCommands = commands.map((c) => sanitizeCommand({ ...c }));
 
   // Update the PRIORITY_NAMES set to include the new commands
+  // CRITICAL: Keep this list as small as possible - Discord limits us to 100 commands total
   const PRIORITY_NAMES = new Set<string>([
     // Core system commands
-    'help', 'ping', 'redeploy', 'diagcommands', 'cmdpermissions', 'abusebypass',
-    // Shift & Payroll - CRITICAL for staff operations
-    'clockin', 'clockout', 'shifts', 'shiftstats', 'whosonduty', 'payroll', 'schedule',
+    'help', 'ping', 'diagcommands',
+    // Shift & Payroll - CRITICAL for staff operations (HIGHEST PRIORITY)
+    'clockin', 'clockout', 'payroll', 'shifts', 'shiftstats', 'whosonduty', 'schedule',
     'upt', 'attendance',
-    // Staff Management - CRITICAL
-    'staffactivity', 'promotion', 'staffsuspension',
-    // Ticket system commands - PRIORITY
-    'ticket', 'ticketsla', 'tickettag', 'ticketnote', 'ticketanalytics', 'ticketcategory',
+    // Staff Management
+    'staffactivity', 'promotion',
+    // Ticket system - ESSENTIAL
+    'ticket', 'ticketsla', 'tickettag', 'ticketnote', 'ticketanalytics',
     'ticketfeedback', 'autoresponse', 'staffexpertise', 'ticketrouting',
-    // Support & Rewards
-    'supportstats', 'achievements', 'claimperks', 'perks', 'leaderboard',
+    // Support
+    'supportstats',
     // Moderation essentials
-    'warn', 'mute', 'unmute', 'kick', 'ban', 'unban', 'timeout', 'cases',
-    // Configuration
-    'kb', 'setcolor', 'whitelist', 'appeal', 'appealhistory'
+    'warn', 'mute', 'kick', 'ban', 'cases',
+    // Critical config
+    'appeal'
   ]);
   
   // Adjust the buildFinalCommands function to ensure prioritized commands are included
