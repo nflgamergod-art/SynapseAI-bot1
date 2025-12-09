@@ -1559,6 +1559,13 @@ client.once('clientReady', async () => {
   };
   const sanitizedCommands = commands.map((c) => sanitizeCommand({ ...c }));
 
+  // DEBUG: Check if critical commands exist
+  const hasPayroll = commands.find(c => c.name === 'payroll');
+  const hasUpt = commands.find(c => c.name === 'upt');
+  const hasAttendance = commands.find(c => c.name === 'attendance');
+  console.log(`[DEBUG] Commands array size: ${commands.length}`);
+  console.log(`[DEBUG] Has payroll: ${!!hasPayroll}, Has upt: ${!!hasUpt}, Has attendance: ${!!hasAttendance}`);
+
   // Update the PRIORITY_NAMES set to include the new commands
   // CRITICAL: Keep this list as small as possible - Discord limits us to 100 commands total
   const PRIORITY_NAMES = new Set<string>([
