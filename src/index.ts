@@ -1616,12 +1616,15 @@ client.once('clientReady', async () => {
       console.warn(`Command count (${combined.length}) exceeds Discord limit (100). Truncating to first 100.`);
       const truncated = combined.slice(0, 100);
       const removed = combined.slice(100).map(c => c.name);
-      console.error(`❌ REMOVED COMMANDS (${removed.length}): ${removed.join(', ')}`);
+      
+      // Write to file for debugging
+      const fs = require('fs');
+      fs.writeFileSync('/tmp/removed_commands.txt', `REMOVED (${removed.length}): ${removed.join(', ')}\n\nKEPT (100): ${truncated.map((c: any) => c.name).join(', ')}`);
       
       // Check if any priority commands were removed
       const removedPriority = removed.filter(name => PRIORITY_NAMES.has(name));
       if (removedPriority.length > 0) {
-        console.error(`🚨 WARNING: ${removedPriority.length} PRIORITY commands were removed: ${removedPriority.join(', ')}`);
+        fs.appendFileSync('/tmp/removed_commands.txt', `\n\nPRIORITY REMOVED (${removedPriority.length}): ${removedPriority.join(', ')}`);
       }
       return truncated;
     }
