@@ -522,6 +522,26 @@ client.once('clientReady', async () => {
   const { initTicketsSchema } = await import('./services/tickets');
   initTicketsSchema();
   
+  // Initialize new feature schemas
+  console.log('🚀 Initializing new feature schemas...');
+  
+  const { initVoiceSupportSchema } = await import('./services/voiceSupport');
+  initVoiceSupportSchema();
+  
+  const { initMultiLanguageSchema } = await import('./services/multiLanguage');
+  initMultiLanguageSchema();
+  
+  const { initCustomerHistorySchema } = await import('./services/customerHistory');
+  initCustomerHistorySchema();
+  
+  const { initTicketCollaborationSchema } = await import('./services/ticketCollaboration');
+  initTicketCollaborationSchema();
+  
+  const { initWellnessSchema } = await import('./services/wellness');
+  initWellnessSchema();
+  
+  console.log('✅ All new feature schemas initialized');
+  
   // Start payroll auto-break checker (runs every 2 minutes) - ONLY on primary bot
   if (!isSecondaryBot) {
     const { checkAndAutoBreak, checkDailyLimitReached, forceClockOut, set24HourCooldown } = await import('./services/payroll');
@@ -598,6 +618,18 @@ client.once('clientReady', async () => {
     }, 2 * 60 * 1000); // Every 2 minutes
     
     console.log('✅ Payroll auto-break system started (checks every 2 minutes)');
+    
+    // Start wellness monitoring (checks every 15 minutes)
+    const { monitorWellness } = await import('./services/wellness');
+    setInterval(async () => {
+      try {
+        await monitorWellness(client);
+      } catch (err) {
+        console.error('Wellness monitoring failed:', err);
+      }
+    }, 15 * 60 * 1000); // Every 15 minutes
+    
+    console.log('✅ Wellness monitoring started (checks every 15 minutes)');
   }
   
   // Check for inactive tickets every hour (24h+ no user response = auto-blacklist)
