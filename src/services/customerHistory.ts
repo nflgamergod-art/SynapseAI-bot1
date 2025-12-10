@@ -92,7 +92,6 @@ export function getCustomerProfile(userId: string, guildId: string): CustomerPro
       COUNT(*) as total_tickets,
       SUM(CASE WHEN status = 'open' OR status = 'claimed' THEN 1 ELSE 0 END) as open_tickets,
       SUM(CASE WHEN status = 'closed' THEN 1 ELSE 0 END) as closed_tickets,
-      AVG(CASE WHEN rating > 0 THEN rating ELSE NULL END) as average_rating,
       MIN(created_at) as first_ticket,
       MAX(created_at) as last_ticket
     FROM tickets
@@ -104,7 +103,7 @@ export function getCustomerProfile(userId: string, guildId: string): CustomerPro
     total_tickets: ticketStats?.total_tickets || 0,
     open_tickets: ticketStats?.open_tickets || 0,
     closed_tickets: ticketStats?.closed_tickets || 0,
-    average_rating: ticketStats?.average_rating || 0,
+    average_rating: 0, // Rating system not implemented yet
     total_messages: 0, // Message tracking not implemented yet
     first_ticket: ticketStats?.first_ticket || null,
     last_ticket: ticketStats?.last_ticket || null
