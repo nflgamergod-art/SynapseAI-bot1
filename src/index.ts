@@ -10205,7 +10205,7 @@ client.on("messageCreate", async (message: Message) => {
               // Staff is messaging in an active ticket - verify they're scheduled
               const workCheck = canStaffWorkNow(message.guild.id, message.author.id);
               
-              console.log(`[AntiExploit] Staff ${message.author.id} messaging in ticket #${ticket.id}. Allowed: ${workCheck.allowed}`);
+              console.log(`[AntiExploit] Staff ${message.author.id} messaging in ticket #${ticket.id}. Allowed: ${workCheck.allowed}, Reason: ${workCheck.reason || 'N/A'}`);
               
               if (!workCheck.allowed) {
                 // VIOLATION: Staff trying to work on ticket while not scheduled
