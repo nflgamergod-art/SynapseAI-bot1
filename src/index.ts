@@ -498,6 +498,11 @@ client.once('clientReady', async () => {
   initSchedulingSchema();
   initSchedulingCron(client);
   
+  // Initialize anti-exploit system
+  const { initAntiExploitSchema } = await import('./services/antiExploit');
+  initAntiExploitSchema();
+  console.log('✅ Anti-exploit system initialized');
+  
   // Initialize tickets schema and run migrations
   const { initTicketsSchema } = await import('./services/tickets');
   initTicketsSchema();
@@ -1083,6 +1088,25 @@ client.once('clientReady', async () => {
       { name: "message", description: "What to remind you about", type: 3, required: true }
     ] },
     { name: "reminders", description: "⏰ List your active reminders" },
+    // Anti-Exploit System
+    { name: "violations", description: "🚨 View system exploit violations (owner only)", options: [
+      { name: "view", description: "View recent violations", type: 1, options: [
+        { name: "user", description: "Filter by user", type: 6, required: false },
+        { name: "days", description: "Days to look back (default: 30)", type: 4, required: false }
+      ] },
+      { name: "stats", description: "View violation statistics", type: 1, options: [
+        { name: "user", description: "Get stats for specific user", type: 6, required: false }
+      ] },
+      { name: "review", description: "Mark violation as reviewed", type: 1, options: [
+        { name: "violation_id", description: "Violation ID", type: 4, required: true }
+      ] },
+      { name: "penalties", description: "View active penalties", type: 1, options: [
+        { name: "user", description: "Filter by user", type: 6, required: false }
+      ] },
+      { name: "clear", description: "Clear a penalty", type: 1, options: [
+        { name: "penalty_id", description: "Penalty ID", type: 4, required: true }
+      ] }
+    ] },
     { name: "cancelreminder", description: "⏰ Cancel a reminder", options: [
       { name: "id", description: "Reminder ID", type: 4, required: true }
     ] },
@@ -3848,6 +3872,163 @@ client.on("interactionCreate", async (interaction) => {
     }
   }
 
+  // Violations Command - View system exploit violations
+  if (name === "violations") {
+    if (!interaction.guild) return await safeReply(interaction, 'This command can only be used in a server.', { flags: MessageFlags.Ephemeral });
+    if (!isOwnerId(interaction.user.id)) return await safeReply(interaction, '❌ Only the owner can use this command.', { flags: MessageFlags.Ephemeral });
+    
+    const subCmd = interaction.options.getSubcommand();
+    
+    if (subCmd === 'view') {
+      const { getRecentViolations, getUnreviewedViolations } = await import('./services/antiExploit');
+      const targetUser = interaction.options.getUser('user');
+      const days = interaction.options.getInteger('days') || 30;
+      
+      let violations: any[];
+      if (targetUser) {
+        violations = getRecentViolations(interaction.guild.id, targetUser.id, days);
+      } else {
+        violations = getUnreviewedViolations(interaction.guild.id);
+      }
+      
+      if (violations.length === 0) {
+        return await safeReply(interaction, { content: `✅ No violations found.`, flags: MessageFlags.Ephemeral });
+      }
+      
+      const embed = new EmbedBuilder()
+        .setTitle('🚨 System Exploit Violations')
+        .setDescription(targetUser ? `Violations for <@${targetUser.id}>` : 'Unreviewed violations')
+        .setColor(0xFF0000)
+        .setTimestamp();
+      
+      for (const v of violations.slice(0, 10)) {
+        embed.addFields({
+          name: `Violation #${v.id} - ${v.severity.toUpperCase()}`,
+          value: `**Type:** ${v.violation_type}\n**User:** <@${v.user_id}>\n**Description:** ${v.description}\n**Penalty:** ${v.penalty_applied || 'None'}\n**Time:** <t:${Math.floor(new Date(v.detected_at).getTime() / 1000)}:R>\n**Reviewed:** ${v.reviewed ? '✅' : '❌'}`,
+          inline: false
+        });
+      }
+      
+      if (violations.length > 10) {
+        embed.setFooter({ text: `Showing 10 of ${violations.length} violations` });
+      }
+      
+      return await safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
+    }
+    
+    if (subCmd === 'stats') {
+      const { getUserViolationStats, getViolationReport } = await import('./services/antiExploit');
+      const targetUser = interaction.options.getUser('user');
+      
+      if (targetUser) {
+        const stats = getUserViolationStats(interaction.guild.id, targetUser.id);
+        
+        const embed = new EmbedBuilder()
+          .setTitle(`📊 Violation Stats for ${targetUser.username}`)
+          .setColor(0xFFA500)
+          .addFields(
+            { name: 'Total Violations', value: stats.totalViolations.toString(), inline: true },
+            { name: 'Last 30 Days', value: stats.last30Days.toString(), inline: true },
+            { name: 'Active Penalties', value: stats.activePenalties.toString(), inline: true },
+            { name: 'Total UPT Deducted', value: `${stats.totalUptDeducted} minutes`, inline: false }
+          )
+          .setTimestamp();
+        
+        return await safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
+      } else {
+        const report = getViolationReport(interaction.guild.id, 30);
+        
+        const embed = new EmbedBuilder()
+          .setTitle('📊 Server Violation Report (Last 30 Days)')
+          .setColor(0xFFA500)
+          .addFields(
+            { name: 'Total Violations', value: report.totalViolations.toString(), inline: false }
+          );
+        
+        if (Object.keys(report.byType).length > 0) {
+          embed.addFields({
+            name: 'By Type',
+            value: Object.entries(report.byType).map(([type, count]) => `**${type}:** ${count}`).join('\n'),
+            inline: true
+          });
+        }
+        
+        if (Object.keys(report.bySeverity).length > 0) {
+          embed.addFields({
+            name: 'By Severity',
+            value: Object.entries(report.bySeverity).map(([sev, count]) => `**${sev}:** ${count}`).join('\n'),
+            inline: true
+          });
+        }
+        
+        if (report.topOffenders.length > 0) {
+          embed.addFields({
+            name: 'Top Offenders',
+            value: report.topOffenders.slice(0, 5).map((o, i) => `${i + 1}. <@${o.userId}>: ${o.count} violations`).join('\n'),
+            inline: false
+          });
+        }
+        
+        return await safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
+      }
+    }
+    
+    if (subCmd === 'review') {
+      const { markViolationReviewed } = await import('./services/antiExploit');
+      const violationId = interaction.options.getInteger('violation_id', true);
+      
+      markViolationReviewed(violationId, interaction.user.id);
+      return await safeReply(interaction, { content: `✅ Violation #${violationId} marked as reviewed.`, flags: MessageFlags.Ephemeral });
+    }
+    
+    if (subCmd === 'penalties') {
+      const { getActivePenalties } = await import('./services/antiExploit');
+      const targetUser = interaction.options.getUser('user');
+      const db = await import('./services/db').then(m => m.getDB());
+      
+      let penalties: any[];
+      if (targetUser) {
+        penalties = getActivePenalties(interaction.guild.id, targetUser.id);
+      } else {
+        penalties = db.prepare(`
+          SELECT * FROM exploit_penalties WHERE guild_id = ? AND active = 1 ORDER BY issued_at DESC
+        `).all(interaction.guild.id) as any[];
+      }
+      
+      if (penalties.length === 0) {
+        return await safeReply(interaction, { content: `✅ No active penalties found.`, flags: MessageFlags.Ephemeral });
+      }
+      
+      const embed = new EmbedBuilder()
+        .setTitle('⚖️ Active Penalties')
+        .setColor(0xFF4500)
+        .setTimestamp();
+      
+      for (const p of penalties.slice(0, 10)) {
+        const amountStr = p.amount ? ` (${p.amount}${p.penalty_type === 'upt_deduction' ? ' min' : ''})` : '';
+        embed.addFields({
+          name: `Penalty #${p.id} - ${p.penalty_type}`,
+          value: `**User:** <@${p.user_id}>\n**Reason:** ${p.reason}${amountStr}\n**Issued:** <t:${Math.floor(new Date(p.issued_at).getTime() / 1000)}:R>`,
+          inline: false
+        });
+      }
+      
+      if (penalties.length > 10) {
+        embed.setFooter({ text: `Showing 10 of ${penalties.length} penalties` });
+      }
+      
+      return await safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
+    }
+    
+    if (subCmd === 'clear') {
+      const { deactivatePenalty } = await import('./services/antiExploit');
+      const penaltyId = interaction.options.getInteger('penalty_id', true);
+      
+      deactivatePenalty(penaltyId);
+      return await safeReply(interaction, { content: `✅ Penalty #${penaltyId} has been cleared.`, flags: MessageFlags.Ephemeral });
+    }
+  }
+
   // Appeal history: users can view their own; staff can view anyone
   if (name === "appealhistory") {
     const { getUserAppeals } = await import('./services/appeals');
@@ -6467,6 +6648,39 @@ client.on("interactionCreate", async (interaction) => {
       // Support ticket tracking commands
       if (name === "supportstart") {
         if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', flags: MessageFlags.Ephemeral });
+        
+        // Check if staff is scheduled to work today
+        try {
+          const { canStaffWorkNow, logExploitViolation, notifyOwnerOfViolation } = await import('./services/antiExploit');
+          const workCheck = canStaffWorkNow(interaction.guild.id, interaction.user.id);
+          
+          if (!workCheck.allowed) {
+            // Log violation
+            const violationId = logExploitViolation(
+              interaction.guild.id,
+              interaction.user.id,
+              'unscheduled_ticket_claim',
+              'Staff member attempted to claim ticket using /supportstart while not scheduled to work',
+              'moderate'
+            );
+            
+            // Notify owner
+            const ownerId = process.env.OWNER_ID;
+            if (ownerId) {
+              const db = await import('./services/db').then(m => m.getDB());
+              const violation = db.prepare('SELECT * FROM exploit_violations WHERE id = ?').get(violationId);
+              await notifyOwnerOfViolation(interaction.client, interaction.guild.id, interaction.user.id, violation, ownerId);
+            }
+            
+            return interaction.reply({ 
+              content: `⚠️ **You cannot claim tickets when you're not scheduled to work.**\n\n${workCheck.reason}\n\n🚨 This violation has been logged and penalties have been applied.`,
+              ephemeral: true 
+            });
+          }
+        } catch (err) {
+          console.error('[AntiExploit] Failed to check work schedule:', err);
+        }
+        
         // Allow admins/bypass or users in support roles
         let allowed = adminOrBypass(interaction.member);
         if (!allowed) {
@@ -8915,21 +9129,72 @@ client.on("messageCreate", async (message: Message) => {
       console.error('[Tickets] Failed to update last message timestamp:', err);
     }
     
-    // Track staff activity for auto-demotion system
+    // Track staff activity for auto-demotion system (with schedule check)
     try {
       const { getStaffActivityConfig, updateStaffActivity } = await import('./services/staffActivity');
+      const { canStaffWorkNow, logExploitViolation, notifyOwnerOfViolation } = await import('./services/antiExploit');
+      const { getTicket } = await import('./services/tickets');
       const config = getStaffActivityConfig(message.guild.id);
       
       if (config && config.enabled) {
         const member = message.member;
         if (member) {
-          // Check which staff role they have and update activity
-          if (config.head_support_role_id && member.roles.cache.has(config.head_support_role_id)) {
-            updateStaffActivity(message.guild.id, message.author.id, 'head_support');
-          } else if (config.support_role_id && member.roles.cache.has(config.support_role_id)) {
-            updateStaffActivity(message.guild.id, message.author.id, 'support');
-          } else if (config.trial_support_role_id && member.roles.cache.has(config.trial_support_role_id)) {
-            updateStaffActivity(message.guild.id, message.author.id, 'trial_support');
+          // Check if this is a staff member
+          const isStaff = 
+            (config.head_support_role_id && member.roles.cache.has(config.head_support_role_id)) ||
+            (config.support_role_id && member.roles.cache.has(config.support_role_id)) ||
+            (config.trial_support_role_id && member.roles.cache.has(config.trial_support_role_id));
+          
+          if (isStaff) {
+            // Check if this message is in a ticket channel
+            const ticket = getTicket(message.channel.id);
+            
+            if (ticket && ticket.status !== 'closed') {
+              // Staff is messaging in an active ticket - verify they're scheduled
+              const workCheck = canStaffWorkNow(message.guild.id, message.author.id);
+              
+              if (!workCheck.allowed) {
+                // VIOLATION: Staff trying to work on ticket while not scheduled
+                const violationId = logExploitViolation(
+                  message.guild.id,
+                  message.author.id,
+                  'unscheduled_ticket_message',
+                  `Staff member messaged in ticket #${ticket.id} while not scheduled to work today`,
+                  'moderate'
+                );
+                
+                // Delete the message and warn the staff member
+                try {
+                  await message.delete();
+                  if (message.channel.type === ChannelType.GuildText || message.channel.type === ChannelType.PublicThread || message.channel.type === ChannelType.PrivateThread) {
+                    await message.channel.send({
+                      content: `⚠️ <@${message.author.id}> - You cannot work on tickets when you're not scheduled. This violation has been logged and penalties have been applied. Request permission from the owner if you need to work today.`,
+                    });
+                  }
+                  
+                  // Notify owner
+                  const ownerId = process.env.OWNER_ID;
+                  if (ownerId) {
+                    const db = await import('./services/db').then(m => m.getDB());
+                    const violation = db.prepare('SELECT * FROM exploit_violations WHERE id = ?').get(violationId);
+                    await notifyOwnerOfViolation(message.client, message.guild.id, message.author.id, violation, ownerId);
+                  }
+                } catch (err) {
+                  console.error('[AntiExploit] Failed to handle violation:', err);
+                }
+                
+                return; // Don't track activity or award points
+              }
+            }
+            
+            // They're allowed to work - track activity normally
+            if (config.head_support_role_id && member.roles.cache.has(config.head_support_role_id)) {
+              updateStaffActivity(message.guild.id, message.author.id, 'head_support');
+            } else if (config.support_role_id && member.roles.cache.has(config.support_role_id)) {
+              updateStaffActivity(message.guild.id, message.author.id, 'support');
+            } else if (config.trial_support_role_id && member.roles.cache.has(config.trial_support_role_id)) {
+              updateStaffActivity(message.guild.id, message.author.id, 'trial_support');
+            }
           }
         }
       }
