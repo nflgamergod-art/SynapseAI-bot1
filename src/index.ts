@@ -637,6 +637,7 @@ client.once('clientReady', async () => {
     try {
       for (const [guildId, guild] of client.guilds.cache) {
         const { getInactiveTickets, blacklistFromTickets, isTicketBlacklisted, closeTicket } = await import('./services/tickets');
+        const { getSupportRoles } = await import('./services/supportRoles');
         const inactiveTickets = getInactiveTickets(guildId, 24); // 24 hours
         
         console.log(`[Ticket Auto-Check] Guild: ${guild.name} - Found ${inactiveTickets.length} inactive ticket(s)`);
@@ -644,6 +645,24 @@ client.once('clientReady', async () => {
         for (const ticket of inactiveTickets) {
           // Check if already blacklisted
           if (isTicketBlacklisted(ticket.user_id, guildId)) continue;
+          
+          // Check if user is staff - staff should NEVER be auto-blacklisted
+          try {
+            const member = await guild.members.fetch(ticket.user_id).catch(() => null);
+            if (member) {
+              const supportRoles = getSupportRoles();
+              const isStaff = member.roles.cache.some(role => 
+                [supportRoles.head, supportRoles.support, supportRoles.trial].includes(role.id)
+              );
+              
+              if (isStaff) {
+                console.log(`[Ticket Auto-Check] Skipping staff member ${ticket.user_id} from auto-blacklist`);
+                continue; // Skip staff members
+              }
+            }
+          } catch (err) {
+            console.error(`Failed to check if user ${ticket.user_id} is staff:`, err);
+          }
           
           try {
             // Blacklist the user
@@ -10574,20 +10593,25 @@ client.on("messageCreate", async (message: Message) => {
         const newWarnings = incrementWarning(message.author.id, guildId, 'bypass', reason);
         
         if (newWarnings >= 3) {
-          // Auto-blacklist on 3rd bypass attempt
-          autoBlacklist(message.author.id, guildId, reason);
-          
-          // Log to mod channel
-          try {
-            const logChannel = getModLogChannelId();
-            if (logChannel && message.guild) {
-              const channel = await message.guild.channels.fetch(logChannel);
-              if (channel?.isTextBased()) {
-                await (channel as any).send(`🚨 **Auto-Blacklist**\nUser: <@${message.author.id}> (${message.author.tag})\nReason: ${reason}\nWarnings: ${newWarnings}/3`);
+          // Check if user is staff - staff should NEVER be auto-blacklisted
+          if (!hasStaffBypass) {
+            // Auto-blacklist on 3rd bypass attempt
+            autoBlacklist(message.author.id, guildId, reason);
+            
+            // Log to mod channel
+            try {
+              const logChannel = getModLogChannelId();
+              if (logChannel && message.guild) {
+                const channel = await message.guild.channels.fetch(logChannel);
+                if (channel?.isTextBased()) {
+                  await (channel as any).send(`🚨 **Auto-Blacklist**\nUser: <@${message.author.id}> (${message.author.tag})\nReason: ${reason}\nWarnings: ${newWarnings}/3`);
+                }
               }
+            } catch (err) {
+              console.error('Failed to log auto-blacklist:', err);
             }
-          } catch (err) {
-            console.error('Failed to log auto-blacklist:', err);
+          } else {
+            console.log(`[Anti-Abuse] Skipping auto-blacklist for staff member ${message.author.id}`);
           }
           return;
         }
@@ -10605,25 +10629,28 @@ client.on("messageCreate", async (message: Message) => {
         
         // Immediately stop responding if spamming (don't let them continue)
         if (newWarnings >= 3) {
-          // Auto-blacklist
-          autoBlacklist(message.author.id, guildId, 'Spam detection (repeated messages)');
-          
-          // Log to mod channel
-          try {
-            const logChannel = getModLogChannelId();
-            if (logChannel && message.guild) {
-              const channel = await message.guild.channels.fetch(logChannel);
-              if (channel?.isTextBased()) {
-                await (channel as any).send(`🚨 **Auto-Blacklist**\nUser: <@${message.author.id}> (${message.author.tag})\nReason: Spam detection (repeated messages)\nWarnings: ${newWarnings}/3`);
+          // Check if user is staff - staff should NEVER be auto-blacklisted
+          if (!hasStaffBypass) {
+            // Auto-blacklist
+            autoBlacklist(message.author.id, guildId, 'Spam detection (repeated messages)');
+            
+            // Log to mod channel
+            try {
+              const logChannel = getModLogChannelId();
+              if (logChannel && message.guild) {
+                const channel = await message.guild.channels.fetch(logChannel);
+                if (channel?.isTextBased()) {
+                  await (channel as any).send(`🚨 **Auto-Blacklist**\nUser: <@${message.author.id}> (${message.author.tag})\nReason: Spam detection (repeated messages)\nWarnings: ${newWarnings}/3`);
+                }
               }
+            } catch (err) {
+              console.error('Failed to log auto-blacklist:', err);
             }
-          } catch (err) {
-            console.error('Failed to log auto-blacklist:', err);
+          } else {
+            console.log(`[Anti-Abuse] Skipping auto-blacklist for staff member ${message.author.id}`);
           }
           return;
-        }
-        
-        // Warn and ignore message (don't respond)
+        }        // Warn and ignore message (don't respond)
         if (newWarnings < 3) {
           await message.reply(`⚠️ Warning: Spam detection (too many messages too quickly). Slow down or you will be automatically blacklisted. (${newWarnings}/3 warnings)`);
         }
