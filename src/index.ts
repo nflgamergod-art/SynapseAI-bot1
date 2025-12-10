@@ -1679,7 +1679,7 @@ client.once('clientReady', async () => {
     // Core system commands
     'help', 'ping', 'diagcommands',
     // Shift & Payroll - CRITICAL for staff operations (HIGHEST PRIORITY)
-    'clockin', 'clockout', 'forceclockout', 'payroll', 'shifts', 'shiftstats', 'whosonduty', 'schedule',
+    'clockin', 'clockout', 'forceclockout', 'clearcooldown', 'payroll', 'shifts', 'shiftstats', 'whosonduty', 'schedule',
     'upt', 'attendance',
     // Staff Management & Anti-Exploit
     'staffactivity', 'promotion', 'violations',
