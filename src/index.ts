@@ -1237,12 +1237,48 @@ client.once('clientReady', async () => {
       ] },
       { name: "debug", description: "Debug ticket inactivity (Admin only)", type: 1, options: [
         { name: "channel", description: "Ticket channel to check", type: 7, required: false }
-      ] }
+      ] },
+      { name: "note", description: "Add internal note to ticket (staff only)", type: 1, options: [
+        { name: "note", description: "Internal note (only staff can see)", type: 3, required: true }
+      ] },
+      { name: "mention", description: "Tag another staff member in this ticket", type: 1, options: [
+        { name: "staff", description: "Staff member to mention", type: 6, required: true },
+        { name: "message", description: "Optional message for context", type: 3, required: false }
+      ] },
+      { name: "transfer", description: "Transfer ticket to another staff", type: 1, options: [
+        { name: "staff", description: "Staff member to transfer to", type: 6, required: true },
+        { name: "reason", description: "Reason for transfer", type: 3, required: true },
+        { name: "notes", description: "Context notes for new handler", type: 3, required: false }
+      ] },
+      { name: "collaboration", description: "View collaboration history for this ticket", type: 1 },
+      { name: "history", description: "View ticket creator's customer history", type: 1 }
     ] },
     { name: "unban", description: "Unban a user from the server", options: [
       { name: "user_id", description: "User ID to unban", type: 3, required: true },
       { name: "reason", description: "Reason for unbanning", type: 3, required: false }
     ] },
+    { name: "customer", description: "📊 Customer management and history", options: [
+      { name: "history", description: "View customer's full profile and history", type: 1, options: [
+        { name: "user", description: "Customer to view", type: 6, required: true }
+      ] },
+      { name: "note", description: "Add internal note about customer", type: 1, options: [
+        { name: "user", description: "Customer", type: 6, required: true },
+        { name: "note", description: "Note content", type: 3, required: true },
+        { name: "warning", description: "Is this a warning note?", type: 5, required: false }
+      ] },
+      { name: "vip", description: "Mark customer as VIP for priority support", type: 1, options: [
+        { name: "user", description: "Customer", type: 6, required: true },
+        { name: "enable", description: "Enable or disable VIP status", type: 5, required: true }
+      ] },
+      { name: "flag", description: "Flag customer (problematic user)", type: 1, options: [
+        { name: "user", description: "Customer", type: 6, required: true },
+        { name: "reason", description: "Reason for flagging", type: 3, required: true }
+      ] },
+      { name: "unflag", description: "Remove flag from customer", type: 1, options: [
+        { name: "user", description: "Customer", type: 6, required: true }
+      ] }
+    ] },
+    { name: "mymentions", description: "🏷️ View tickets where you've been mentioned" },
     // Staff Activity Tracking
     { name: "staffactivity", description: "⏰ Manage staff activity tracking and auto-demotion", options: [
       { name: "setup", description: "Configure staff activity system", type: 1, options: [
@@ -1592,6 +1628,8 @@ client.once('clientReady', async () => {
     // Ticket system - ESSENTIAL
     'ticket', 'ticketsla', 'tickettag', 'ticketnote', 'ticketanalytics',
     'ticketfeedback', 'autoresponse', 'staffexpertise', 'ticketrouting',
+    // Customer Management & Collaboration
+    'customer', 'mymentions',
     // Support
     'supportstats',
     // Moderation essentials
@@ -6623,6 +6661,196 @@ client.on("interactionCreate", async (interaction) => {
       return interaction.reply({ content: `✅ Cleared ${changes.join(', ')} for ${user.tag}.`, ephemeral: true });
     }
 
+    if (subCmd === "note") {
+      if (!(await hasCommandAccess(interaction.member, 'ticket', interaction.guild?.id || null))) {
+        return interaction.reply({ content: '❌ You don\'t have permission to use this command.', flags: MessageFlags.Ephemeral });
+      }
+      if (!interaction.channel || !('guild' in interaction.channel)) {
+        return interaction.reply({ content: 'This command must be used in a ticket channel.', ephemeral: true });
+      }
+
+      const { getTicket } = await import('./services/tickets');
+      const ticket = getTicket(interaction.channel.id);
+
+      if (!ticket) {
+        return interaction.reply({ content: '❌ This is not a ticket channel.', ephemeral: true });
+      }
+
+      const noteText = interaction.options.getString('note', true);
+      const isInternal = interaction.options.getBoolean('internal') ?? true;
+
+      const { addTicketNote } = await import('./services/ticketCollaboration');
+      const noteId = addTicketNote(ticket.id, interaction.user.id, noteText, isInternal);
+
+      return interaction.reply({ 
+        content: `✅ ${isInternal ? 'Internal' : 'Public'} note added to ticket #${ticket.id} (Note ID: ${noteId})`, 
+        ephemeral: true 
+      });
+    }
+
+    if (subCmd === "mention") {
+      if (!(await hasCommandAccess(interaction.member, 'ticket', interaction.guild?.id || null))) {
+        return interaction.reply({ content: '❌ You don\'t have permission to use this command.', flags: MessageFlags.Ephemeral });
+      }
+      if (!interaction.channel || !('guild' in interaction.channel)) {
+        return interaction.reply({ content: 'This command must be used in a ticket channel.', ephemeral: true });
+      }
+
+      const { getTicket } = await import('./services/tickets');
+      const ticket = getTicket(interaction.channel.id);
+
+      if (!ticket) {
+        return interaction.reply({ content: '❌ This is not a ticket channel.', ephemeral: true });
+      }
+
+      const staffMember = interaction.options.getUser('staff', true);
+      const message = interaction.options.getString('message') || '';
+
+      const { mentionStaffInTicket } = await import('./services/ticketCollaboration');
+      const mentionId = mentionStaffInTicket(ticket.id, interaction.user.id, staffMember.id, message);
+
+      // Send DM to mentioned staff
+      try {
+        const dmEmbed = new EmbedBuilder()
+          .setTitle('📢 You\'ve Been Mentioned in a Ticket')
+          .setColor(0x5865F2)
+          .addFields(
+            { name: 'Ticket', value: `#${ticket.id} - <#${ticket.channel_id}>`, inline: true },
+            { name: 'Mentioned By', value: `<@${interaction.user.id}>`, inline: true },
+            { name: 'Guild', value: interaction.guild!.name, inline: true }
+          );
+
+        if (message) {
+          dmEmbed.addFields({ name: 'Message', value: message, inline: false });
+        }
+
+        await staffMember.send({ embeds: [dmEmbed] });
+      } catch (e) {
+        console.error('Failed to DM mentioned staff:', e);
+      }
+
+      return interaction.reply({ 
+        content: `✅ Mentioned <@${staffMember.id}> in this ticket (Mention ID: ${mentionId})`, 
+        ephemeral: true 
+      });
+    }
+
+    if (subCmd === "transfer") {
+      if (!(await hasCommandAccess(interaction.member, 'ticket', interaction.guild?.id || null))) {
+        return interaction.reply({ content: '❌ You don\'t have permission to use this command.', flags: MessageFlags.Ephemeral });
+      }
+      if (!interaction.channel || !('guild' in interaction.channel)) {
+        return interaction.reply({ content: 'This command must be used in a ticket channel.', ephemeral: true });
+      }
+
+      const { getTicket } = await import('./services/tickets');
+      const ticket = getTicket(interaction.channel.id);
+
+      if (!ticket) {
+        return interaction.reply({ content: '❌ This is not a ticket channel.', ephemeral: true });
+      }
+
+      if (!ticket.claimed_by) {
+        return interaction.reply({ content: '❌ This ticket must be claimed before it can be transferred.', ephemeral: true });
+      }
+
+      if (ticket.claimed_by !== interaction.user.id && !(await hasCommandAccess(interaction.member, 'ticket', interaction.guild?.id || null))) {
+        return interaction.reply({ content: '❌ Only the assigned staff or admins can transfer this ticket.', ephemeral: true });
+      }
+
+      const newStaff = interaction.options.getUser('staff', true);
+      const reason = interaction.options.getString('reason', true);
+      const contextNotes = interaction.options.getString('context') || '';
+
+      const { transferTicket } = await import('./services/ticketCollaboration');
+      transferTicket(ticket.id, ticket.claimed_by, newStaff.id, reason, contextNotes);
+
+      // Announce in ticket channel
+      const transferEmbed = new EmbedBuilder()
+        .setTitle('🔄 Ticket Transferred')
+        .setColor(0x5865F2)
+        .addFields(
+          { name: 'From', value: `<@${ticket.claimed_by}>`, inline: true },
+          { name: 'To', value: `<@${newStaff.id}>`, inline: true },
+          { name: 'Reason', value: reason, inline: false }
+        );
+
+      if (contextNotes) {
+        transferEmbed.addFields({ name: 'Context', value: contextNotes, inline: false });
+      }
+
+      await (interaction.channel as any).send({ embeds: [transferEmbed] });
+
+      // Notify new staff via DM
+      try {
+        const dmEmbed = new EmbedBuilder()
+          .setTitle('🔄 Ticket Transferred to You')
+          .setColor(0x5865F2)
+          .addFields(
+            { name: 'Ticket', value: `#${ticket.id} - <#${ticket.channel_id}>`, inline: true },
+            { name: 'From', value: `<@${ticket.claimed_by}>`, inline: true },
+            { name: 'Guild', value: interaction.guild!.name, inline: true },
+            { name: 'Reason', value: reason, inline: false }
+          );
+
+        if (contextNotes) {
+          dmEmbed.addFields({ name: 'Context', value: contextNotes, inline: false });
+        }
+
+        await newStaff.send({ embeds: [dmEmbed] });
+      } catch (e) {
+        console.error('Failed to DM new staff about transfer:', e);
+      }
+
+      return interaction.reply({ 
+        content: `✅ Ticket #${ticket.id} transferred to <@${newStaff.id}>`, 
+        ephemeral: true 
+      });
+    }
+
+    if (subCmd === "collaboration") {
+      if (!(await hasCommandAccess(interaction.member, 'ticket', interaction.guild?.id || null))) {
+        return interaction.reply({ content: '❌ You don\'t have permission to use this command.', flags: MessageFlags.Ephemeral });
+      }
+      if (!interaction.channel || !('guild' in interaction.channel)) {
+        return interaction.reply({ content: 'This command must be used in a ticket channel.', ephemeral: true });
+      }
+
+      const { getTicket } = await import('./services/tickets');
+      const ticket = getTicket(interaction.channel.id);
+
+      if (!ticket) {
+        return interaction.reply({ content: '❌ This is not a ticket channel.', ephemeral: true });
+      }
+
+      const { buildCollaborationSummary } = await import('./services/ticketCollaboration');
+      const embed = buildCollaborationSummary(ticket.id);
+
+      return interaction.reply({ embeds: [embed], ephemeral: true });
+    }
+
+    if (subCmd === "history") {
+      if (!(await hasCommandAccess(interaction.member, 'ticket', interaction.guild?.id || null))) {
+        return interaction.reply({ content: '❌ You don\'t have permission to use this command.', flags: MessageFlags.Ephemeral });
+      }
+      if (!interaction.channel || !('guild' in interaction.channel)) {
+        return interaction.reply({ content: 'This command must be used in a ticket channel.', ephemeral: true });
+      }
+
+      const { getTicket } = await import('./services/tickets');
+      const ticket = getTicket(interaction.channel.id);
+
+      if (!ticket) {
+        return interaction.reply({ content: '❌ This is not a ticket channel.', ephemeral: true });
+      }
+
+      const ticketOwner = await client.users.fetch(ticket.user_id);
+      const { buildCustomerHistoryEmbed } = await import('./services/customerHistory');
+      const embed = buildCustomerHistoryEmbed(ticket.user_id, interaction.guild!.id, ticketOwner.username);
+
+      return interaction.reply({ embeds: [embed], ephemeral: true });
+    }
+
     if (subCmd === "debug") {
       if (!isOwnerId(interaction.user.id)) {
         return interaction.reply({ content: '❌ Only the bot owner can use this debug command.', ephemeral: true });
@@ -6696,6 +6924,108 @@ client.on("interactionCreate", async (interaction) => {
         return interaction.reply({ embeds: [embed], ephemeral: true });
       }
     }
+  }
+
+  if (name === "customer") {
+    if (!(await hasCommandAccess(interaction.member, 'customer', interaction.guild?.id || null))) {
+      return interaction.reply({ content: '❌ You don\'t have permission to use this command.', flags: MessageFlags.Ephemeral });
+    }
+    if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', flags: MessageFlags.Ephemeral });
+
+    const subCmd = interaction.options.getSubcommand();
+
+    if (subCmd === "history") {
+      const user = interaction.options.getUser('user', true);
+      const { buildCustomerHistoryEmbed } = await import('./services/customerHistory');
+      const embed = buildCustomerHistoryEmbed(user.id, interaction.guild.id, user.username);
+      return interaction.reply({ embeds: [embed], ephemeral: true });
+    }
+
+    if (subCmd === "note") {
+      const user = interaction.options.getUser('user', true);
+      const noteText = interaction.options.getString('note', true);
+      const isWarning = interaction.options.getBoolean('warning') ?? false;
+
+      const { addCustomerNote } = await import('./services/customerHistory');
+      const noteId = addCustomerNote(user.id, interaction.guild.id, interaction.user.id, noteText, isWarning);
+
+      return interaction.reply({ 
+        content: `✅ ${isWarning ? 'Warning' : 'Note'} added to customer profile for <@${user.id}> (Note ID: ${noteId})`, 
+        ephemeral: true 
+      });
+    }
+
+    if (subCmd === "vip") {
+      const user = interaction.options.getUser('user', true);
+      const { setCustomerVIP } = await import('./services/customerHistory');
+      setCustomerVIP(user.id, interaction.guild.id, true);
+      return interaction.reply({ 
+        content: `✅ <@${user.id}> marked as VIP customer`, 
+        ephemeral: true 
+      });
+    }
+
+    if (subCmd === "flag") {
+      const user = interaction.options.getUser('user', true);
+      const reason = interaction.options.getString('reason', true);
+      const { flagCustomer } = await import('./services/customerHistory');
+      flagCustomer(user.id, interaction.guild.id, true, reason);
+      return interaction.reply({ 
+        content: `✅ <@${user.id}> flagged: ${reason}`, 
+        ephemeral: true 
+      });
+    }
+
+    if (subCmd === "unflag") {
+      const user = interaction.options.getUser('user', true);
+      const { flagCustomer } = await import('./services/customerHistory');
+      flagCustomer(user.id, interaction.guild.id, false); // false = unflag
+      return interaction.reply({ 
+        content: `✅ Flag removed from <@${user.id}>`, 
+        ephemeral: true 
+      });
+    }
+  }
+
+  if (name === "mymentions") {
+    if (!(await hasCommandAccess(interaction.member, 'mymentions', interaction.guild?.id || null))) {
+      return interaction.reply({ content: '❌ You don\'t have permission to use this command.', flags: MessageFlags.Ephemeral });
+    }
+    if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', flags: MessageFlags.Ephemeral });
+
+    const { getPendingMentions } = await import('./services/ticketCollaboration');
+    const mentions = getPendingMentions(interaction.user.id, interaction.guild.id);
+
+    if (mentions.length === 0) {
+      return interaction.reply({ content: '✅ You have no pending mentions in tickets.', ephemeral: true });
+    }
+
+    const { getTicket } = await import('./services/tickets');
+    const embed = new EmbedBuilder()
+      .setTitle('📢 Your Pending Ticket Mentions')
+      .setColor(0x5865F2)
+      .setDescription(`You have **${mentions.length}** pending mention(s) in tickets`);
+
+    for (const mention of mentions.slice(0, 10)) {
+      const ticket = getTicket(mention.ticket_id.toString());
+      if (ticket) {
+        embed.addFields({
+          name: `Ticket #${mention.ticket_id} - <#${ticket.channel_id}>`,
+          value: [
+            `**Mentioned By:** <@${mention.mentioned_by}>`,
+            `**When:** <t:${Math.floor(new Date(mention.created_at).getTime() / 1000)}:R>`,
+            mention.message ? `**Message:** ${mention.message}` : ''
+          ].filter(Boolean).join('\n'),
+          inline: false
+        });
+      }
+    }
+
+    if (mentions.length > 10) {
+      embed.setFooter({ text: `Showing first 10 of ${mentions.length} mentions` });
+    }
+
+    return interaction.reply({ embeds: [embed], ephemeral: true });
   }
 
   if (name === "unban") {
