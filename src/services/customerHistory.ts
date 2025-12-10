@@ -99,21 +99,13 @@ export function getCustomerProfile(userId: string, guildId: string): CustomerPro
     WHERE user_id = ? AND guild_id = ?
   `).get(userId, guildId) as any;
   
-  // Get message count from ticket_messages
-  const messageStats = db.prepare(`
-    SELECT COUNT(*) as total_messages
-    FROM ticket_messages tm
-    JOIN tickets t ON tm.ticket_id = t.id
-    WHERE tm.user_id = ? AND t.guild_id = ?
-  `).get(userId, guildId) as any;
-  
   return {
     ...profile,
     total_tickets: ticketStats?.total_tickets || 0,
     open_tickets: ticketStats?.open_tickets || 0,
     closed_tickets: ticketStats?.closed_tickets || 0,
     average_rating: ticketStats?.average_rating || 0,
-    total_messages: messageStats?.total_messages || 0,
+    total_messages: 0, // Message tracking not implemented yet
     first_ticket: ticketStats?.first_ticket || null,
     last_ticket: ticketStats?.last_ticket || null
   };
