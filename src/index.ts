@@ -5976,6 +5976,8 @@ client.on("interactionCreate", async (interaction) => {
         const { canStaffWorkNow } = await import('./services/antiExploit');
         const canWork = canStaffWorkNow(interaction.guild!.id, interaction.user.id);
         
+        console.log(`[Ticket Claim] Schedule check for ${interaction.user.tag} (${interaction.user.id}):`, JSON.stringify(canWork));
+        
         if (!canWork.allowed) {
           console.log(`[Ticket Claim] ❌ ${interaction.user.tag} tried to claim ticket while not scheduled`);
           return interaction.reply({ 
