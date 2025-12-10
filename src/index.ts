@@ -1759,6 +1759,13 @@ client.once('clientReady', async () => {
       }
     } catch (err) {
       console.error("Failed to register slash commands:", err);
+      // Log command #12 specifically
+      if (commands[12]) {
+        console.error(`Command #12 is: "${commands[12].name}" with ${commands[12].options?.length || 0} options`);
+        if (commands[12].options) {
+          console.error(`Command #12 options:`, JSON.stringify(commands[12].options, null, 2));
+        }
+      }
       // Validate command descriptions to find the issue
       commands.forEach((cmd: any, idx: number) => {
         if (cmd.description && cmd.description.length > 100) {
