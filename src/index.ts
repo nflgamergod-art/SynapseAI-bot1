@@ -9252,6 +9252,18 @@ client.on("messageCreate", async (message: Message) => {
                 // VIOLATION: Staff trying to work on ticket while not scheduled
                 console.log(`[AntiExploit] VIOLATION DETECTED: ${message.author.id} working unscheduled in ticket #${ticket.id}`);
                 
+                // Automatically remove any active unauthorized shift time
+                const { autoRemoveUnauthorizedTime } = await import('./services/antiExploit');
+                const removalResult = await autoRemoveUnauthorizedTime(
+                  message.guild.id,
+                  message.author.id,
+                  `Working in ticket #${ticket.id} while not scheduled`
+                );
+                
+                if (removalResult.removed) {
+                  console.log(`[AntiExploit] AUTO-REMOVED ${removalResult.minutesRemoved} minutes of unauthorized shift time`);
+                }
+                
                 const violationId = logExploitViolation(
                   message.guild.id,
                   message.author.id,
@@ -9268,19 +9280,49 @@ client.on("messageCreate", async (message: Message) => {
                   console.log(`[AntiExploit] Message deleted`);
                   
                   if (message.channel.type === ChannelType.GuildText || message.channel.type === ChannelType.PublicThread || message.channel.type === ChannelType.PrivateThread) {
-                    await message.channel.send({
-                      content: `⚠️ <@${message.author.id}> - You cannot work on tickets when you're not scheduled. This violation has been logged and penalties have been applied. Request permission from the owner if you need to work today.`,
-                    });
-                    console.log(`[AntiExploit] Warning message sent`);
+                    let warningMessage = `⚠️ <@${message.author.id}> - You cannot work on tickets when you're not scheduled. This violation has been logged and penalties have been applied.`;
+                    
+                    if (removalResult.removed) {
+                      warningMessage += `\n\n**🚫 Shift Time Removed:** ${removalResult.minutesRemoved} minutes of unauthorized work time has been deleted from your records.`;
+                    }
+                    
+                    warningMessage += `\n\nRequest permission from the owner if you need to work today.`;
+                    
+                    await message.channel.send({ content: warningMessage });
+                    console.log(`[AntiExploit] Warning message sent (time removed: ${removalResult.removed})`);
                   }
                   
                   // Notify owner
                   const ownerId = process.env.OWNER_ID;
                   if (ownerId) {
                     const db = await import('./services/db').then(m => m.getDB());
-                    const violation = db.prepare('SELECT * FROM exploit_violations WHERE id = ?').get(violationId);
-                    await notifyOwnerOfViolation(message.client, message.guild.id, message.author.id, violation, ownerId);
-                    console.log(`[AntiExploit] Owner notified`);
+                    const violation = db.prepare('SELECT * FROM exploit_violations WHERE id = ?').get(violationId) as any;
+                    
+                    // Enhanced owner notification with removal info
+                    const owner = await message.client.users.fetch(ownerId);
+                    const embed = new EmbedBuilder()
+                      .setTitle('⚠️ System Exploit Detected & Auto-Removed')
+                      .setDescription(`<@${message.author.id}> attempted to work while not scheduled.`)
+                      .setColor(0xFF0000)
+                      .addFields(
+                        { name: 'User', value: `${message.author.tag} (<@${message.author.id}>)`, inline: true },
+                        { name: 'Violation Type', value: violation.violation_type, inline: true },
+                        { name: 'Ticket', value: `#${ticket.id}`, inline: true },
+                        { name: 'Description', value: violation.description }
+                      );
+                    
+                    if (removalResult.removed) {
+                      embed.addFields({
+                        name: '🚫 Automatic Action Taken',
+                        value: `**Removed:** ${removalResult.minutesRemoved} minutes of unauthorized shift time\n${removalResult.message}`
+                      });
+                    }
+                    
+                    embed.addFields({ name: 'Penalty Applied', value: violation.penalty_applied || 'System auto-penalty' })
+                      .setTimestamp();
+                    
+                    await owner.send({ embeds: [embed] });
+                    console.log(`[AntiExploit] Owner notified with removal details`);
                   }
                 } catch (err) {
                   console.error('[AntiExploit] Failed to handle violation:', err);
