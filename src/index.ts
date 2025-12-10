@@ -1255,19 +1255,8 @@ client.once('clientReady', async () => {
       { name: "voice", description: "Create voice channel for this ticket", type: 1 },
       { name: "endvoice", description: "End voice session and save transcript", type: 1 },
       { name: "voicehistory", description: "View voice session history for this ticket", type: 1 },
-      { name: "translateticket", description: "Translate ticket to another language", type: 1, options: [
-        { name: "language", description: "Target language", type: 3, required: true, choices: [
-          { name: "English", value: "en" },
-          { name: "Spanish", value: "es" },
-          { name: "French", value: "fr" },
-          { name: "German", value: "de" },
-          { name: "Italian", value: "it" },
-          { name: "Portuguese", value: "pt" },
-          { name: "Russian", value: "ru" },
-          { name: "Japanese", value: "ja" },
-          { name: "Korean", value: "ko" },
-          { name: "Chinese", value: "zh" }
-        ] }
+      { name: "translateticket", description: "Translate ticket messages", type: 1, options: [
+        { name: "code", description: "Target language code (en/es/fr/de/it/pt/ru/ja/ko/zh)", type: 3, required: true }
       ] }
     ] },
     { name: "unban", description: "Unban a user from the server", options: [
@@ -1314,62 +1303,15 @@ client.once('clientReady', async () => {
     ] },
     // Multi-Language Support
     { name: "language", description: "🌍 Multi-language support system", options: [
-      { name: "set", description: "Set your preferred language", type: 1, options: [
-        { name: "language", description: "Your language", type: 3, required: true, choices: [
-          { name: "English", value: "en" },
-          { name: "Spanish", value: "es" },
-          { name: "French", value: "fr" },
-          { name: "German", value: "de" },
-          { name: "Italian", value: "it" },
-          { name: "Portuguese", value: "pt" },
-          { name: "Russian", value: "ru" },
-          { name: "Japanese", value: "ja" },
-          { name: "Korean", value: "ko" },
-          { name: "Chinese", value: "zh" },
-          { name: "Arabic", value: "ar" },
-          { name: "Hindi", value: "hi" },
-          { name: "Dutch", value: "nl" },
-          { name: "Polish", value: "pl" },
-          { name: "Turkish", value: "tr" }
-        ] }
+      { name: "set", description: "Set your preferred language code (en, es, fr, de, etc.)", type: 1, options: [
+        { name: "code", description: "Language code (en/es/fr/de/it/pt/ru/ja/ko/zh/ar/hi/nl/pl/tr)", type: 3, required: true }
       ] },
-      { name: "translate", description: "Translate text to another language", type: 1, options: [
+      { name: "translate", description: "Translate text", type: 1, options: [
         { name: "text", description: "Text to translate", type: 3, required: true },
-        { name: "to_language", description: "Target language", type: 3, required: true, choices: [
-          { name: "English", value: "en" },
-          { name: "Spanish", value: "es" },
-          { name: "French", value: "fr" },
-          { name: "German", value: "de" },
-          { name: "Italian", value: "it" },
-          { name: "Portuguese", value: "pt" },
-          { name: "Russian", value: "ru" },
-          { name: "Japanese", value: "ja" },
-          { name: "Korean", value: "ko" },
-          { name: "Chinese", value: "zh" },
-          { name: "Arabic", value: "ar" },
-          { name: "Hindi", value: "hi" },
-          { name: "Dutch", value: "nl" },
-          { name: "Polish", value: "pl" },
-          { name: "Turkish", value: "tr" }
-        ] }
+        { name: "target", description: "Target language code (en/es/fr/de/it/pt/ru/ja/ko/zh)", type: 3, required: true }
       ] },
-      { name: "stafflookup", description: "Find staff who speak a specific language", type: 1, options: [
-        { name: "language", description: "Language to search for", type: 3, required: true, choices: [
-          { name: "Spanish", value: "es" },
-          { name: "French", value: "fr" },
-          { name: "German", value: "de" },
-          { name: "Italian", value: "it" },
-          { name: "Portuguese", value: "pt" },
-          { name: "Russian", value: "ru" },
-          { name: "Japanese", value: "ja" },
-          { name: "Korean", value: "ko" },
-          { name: "Chinese", value: "zh" },
-          { name: "Arabic", value: "ar" },
-          { name: "Hindi", value: "hi" },
-          { name: "Dutch", value: "nl" },
-          { name: "Polish", value: "pl" },
-          { name: "Turkish", value: "tr" }
-        ] }
+      { name: "stafflookup", description: "Find staff by language code", type: 1, options: [
+        { name: "code", description: "Language code to search (es/fr/de/it/pt/ru/ja/ko/zh)", type: 3, required: true }
       ] }
     ] },
     // Staff Activity Tracking
@@ -7119,7 +7061,7 @@ client.on("interactionCreate", async (interaction) => {
         return interaction.reply({ content: 'This command must be used in a ticket channel.', ephemeral: true });
       }
 
-      const targetLang = interaction.options.getString('language', true);
+      const targetLang = interaction.options.getString('code', true);
 
       const { getTicket } = await import('./services/tickets');
       const ticket = getTicket(interaction.channel.id);
@@ -7468,7 +7410,7 @@ client.on("interactionCreate", async (interaction) => {
     const subCmd = interaction.options.getSubcommand();
 
     if (subCmd === "set") {
-      const language = interaction.options.getString('language', true);
+      const language = interaction.options.getString('code', true);
       const { setLanguagePreference } = await import('./services/multiLanguage');
       
       setLanguagePreference(interaction.user.id, interaction.guild.id, language);
@@ -7487,7 +7429,7 @@ client.on("interactionCreate", async (interaction) => {
 
     if (subCmd === "translate") {
       const text = interaction.options.getString('text', true);
-      const toLang = interaction.options.getString('to_language', true);
+      const toLang = interaction.options.getString('target', true);
 
       await interaction.deferReply({ ephemeral: true });
 
@@ -7514,7 +7456,7 @@ client.on("interactionCreate", async (interaction) => {
     }
 
     if (subCmd === "stafflookup") {
-      const language = interaction.options.getString('language', true);
+      const language = interaction.options.getString('code', true);
       const { findStaffByLanguage } = await import('./services/multiLanguage');
       
       const staffList = findStaffByLanguage(interaction.guild.id, language);
