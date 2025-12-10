@@ -1295,7 +1295,7 @@ client.once('clientReady', async () => {
         { name: "user", description: "Customer", type: 6, required: true }
       ] }
     ] },
-    { name: "mymentions", description: "🏷️ View tickets where you've been mentioned" },
+    { name: "mymentions", description: "🏷️ [STAFF] View tickets where you've been mentioned" },
     // Wellness & Break Management
     { name: "wellness", description: "🧘 Wellness and break reminder system", options: [
       { name: "setup", description: "Configure wellness system for your server", type: 1, options: [
@@ -7294,10 +7294,23 @@ client.on("interactionCreate", async (interaction) => {
   }
 
   if (name === "mymentions") {
-    if (!(await hasCommandAccess(interaction.member, 'mymentions', interaction.guild?.id || null))) {
-      return interaction.reply({ content: '❌ You don\'t have permission to use this command.', flags: MessageFlags.Ephemeral });
-    }
     if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', flags: MessageFlags.Ephemeral });
+
+    // Check if user is staff (has support role)
+    const { getSupportRoleIds } = await import('./services/tickets');
+    const supportRoleIds = getSupportRoleIds(interaction.guild.id);
+    const memberRoles = (interaction.member as any)?.roles?.cache 
+      ? Array.from((interaction.member as any).roles.cache.keys()) 
+      : [];
+    const isStaff = supportRoleIds.some(roleId => memberRoles.includes(roleId));
+    const hasAdmin = (interaction.member as any)?.permissions?.has('Administrator');
+
+    if (!isStaff && !hasAdmin) {
+      return interaction.reply({ 
+        content: '❌ This command is only available to staff members.', 
+        flags: MessageFlags.Ephemeral 
+      });
+    }
 
     const { getPendingMentions } = await import('./services/ticketCollaboration');
     const mentions = getPendingMentions(interaction.user.id, interaction.guild.id);
