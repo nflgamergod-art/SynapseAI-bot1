@@ -13,8 +13,12 @@ echo "✅ Copied bot files"
 # Step 2: Update .env file with secondary bot credentials
 echo "Updating .env file..."
 # Note: Set SECONDARY_BOT_TOKEN and SECONDARY_BOT_APP_ID in your environment before running
-ssh $SERVER "cd $BOT_DIR/SynapseAI-bot2 && sed -i 's/^DISCORD_TOKEN=.*/DISCORD_TOKEN=${SECONDARY_BOT_TOKEN}/' .env && sed -i 's/^DISCORD_APPLICATION_ID=.*/DISCORD_APPLICATION_ID=${SECONDARY_BOT_APP_ID}/' .env && echo 'IS_SECONDARY_BOT=true' >> .env"
-echo "✅ Updated .env file"
+ssh $SERVER "cd $BOT_DIR/SynapseAI-bot2 && \
+  sed -i 's/^DISCORD_TOKEN=.*/DISCORD_TOKEN=${SECONDARY_BOT_TOKEN}/' .env && \
+  sed -i 's/^DISCORD_APPLICATION_ID=.*/DISCORD_APPLICATION_ID=${SECONDARY_BOT_APP_ID}/' .env && \
+  sed -i 's/^WAKE_WORD=.*/WAKE_WORD=SynapseHelper/' .env && \
+  echo 'IS_SECONDARY_BOT=true' >> .env"
+echo "✅ Updated .env file with different wake word (SynapseHelper)"
 
 # Step 3: Upload filter script to server
 echo "Uploading filter script..."
