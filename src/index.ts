@@ -1228,6 +1228,9 @@ client.once('clientReady', async () => {
       { name: "unblacklist", description: "Remove user from ticket blacklist", type: 1, options: [
         { name: "user", description: "User to unblacklist", type: 6, required: true }
       ] },
+      { name: "unblacklistall", description: "Remove user from ALL blacklist sources", type: 1, options: [
+        { name: "user", description: "User to unblacklist from everywhere", type: 6, required: true }
+      ] },
       { name: "note", description: "Add internal note to ticket (staff only)", type: 1, options: [
         { name: "note", description: "Internal note (only staff can see)", type: 3, required: true }
       ] },
