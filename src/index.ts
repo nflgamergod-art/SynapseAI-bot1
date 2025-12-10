@@ -6919,15 +6919,19 @@ client.on("interactionCreate", async (interaction) => {
       
       const result = await translateText(userMessages.content, targetLang, detectedLang);
 
+      const languageNames: Record<string, string> = {
+        en: 'English', es: 'Spanish', fr: 'French', de: 'German', it: 'Italian',
+        pt: 'Portuguese', ru: 'Russian', ja: 'Japanese', ko: 'Korean', zh: 'Chinese',
+        ar: 'Arabic', hi: 'Hindi', nl: 'Dutch', pl: 'Polish', tr: 'Turkish'
+      };
+
+      // Format: "Original message" → "Translated message"
+      const translationText = `**${languageNames[result.detectedLang] || result.detectedLang}:** ${userMessages.content}\n\n**→ ${languageNames[targetLang] || targetLang}:** ${result.translated}`;
+
       const embed = new EmbedBuilder()
         .setTitle('🌍 Ticket Translation')
         .setColor(0x5865F2)
-        .addFields(
-          { name: 'Original Message', value: userMessages.content.substring(0, 1024), inline: false },
-          { name: 'Detected Language', value: result.detectedLang, inline: true },
-          { name: 'Target Language', value: targetLang, inline: true },
-          { name: 'Translation', value: result.translated, inline: false }
-        );
+        .setDescription(translationText.substring(0, 4096));
 
       return interaction.editReply({ embeds: [embed] });
     }
@@ -7419,13 +7423,13 @@ client.on("interactionCreate", async (interaction) => {
         ar: 'Arabic', hi: 'Hindi', nl: 'Dutch', pl: 'Polish', tr: 'Turkish'
       };
 
+      // Format: "Original message" → "Translated message"
+      const translationText = `**${languageNames[result.detectedLang] || result.detectedLang}:** ${text}\n\n**→ ${languageNames[toLang] || toLang}:** ${result.translated}`;
+
       const embed = new EmbedBuilder()
         .setTitle('🌍 Translation')
         .setColor(0x5865F2)
-        .addFields(
-          { name: `Original (${languageNames[result.detectedLang] || result.detectedLang})`, value: text.substring(0, 1024), inline: false },
-          { name: `Translation (${languageNames[toLang] || toLang})`, value: result.translated, inline: false }
-        );
+        .setDescription(translationText.substring(0, 4096));
 
       return interaction.editReply({ embeds: [embed] });
     }
@@ -10065,14 +10069,46 @@ client.on("messageCreate", async (message: Message) => {
                 return; // Allow ticket creator to message without restrictions
               }
               
-              // Check if this is an owner - owners bypass schedule requirements
+              // Check if this is an owner - owners bypass all restrictions
               const { isOwnerId } = await import('./utils/owner');
               const ownerIds = process.env.OWNER_IDS?.split(',') || [];
               const isOwner = isOwnerId(message.author.id) || ownerIds.includes(message.author.id);
               
               if (isOwner) {
-                console.log(`[AntiExploit] ✓ Owner ${message.author.id} bypassing schedule check in ticket #${ticket.id}`);
+                console.log(`[TicketClaim] ✓ Owner ${message.author.id} bypassing all restrictions in ticket #${ticket.id}`);
                 return; // Allow owner to message without restrictions
+              }
+              
+              // TICKET CLAIMING RESTRICTION: Check if ticket is claimed and if this staff member is authorized
+              if (ticket.claimed_by) {
+                const { getTicketHelpers } = await import('./services/tickets');
+                const helpers = getTicketHelpers(message.channel.id);
+                const isClaimingStaff = ticket.claimed_by === message.author.id;
+                const isHelper = helpers.includes(message.author.id);
+                
+                // Only the claiming staff or added helpers can respond
+                if (!isClaimingStaff && !isHelper) {
+                  console.log(`[TicketClaim] ❌ Staff ${message.author.id} tried to respond in claimed ticket #${ticket.id} (claimed by ${ticket.claimed_by})`);
+                  try {
+                    await message.delete();
+                    await message.author.send({
+                      content: `⚠️ **Ticket Claimed**\n\nThis ticket (#${ticket.id}) is currently claimed by <@${ticket.claimed_by}>. Only the claiming staff member and added helpers can respond.\n\nIf you need to help, ask them to use \`/ticket mention @${message.author.username}\` or \`/ticket addhelper @${message.author.username}\` to add you to the ticket.`
+                    }).catch(async () => {
+                      // If DM fails, send in channel temporarily
+                      if (message.channel.type === ChannelType.GuildText || message.channel.type === ChannelType.PublicThread || message.channel.type === ChannelType.PrivateThread) {
+                        const warningMsg = await message.channel.send({
+                          content: `⚠️ <@${message.author.id}> - This ticket is claimed by <@${ticket.claimed_by}>. Only they and added helpers can respond. Ask to be added with \`/ticket mention\` or \`/ticket addhelper\`.`
+                        });
+                        setTimeout(() => warningMsg.delete().catch(() => {}), 10000);
+                      }
+                    });
+                  } catch (err) {
+                    console.error('[TicketClaim] Failed to handle unauthorized message:', err);
+                  }
+                  return; // Block the message from being processed further
+                }
+                
+                console.log(`[TicketClaim] ✓ Staff ${message.author.id} authorized in claimed ticket #${ticket.id} (claimer: ${isClaimingStaff}, helper: ${isHelper})`);
               }
               
               // Staff is messaging in an active ticket - verify they're scheduled
