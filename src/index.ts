@@ -5967,12 +5967,24 @@ client.on("interactionCreate", async (interaction) => {
         return interaction.reply({ content: `❌ This ticket is already claimed by <@${ticket.claimed_by}>.`, ephemeral: true });
       }
 
-      // Check if staff is clocked in, auto-clock-in if not
+      // Check if staff is clocked in, auto-clock-in if not (and if scheduled)
       const { getActiveShift, clockIn } = await import('./services/shifts');
       const activeShift = getActiveShift(interaction.guild!.id, interaction.user.id);
       
       if (!activeShift) {
-        // Auto-clock-in the staff member
+        // Check if staff is scheduled before allowing auto-clock-in
+        const { canStaffWorkNow } = await import('./services/antiExploit');
+        const canWork = await canStaffWorkNow(interaction.user.id, interaction.guild!.id);
+        
+        if (!canWork.allowed) {
+          console.log(`[Ticket Claim] ❌ ${interaction.user.tag} tried to claim ticket while not scheduled`);
+          return interaction.reply({ 
+            content: `❌ You cannot claim tickets while not scheduled to work.\n\n${canWork.reason}`, 
+            ephemeral: true 
+          });
+        }
+        
+        // Auto-clock-in the staff member (they're scheduled)
         const clockInResult = clockIn(interaction.guild!.id, interaction.user.id);
         if (clockInResult.success) {
           await interaction.channel.send(`⏰ <@${interaction.user.id}> was automatically clocked in when claiming this ticket.`);
