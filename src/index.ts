@@ -10140,6 +10140,12 @@ client.on("messageCreate", async (message: Message) => {
       const { getTicket } = await import('./services/tickets');
       const config = getStaffActivityConfig(message.guild.id);
       
+      // Skip anti-exploit checks on secondary bot to avoid duplicate violations
+      const isSecondaryBot = process.env.IS_SECONDARY_BOT === 'true';
+      if (isSecondaryBot) {
+        return; // Secondary bot doesn't run anti-exploit checks
+      }
+      
       if (config && config.enabled) {
         const member = message.member;
         if (member) {
