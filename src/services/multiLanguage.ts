@@ -147,46 +147,40 @@ export async function translateText(
     return { translated: cached.translated_text, detectedLang: cached.source_lang };
   }
   
+  const detected = sourceLang || detectLanguage(text);
+  
+  // If already in target language, return as-is
+  if (detected === targetLang) {
+    console.log(`🌍 Text already in target language (${targetLang})`);
+    return { translated: text, detectedLang: detected };
+  }
+  
+  console.log(`🌍 Translating: "${text.substring(0, 50)}..." from ${detected} to ${targetLang}`);
+  
   try {
-    // Use LibreTranslate (free, self-hosted option)
-    const libreTranslateUrl = process.env.LIBRETRANSLATE_URL || 'https://libretranslate.com/translate';
+    // Try MyMemory Translation API (free, no API key needed, 10,000 chars/day)
+    const myMemoryUrl = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${detected}|${targetLang}`;
     
-    const detected = sourceLang || detectLanguage(text);
-    
-    // If already in target language, return as-is
-    if (detected === targetLang) {
-      console.log(`🌍 Text already in target language (${targetLang})`);
-      return { translated: text, detectedLang: detected };
-    }
-    
-    console.log(`🌍 Translating: "${text.substring(0, 50)}..." from ${detected} to ${targetLang}`);
-    
-    const response = await fetch(libreTranslateUrl, {
-      method: 'POST',
+    const response = await fetch(myMemoryUrl, {
+      method: 'GET',
       headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        q: text,
-        source: detected,
-        target: targetLang,
-        format: 'text'
-      })
+        'User-Agent': 'SynapseAI-Bot/1.0'
+      }
     });
     
     if (!response.ok) {
       const errorText = await response.text();
-      console.error(`❌ Translation API error: ${response.status} ${response.statusText}`, errorText);
+      console.error(`❌ MyMemory API error: ${response.status} ${response.statusText}`, errorText);
       throw new Error(`Translation API error: ${response.statusText}`);
     }
     
     const data = await response.json() as any;
     console.log(`🌍 Translation API response:`, data);
     
-    const translated = data.translatedText || data.translation || text;
+    const translated = data.responseData?.translatedText || text;
     
     // Only cache if translation was successful and different from original
-    if (translated && translated !== text) {
+    if (translated && translated !== text && data.responseStatus === 200) {
       db.prepare(`
         INSERT INTO translation_cache (original_text, translated_text, source_lang, target_lang)
         VALUES (?, ?, ?, ?)
@@ -194,14 +188,52 @@ export async function translateText(
       
       console.log(`✅ Translation successful: "${text.substring(0, 30)}..." → "${translated.substring(0, 30)}..."`);
     } else {
-      console.warn(`⚠️ Translation returned same text or empty`);
+      console.warn(`⚠️ Translation returned same text or failed. Status: ${data.responseStatus}`);
     }
     
     return { translated, detectedLang: detected };
   } catch (error) {
-    console.error('❌ Translation failed:', error);
-    // Return original text with detected language on error
-    return { translated: text, detectedLang: sourceLang || detectLanguage(text) };
+    console.error('❌ Translation failed, trying LibreTranslate fallback:', error);
+    
+    // Fallback to LibreTranslate
+    try {
+      const libreTranslateUrl = process.env.LIBRETRANSLATE_URL || 'https://libretranslate.com/translate';
+      
+      const response = await fetch(libreTranslateUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          q: text,
+          source: detected,
+          target: targetLang,
+          format: 'text'
+        }),
+        signal: AbortSignal.timeout(10000) // 10 second timeout
+      });
+      
+      if (response.ok) {
+        const data = await response.json() as any;
+        const translated = data.translatedText || data.translation || text;
+        
+        if (translated !== text) {
+          db.prepare(`
+            INSERT INTO translation_cache (original_text, translated_text, source_lang, target_lang)
+            VALUES (?, ?, ?, ?)
+          `).run(text, translated, detected, targetLang);
+          
+          console.log(`✅ LibreTranslate fallback successful`);
+          return { translated, detectedLang: detected };
+        }
+      }
+    } catch (fallbackError) {
+      console.error('❌ LibreTranslate fallback also failed:', fallbackError);
+    }
+    
+    // If all else fails, return original text
+    console.error('❌ All translation attempts failed, returning original text');
+    return { translated: text, detectedLang: detected };
   }
 }
 
