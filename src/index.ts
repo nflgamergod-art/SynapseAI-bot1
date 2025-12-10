@@ -5972,18 +5972,27 @@ client.on("interactionCreate", async (interaction) => {
       const activeShift = getActiveShift(interaction.guild!.id, interaction.user.id);
       
       if (!activeShift) {
-        // Check if staff is scheduled before allowing auto-clock-in
-        const { canStaffWorkNow } = await import('./services/antiExploit');
-        const canWork = canStaffWorkNow(interaction.guild!.id, interaction.user.id);
+        // Check if this is an owner - owners bypass schedule requirements
+        const { isOwnerId } = await import('./utils/owner');
+        const ownerIds = process.env.OWNER_IDS?.split(',') || [];
+        const isOwner = isOwnerId(interaction.user.id) || ownerIds.includes(interaction.user.id);
         
-        console.log(`[Ticket Claim] Schedule check for ${interaction.user.tag} (${interaction.user.id}):`, JSON.stringify(canWork));
-        
-        if (!canWork.allowed) {
-          console.log(`[Ticket Claim] ❌ ${interaction.user.tag} tried to claim ticket while not scheduled`);
-          return interaction.reply({ 
-            content: `❌ You cannot claim tickets while not scheduled to work.\n\n${canWork.reason}`, 
-            ephemeral: true 
-          });
+        if (!isOwner) {
+          // Check if staff is scheduled before allowing auto-clock-in
+          const { canStaffWorkNow } = await import('./services/antiExploit');
+          const canWork = canStaffWorkNow(interaction.guild!.id, interaction.user.id);
+          
+          console.log(`[Ticket Claim] Schedule check for ${interaction.user.tag} (${interaction.user.id}):`, JSON.stringify(canWork));
+          
+          if (!canWork.allowed) {
+            console.log(`[Ticket Claim] ❌ ${interaction.user.tag} tried to claim ticket while not scheduled`);
+            return interaction.reply({ 
+              content: `❌ You cannot claim tickets while not scheduled to work.\n\n${canWork.reason}`, 
+              ephemeral: true 
+            });
+          }
+        } else {
+          console.log(`[Ticket Claim] ✓ Owner ${interaction.user.tag} bypassing schedule check`);
         }
         
         // Auto-clock-in the staff member (they're scheduled)
@@ -9245,6 +9254,22 @@ client.on("messageCreate", async (message: Message) => {
             const ticket = getTicket(message.channel.id);
             
             if (ticket && ticket.status !== 'closed') {
+              // Check if this is the ticket creator (user who opened the ticket) - they can always message
+              if (ticket.user_id === message.author.id) {
+                console.log(`[AntiExploit] ✓ Ticket creator ${message.author.id} messaging in their own ticket #${ticket.id}`);
+                return; // Allow ticket creator to message without restrictions
+              }
+              
+              // Check if this is an owner - owners bypass schedule requirements
+              const { isOwnerId } = await import('./utils/owner');
+              const ownerIds = process.env.OWNER_IDS?.split(',') || [];
+              const isOwner = isOwnerId(message.author.id) || ownerIds.includes(message.author.id);
+              
+              if (isOwner) {
+                console.log(`[AntiExploit] ✓ Owner ${message.author.id} bypassing schedule check in ticket #${ticket.id}`);
+                return; // Allow owner to message without restrictions
+              }
+              
               // Staff is messaging in an active ticket - verify they're scheduled
               const workCheck = canStaffWorkNow(message.guild.id, message.author.id);
               
