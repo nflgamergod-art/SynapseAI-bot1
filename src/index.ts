@@ -5974,7 +5974,7 @@ client.on("interactionCreate", async (interaction) => {
       if (!activeShift) {
         // Check if staff is scheduled before allowing auto-clock-in
         const { canStaffWorkNow } = await import('./services/antiExploit');
-        const canWork = await canStaffWorkNow(interaction.user.id, interaction.guild!.id);
+        const canWork = canStaffWorkNow(interaction.guild!.id, interaction.user.id);
         
         if (!canWork.allowed) {
           console.log(`[Ticket Claim] ❌ ${interaction.user.tag} tried to claim ticket while not scheduled`);
