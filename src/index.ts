@@ -7240,10 +7240,11 @@ client.on("interactionCreate", async (interaction) => {
     const subCmd = interaction.options.getSubcommand();
 
     if (subCmd === "history") {
+      await interaction.deferReply({ ephemeral: true });
       const user = interaction.options.getUser('user', true);
       const { buildCustomerHistoryEmbed } = await import('./services/customerHistory');
       const embed = buildCustomerHistoryEmbed(user.id, interaction.guild.id, user.username);
-      return interaction.reply({ embeds: [embed], ephemeral: true });
+      return interaction.editReply({ embeds: [embed] });
     }
 
     if (subCmd === "note") {
