@@ -699,6 +699,12 @@ export function resetPayrollHours(guildId: string, userId: string, days: number 
   };
 }
 
+// Clear a user's cooldown (for manual unbanning/unblacklisting)
+export function clearCooldown(guildId: string, userId: string): void {
+  const db = getDB();
+  db.prepare(`DELETE FROM payroll_cooldowns WHERE guild_id = ? AND user_id = ?`).run(guildId, userId);
+}
+
 // Set or update pay adjustment for user or role
 export function setPayAdjustment(
   guildId: string,

@@ -518,6 +518,11 @@ client.once('clientReady', async () => {
   initAntiExploitSchema();
   console.log('✅ Anti-exploit system initialized');
   
+  // Initialize anti-abuse bypass roles (load from database)
+  const { initAbuseBypassSchema } = await import('./services/antiAbuse');
+  initAbuseBypassSchema();
+  console.log('✅ Anti-abuse bypass roles loaded from database');
+  
   // Initialize tickets schema and run migrations
   const { initTicketsSchema } = await import('./services/tickets');
   initTicketsSchema();
@@ -3443,7 +3448,7 @@ client.on("interactionCreate", async (interaction) => {
 
       if (subcommand === "add") {
         const role = interaction.options.getRole('role', true);
-        addBypassRole(role.id);
+        addBypassRole(role.id, interaction.guild.id, interaction.user.id);
         return interaction.reply({ 
           content: `✅ Added <@&${role.id}> to inappropriate content filter bypass list. Members with this role will not be warned for inappropriate language.`, 
           ephemeral: true 
@@ -6662,6 +6667,7 @@ client.on("interactionCreate", async (interaction) => {
 
       const { unblacklistFromTickets, isTicketBlacklisted } = await import('./services/tickets');
       const { removeBlacklistEntry, isBlacklisted } = await import('./services/blacklistService');
+      const { clearCooldown, isOnCooldown } = await import('./services/payroll');
 
       let changes: string[] = [];
 
@@ -6678,6 +6684,15 @@ client.on("interactionCreate", async (interaction) => {
         if (isBlacklisted(user.id, 'user', interaction.guild.id)) {
           removeBlacklistEntry(user.id, 'user', interaction.guild.id);
           changes.push('legacy_json/blacklist_table');
+        }
+      } catch {}
+
+      // Clock-in cooldown removal (prevents "You're on cooldown" error after unblacklisting)
+      try {
+        const cooldownCheck = isOnCooldown(interaction.guild.id, user.id);
+        if (cooldownCheck.onCooldown) {
+          clearCooldown(interaction.guild.id, user.id);
+          changes.push('clock_in_cooldown');
         }
       } catch {}
 

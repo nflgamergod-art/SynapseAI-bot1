@@ -9,7 +9,7 @@ import './enhancedDB'; // Ensure enhanced schema is initialized
  * - Warns users and mutes on 3rd warning
  * - Logs incidents to mod channel
  * - Persists warnings to database
- * - Role-based bypass system
+ * - Role-based bypass system (persisted to database)
  */
 
 interface SpamTracker {
@@ -17,18 +17,61 @@ interface SpamTracker {
   messages: number[];
 }
 
-// Store bypassed role IDs
+// Store bypassed role IDs (cache loaded from DB on startup)
 const bypassedRoleIds = new Set<string>();
 
-// Add a role to bypass list
-export function addBypassRole(roleId: string): boolean {
+// Initialize abuse bypass schema and load roles from DB
+export function initAbuseBypassSchema() {
+  const db = getDB();
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS abuse_bypass_roles (
+      role_id TEXT PRIMARY KEY,
+      guild_id TEXT NOT NULL,
+      added_by TEXT NOT NULL,
+      added_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_abuse_bypass_guild ON abuse_bypass_roles(guild_id);
+  `);
+  
+  // Load all roles from DB into memory on startup
+  const roles = db.prepare(`SELECT role_id FROM abuse_bypass_roles`).all() as Array<{ role_id: string }>;
+  for (const role of roles) {
+    bypassedRoleIds.add(role.role_id);
+  }
+  console.log(`[Anti-Abuse] Loaded ${roles.length} bypass role(s) from database`);
+}
+
+// Add a role to bypass list (persists to database)
+export function addBypassRole(roleId: string, guildId?: string, addedBy?: string): boolean {
   bypassedRoleIds.add(roleId);
+  
+  // Persist to database
+  const db = getDB();
+  try {
+    db.prepare(`
+      INSERT OR IGNORE INTO abuse_bypass_roles (role_id, guild_id, added_by, added_at)
+      VALUES (?, ?, ?, ?)
+    `).run(roleId, guildId || 'unknown', addedBy || 'system', new Date().toISOString());
+  } catch (err) {
+    console.error('[Anti-Abuse] Failed to persist bypass role:', err);
+  }
+  
   return true;
 }
 
-// Remove a role from bypass list
+// Remove a role from bypass list (removes from database)
 export function removeBypassRole(roleId: string): boolean {
-  return bypassedRoleIds.delete(roleId);
+  const deleted = bypassedRoleIds.delete(roleId);
+  
+  // Remove from database
+  const db = getDB();
+  try {
+    db.prepare(`DELETE FROM abuse_bypass_roles WHERE role_id = ?`).run(roleId);
+  } catch (err) {
+    console.error('[Anti-Abuse] Failed to remove bypass role from DB:', err);
+  }
+  
+  return deleted;
 }
 
 // Check if user has a bypassed role
