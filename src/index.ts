@@ -484,19 +484,34 @@ client.once('clientReady', async () => {
   // Initialize enhanced features
   await initializeEnhancedFeatures(); // Removed the client argument
   
-  // Start achievement cron jobs for periodic checks
-  const { startAchievementCron } = await import('./services/achievementCron');
-  startAchievementCron(client);
+  // Skip cron jobs and DM notifications on secondary bot
+  const isSecondaryBot = process.env.IS_SECONDARY_BOT === 'true';
   
-  // Start payroll cron jobs (weekly notifications, daily reports, time limit checks)
-  const { initPayrollCron } = await import('./services/payrollCron');
-  initPayrollCron(client);
+  if (isSecondaryBot) {
+    console.log('🔕 Secondary bot detected - Skipping cron jobs and DM notifications');
+  } else {
+    console.log('🔔 Primary bot detected - Starting all cron jobs and DM notifications');
+    
+    // Start achievement cron jobs for periodic checks
+    const { startAchievementCron } = await import('./services/achievementCron');
+    startAchievementCron(client);
+    
+    // Start payroll cron jobs (weekly notifications, daily reports, time limit checks)
+    const { initPayrollCron } = await import('./services/payrollCron');
+    initPayrollCron(client);
+    
+    // Start scheduling cron jobs (weekly schedule generation)
+    const { initSchedulingCron } = await import('./services/schedulingCron');
+    initSchedulingCron(client);
+    
+    // Start attendance tracking cron jobs (daily missed shift checks)
+    const { initAttendanceCron } = await import('./services/attendanceCron');
+    initAttendanceCron(client);
+  }
   
-  // Start scheduling cron jobs (weekly schedule generation)
-  const { initSchedulingCron } = await import('./services/schedulingCron');
+  // Initialize schemas (both bots need these)
   const { initSchedulingSchema } = await import('./services/scheduling');
   initSchedulingSchema();
-  initSchedulingCron(client);
   
   // Initialize anti-exploit system
   const { initAntiExploitSchema } = await import('./services/antiExploit');
@@ -507,15 +522,12 @@ client.once('clientReady', async () => {
   const { initTicketsSchema } = await import('./services/tickets');
   initTicketsSchema();
   
-  // Start attendance tracking cron jobs (daily missed shift checks)
-  const { initAttendanceCron } = await import('./services/attendanceCron');
-  initAttendanceCron(client);
-  
-  // Start payroll auto-break checker (runs every 2 minutes)
-  const { checkAndAutoBreak, checkDailyLimitReached, forceClockOut, set24HourCooldown } = await import('./services/payroll');
-  const { getActiveStaff } = await import('./services/shifts');
-  
-  setInterval(async () => {
+  // Start payroll auto-break checker (runs every 2 minutes) - ONLY on primary bot
+  if (!isSecondaryBot) {
+    const { checkAndAutoBreak, checkDailyLimitReached, forceClockOut, set24HourCooldown } = await import('./services/payroll');
+    const { getActiveStaff } = await import('./services/shifts');
+    
+    setInterval(async () => {
     try {
       // Get all guilds and check for inactive clocked-in users
       for (const [guildId, guild] of client.guilds.cache) {
@@ -583,9 +595,10 @@ client.once('clientReady', async () => {
     } catch (err) {
       console.error('Payroll auto-check failed:', err);
     }
-  }, 2 * 60 * 1000); // Every 2 minutes
-  
-  console.log('✅ Payroll auto-break system started (checks every 2 minutes)');
+    }, 2 * 60 * 1000); // Every 2 minutes
+    
+    console.log('✅ Payroll auto-break system started (checks every 2 minutes)');
+  }
   
   // Check for inactive tickets every hour (24h+ no user response = auto-blacklist)
   setInterval(async () => {
