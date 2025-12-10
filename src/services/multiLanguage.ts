@@ -104,11 +104,18 @@ export function getLanguagePreference(userId: string, guildId: string): Language
 
 // Detect language from text (simple heuristic-based detection)
 export function detectLanguage(text: string): string {
-  const lowerText = text.toLowerCase();
+  // Count Spanish-specific characters and words for better detection
+  const spanishChars = (text.match(/[áéíóúüñ¿¡]/gi) || []).length;
+  const spanishWords = (text.match(/\b(será|mañana|mejor|noche|semana|viene|eternidad|esta|hola|gracias|días|señor|está|que)\b/gi) || []).length;
   
-  // Simple keyword-based detection
+  // If multiple Spanish indicators found, it's Spanish
+  if (spanishChars > 0 || spanishWords >= 2) {
+    console.log(`🌍 Detected language: es (Spanish chars: ${spanishChars}, words: ${spanishWords}) for text: "${text.substring(0, 50)}..."`);
+    return 'es';
+  }
+  
+  // Check other language patterns
   const patterns = {
-    es: /(?:hola|gracias|por favor|buenos|días|señor|está)/i,
     fr: /(?:bonjour|merci|s'il vous plaît|monsieur|madame|très)/i,
     de: /(?:hallo|danke|bitte|herr|frau|sehr|gut)/i,
     pt: /(?:olá|obrigado|por favor|senhor|senhora|muito)/i,
@@ -121,10 +128,12 @@ export function detectLanguage(text: string): string {
   
   for (const [lang, pattern] of Object.entries(patterns)) {
     if (pattern.test(text)) {
+      console.log(`🌍 Detected language: ${lang} for text: "${text.substring(0, 50)}..."`);
       return lang;
     }
   }
   
+  console.log(`🌍 No language detected, defaulting to English for: "${text.substring(0, 50)}..."`);
   return 'en'; // Default to English
 }
 
@@ -177,10 +186,16 @@ export async function translateText(
     const data = await response.json() as any;
     console.log(`🌍 Translation API response:`, data);
     
-    const translated = data.responseData?.translatedText || text;
+    let translated = data.responseData?.translatedText || text;
+    
+    // Clean up translation - sometimes API returns original text in quotes or with extra formatting
+    translated = translated.trim().replace(/^["']|["']$/g, '');
+    
+    // Check if translation actually changed the text
+    const textChanged = translated.toLowerCase() !== text.toLowerCase();
     
     // Only cache if translation was successful and different from original
-    if (translated && translated !== text && data.responseStatus === 200) {
+    if (translated && textChanged && data.responseStatus === 200) {
       db.prepare(`
         INSERT INTO translation_cache (original_text, translated_text, source_lang, target_lang)
         VALUES (?, ?, ?, ?)
@@ -188,7 +203,9 @@ export async function translateText(
       
       console.log(`✅ Translation successful: "${text.substring(0, 30)}..." → "${translated.substring(0, 30)}..."`);
     } else {
-      console.warn(`⚠️ Translation returned same text or failed. Status: ${data.responseStatus}`);
+      console.warn(`⚠️ Translation returned same text or failed. Status: ${data.responseStatus}, Changed: ${textChanged}`);
+      console.log(`Original: "${text}"`);
+      console.log(`Translated: "${translated}"`);
     }
     
     return { translated, detectedLang: detected };
