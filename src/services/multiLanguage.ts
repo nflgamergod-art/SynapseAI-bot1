@@ -149,15 +149,17 @@ export async function translateText(
   
   try {
     // Use LibreTranslate (free, self-hosted option)
-    // You can also use Google Translate API if you have an API key
     const libreTranslateUrl = process.env.LIBRETRANSLATE_URL || 'https://libretranslate.com/translate';
     
     const detected = sourceLang || detectLanguage(text);
     
     // If already in target language, return as-is
     if (detected === targetLang) {
+      console.log(`🌍 Text already in target language (${targetLang})`);
       return { translated: text, detectedLang: detected };
     }
+    
+    console.log(`🌍 Translating: "${text.substring(0, 50)}..." from ${detected} to ${targetLang}`);
     
     const response = await fetch(libreTranslateUrl, {
       method: 'POST',
@@ -173,24 +175,33 @@ export async function translateText(
     });
     
     if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`❌ Translation API error: ${response.status} ${response.statusText}`, errorText);
       throw new Error(`Translation API error: ${response.statusText}`);
     }
     
     const data = await response.json() as any;
-    const translated = data.translatedText || text;
+    console.log(`🌍 Translation API response:`, data);
     
-    // Cache the translation
-    db.prepare(`
-      INSERT INTO translation_cache (original_text, translated_text, source_lang, target_lang)
-      VALUES (?, ?, ?, ?)
-    `).run(text, translated, detected, targetLang);
+    const translated = data.translatedText || data.translation || text;
     
-    console.log(`🌍 Translated text (${detected} → ${targetLang})`);
+    // Only cache if translation was successful and different from original
+    if (translated && translated !== text) {
+      db.prepare(`
+        INSERT INTO translation_cache (original_text, translated_text, source_lang, target_lang)
+        VALUES (?, ?, ?, ?)
+      `).run(text, translated, detected, targetLang);
+      
+      console.log(`✅ Translation successful: "${text.substring(0, 30)}..." → "${translated.substring(0, 30)}..."`);
+    } else {
+      console.warn(`⚠️ Translation returned same text or empty`);
+    }
     
     return { translated, detectedLang: detected };
   } catch (error) {
-    console.error('Translation failed:', error);
-    return { translated: text, detectedLang: sourceLang || 'en' };
+    console.error('❌ Translation failed:', error);
+    // Return original text with detected language on error
+    return { translated: text, detectedLang: sourceLang || detectLanguage(text) };
   }
 }
 
