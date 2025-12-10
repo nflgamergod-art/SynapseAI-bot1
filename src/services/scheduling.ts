@@ -350,8 +350,8 @@ export function getAllSchedulesForWeek(guildId: string, weekStart: string): Map<
 export function isScheduledToday(guildId: string, userId: string): boolean {
   const schedule = getStaffSchedule(guildId, userId);
   
-  // If no schedule exists yet, allow clock-in (pre-schedule-system period)
-  if (!schedule) return true;
+  // If no schedule exists, they are NOT scheduled
+  if (!schedule) return false;
   
   const today = new Date().toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase();
   return schedule.includes(today);
@@ -361,8 +361,8 @@ export function isScheduledToday(guildId: string, userId: string): boolean {
 export function isScheduledForDate(guildId: string, userId: string, date: Date): boolean {
   const schedule = getStaffSchedule(guildId, userId);
   
-  // If no schedule exists yet, assume they're allowed
-  if (!schedule) return true;
+  // If no schedule exists, they are NOT scheduled
+  if (!schedule) return false;
   
   const dayName = date.toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase();
   return schedule.includes(dayName);
