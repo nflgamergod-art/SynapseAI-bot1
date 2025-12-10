@@ -1228,16 +1228,6 @@ client.once('clientReady', async () => {
       { name: "unblacklist", description: "Remove user from ticket blacklist", type: 1, options: [
         { name: "user", description: "User to unblacklist", type: 6, required: true }
       ] },
-      { name: "blacklists", description: "View all ticket blacklisted users", type: 1 },
-      { name: "diagnoseblacklist", description: "Diagnose all blacklist sources for a user", type: 1, options: [
-        { name: "user", description: "User to diagnose", type: 6, required: true }
-      ] },
-      { name: "unblacklistall", description: "Remove user from ALL blacklist sources", type: 1, options: [
-        { name: "user", description: "User to unblacklist from everywhere", type: 6, required: true }
-      ] },
-      { name: "debug", description: "Debug ticket inactivity (Admin only)", type: 1, options: [
-        { name: "channel", description: "Ticket channel to check", type: 7, required: false }
-      ] },
       { name: "note", description: "Add internal note to ticket (staff only)", type: 1, options: [
         { name: "note", description: "Internal note (only staff can see)", type: 3, required: true }
       ] },
@@ -1252,12 +1242,14 @@ client.once('clientReady', async () => {
       ] },
       { name: "collaboration", description: "View collaboration history for this ticket", type: 1 },
       { name: "history", description: "View ticket creator's customer history", type: 1 },
-      { name: "voice", description: "Create voice channel for this ticket", type: 1 },
-      { name: "endvoice", description: "End voice session and save transcript", type: 1 },
-      { name: "voicehistory", description: "View voice session history for this ticket", type: 1 },
-      { name: "translateticket", description: "Translate ticket messages", type: 1, options: [
+      { name: "translate", description: "Translate ticket messages", type: 1, options: [
         { name: "code", description: "Target language code (en/es/fr/de/it/pt/ru/ja/ko/zh)", type: 3, required: true }
       ] }
+    ] },
+    { name: "ticketvoice", description: "🎙️ Voice support for tickets", options: [
+      { name: "start", description: "Create voice channel for current ticket", type: 1 },
+      { name: "end", description: "End voice session and save transcript", type: 1 },
+      { name: "history", description: "View voice session history for current ticket", type: 1 }
     ] },
     { name: "unban", description: "Unban a user from the server", options: [
       { name: "user_id", description: "User ID to unban", type: 3, required: true },
@@ -1661,7 +1653,7 @@ client.once('clientReady', async () => {
     // Staff Management & Anti-Exploit
     'staffactivity', 'promotion', 'violations',
     // Ticket system - ESSENTIAL
-    'ticket', 'ticketsla', 'tickettag', 'ticketnote', 'ticketanalytics',
+    'ticket', 'ticketvoice', 'ticketsla', 'tickettag', 'ticketnote', 'ticketanalytics',
     'ticketfeedback', 'autoresponse', 'staffexpertise', 'ticketrouting',
     // Customer Management & Collaboration
     'customer', 'mymentions',
@@ -6888,172 +6880,7 @@ client.on("interactionCreate", async (interaction) => {
       return interaction.reply({ embeds: [embed], ephemeral: true });
     }
 
-    if (subCmd === "voice") {
-      if (!(await hasCommandAccess(interaction.member, 'ticket', interaction.guild?.id || null))) {
-        return interaction.reply({ content: '❌ You don\'t have permission to use this command.', flags: MessageFlags.Ephemeral });
-      }
-      if (!interaction.channel || !('guild' in interaction.channel)) {
-        return interaction.reply({ content: 'This command must be used in a ticket channel.', ephemeral: true });
-      }
-
-      const { getTicket } = await import('./services/tickets');
-      const ticket = getTicket(interaction.channel.id);
-
-      if (!ticket) {
-        return interaction.reply({ content: '❌ This is not a ticket channel.', ephemeral: true });
-      }
-
-      // Check if there's already an active voice session
-      const { getActiveVoiceSession, createVoiceSupport } = await import('./services/voiceSupport');
-      const activeSession = getActiveVoiceSession(ticket.id);
-
-      if (activeSession) {
-        return interaction.reply({ 
-          content: `❌ This ticket already has an active voice session: <#${activeSession.channel_id}>`, 
-          ephemeral: true 
-        });
-      }
-
-      // Create voice channel
-      const result = await createVoiceSupport(client, interaction.guild!.id, ticket.id, interaction.user.id, ticket.user_id);
-
-      if (!result.success || !result.channel) {
-        return interaction.reply({ 
-          content: `❌ Failed to create voice channel: ${result.error}`, 
-          ephemeral: true 
-        });
-      }
-
-      const embed = new EmbedBuilder()
-        .setTitle('🎙️ Voice Support Session Started')
-        .setColor(0x5865F2)
-        .addFields(
-          { name: 'Voice Channel', value: `<#${result.channel.id}>`, inline: true },
-          { name: 'Staff', value: `<@${interaction.user.id}>`, inline: true },
-          { name: 'Customer', value: `<@${ticket.user_id}>`, inline: true }
-        )
-        .setFooter({ text: 'Use /ticket endvoice when finished to save a transcript' });
-
-      await (interaction.channel as any).send({ embeds: [embed] });
-
-      return interaction.reply({ 
-        content: `✅ Voice channel created: <#${result.channel.id}>`, 
-        ephemeral: true 
-      });
-    }
-
-    if (subCmd === "endvoice") {
-      if (!(await hasCommandAccess(interaction.member, 'ticket', interaction.guild?.id || null))) {
-        return interaction.reply({ content: '❌ You don\'t have permission to use this command.', flags: MessageFlags.Ephemeral });
-      }
-      if (!interaction.channel || !('guild' in interaction.channel)) {
-        return interaction.reply({ content: 'This command must be used in a ticket channel.', ephemeral: true });
-      }
-
-      const { getTicket } = await import('./services/tickets');
-      const ticket = getTicket(interaction.channel.id);
-
-      if (!ticket) {
-        return interaction.reply({ content: '❌ This is not a ticket channel.', ephemeral: true });
-      }
-
-      const { getActiveVoiceSession, endVoiceSession } = await import('./services/voiceSupport');
-      const activeSession = getActiveVoiceSession(ticket.id);
-
-      if (!activeSession) {
-        return interaction.reply({ 
-          content: '❌ This ticket doesn\'t have an active voice session.', 
-          ephemeral: true 
-        });
-      }
-
-      const result = await endVoiceSession(client, activeSession.id);
-
-      if (!result.success) {
-        return interaction.reply({ 
-          content: `❌ Failed to end voice session.`, 
-          ephemeral: true 
-        });
-      }
-
-      const durationMinutes = result.duration || 0;
-      const hours = Math.floor(durationMinutes / 60);
-      const minutes = durationMinutes % 60;
-      const durationText = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
-
-      const embed = new EmbedBuilder()
-        .setTitle('🎙️ Voice Support Session Ended')
-        .setColor(0xFF6B6B)
-        .addFields(
-          { name: 'Duration', value: durationText, inline: true },
-          { name: 'Staff', value: `<@${activeSession.staff_id}>`, inline: true }
-        );
-
-      await (interaction.channel as any).send({ embeds: [embed] });
-
-      return interaction.reply({ 
-        content: '✅ Voice session ended and transcript saved.', 
-        ephemeral: true 
-      });
-    }
-
-    if (subCmd === "voicehistory") {
-      if (!(await hasCommandAccess(interaction.member, 'ticket', interaction.guild?.id || null))) {
-        return interaction.reply({ content: '❌ You don\'t have permission to use this command.', flags: MessageFlags.Ephemeral });
-      }
-      if (!interaction.channel || !('guild' in interaction.channel)) {
-        return interaction.reply({ content: 'This command must be used in a ticket channel.', ephemeral: true });
-      }
-
-      const { getTicket } = await import('./services/tickets');
-      const ticket = getTicket(interaction.channel.id);
-
-      if (!ticket) {
-        return interaction.reply({ content: '❌ This is not a ticket channel.', ephemeral: true });
-      }
-
-      const { getVoiceSessionHistory } = await import('./services/voiceSupport');
-      const sessions = getVoiceSessionHistory(ticket.id);
-
-      if (sessions.length === 0) {
-        return interaction.reply({ 
-          content: 'This ticket has no voice session history.', 
-          ephemeral: true 
-        });
-      }
-
-      const embed = new EmbedBuilder()
-        .setTitle('🎙️ Voice Session History')
-        .setColor(0x5865F2)
-        .setDescription(`**${sessions.length}** voice session(s) for this ticket`);
-
-      for (const session of sessions.slice(0, 5)) {
-        const startTime = Math.floor(new Date(session.started_at).getTime() / 1000);
-        const durationMinutes = session.duration_minutes || 0;
-        const hours = Math.floor(durationMinutes / 60);
-        const minutes = durationMinutes % 60;
-        const durationText = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
-
-        embed.addFields({
-          name: `Session #${session.id}`,
-          value: [
-            `**Staff:** <@${session.staff_id}>`,
-            `**Started:** <t:${startTime}:R>`,
-            `**Duration:** ${durationText}`,
-            session.transcript ? `**Transcript:** ${session.transcript.substring(0, 100)}...` : ''
-          ].filter(Boolean).join('\n'),
-          inline: false
-        });
-      }
-
-      if (sessions.length > 5) {
-        embed.setFooter({ text: `Showing first 5 of ${sessions.length} sessions` });
-      }
-
-      return interaction.reply({ embeds: [embed], ephemeral: true });
-    }
-
-    if (subCmd === "translateticket") {
+    if (subCmd === "translate") {
       if (!(await hasCommandAccess(interaction.member, 'ticket', interaction.guild?.id || null))) {
         return interaction.reply({ content: '❌ You don\'t have permission to use this command.', flags: MessageFlags.Ephemeral });
       }
@@ -7170,6 +6997,147 @@ client.on("interactionCreate", async (interaction) => {
 
         return interaction.reply({ embeds: [embed], ephemeral: true });
       }
+    }
+  }
+
+  if (name === "ticketvoice") {
+    if (!(await hasCommandAccess(interaction.member, 'ticket', interaction.guild?.id || null))) {
+      return interaction.reply({ content: '❌ You don\'t have permission to use this command.', flags: MessageFlags.Ephemeral });
+    }
+    if (!interaction.channel || !('guild' in interaction.channel)) {
+      return interaction.reply({ content: 'This command must be used in a ticket channel.', ephemeral: true });
+    }
+
+    const { getTicket } = await import('./services/tickets');
+    const ticket = getTicket(interaction.channel.id);
+
+    if (!ticket) {
+      return interaction.reply({ content: '❌ This is not a ticket channel.', ephemeral: true });
+    }
+
+    const subCmd = interaction.options.getSubcommand();
+
+    if (subCmd === "start") {
+      // Check if there's already an active voice session
+      const { getActiveVoiceSession, createVoiceSupport } = await import('./services/voiceSupport');
+      const activeSession = getActiveVoiceSession(ticket.id);
+
+      if (activeSession) {
+        return interaction.reply({ 
+          content: `❌ This ticket already has an active voice session: <#${activeSession.channel_id}>`, 
+          ephemeral: true 
+        });
+      }
+
+      // Create voice channel
+      const result = await createVoiceSupport(client, interaction.guild!.id, ticket.id, interaction.user.id, ticket.user_id);
+
+      if (!result.success || !result.channel) {
+        return interaction.reply({ 
+          content: `❌ Failed to create voice channel: ${result.error}`, 
+          ephemeral: true 
+        });
+      }
+
+      const embed = new EmbedBuilder()
+        .setTitle('🎙️ Voice Support Session Started')
+        .setColor(0x5865F2)
+        .addFields(
+          { name: 'Voice Channel', value: `<#${result.channel.id}>`, inline: true },
+          { name: 'Staff', value: `<@${interaction.user.id}>`, inline: true },
+          { name: 'Customer', value: `<@${ticket.user_id}>`, inline: true }
+        )
+        .setFooter({ text: 'Use /ticketvoice end when finished to save a transcript' });
+
+      await (interaction.channel as any).send({ embeds: [embed] });
+
+      return interaction.reply({ 
+        content: `✅ Voice channel created: <#${result.channel.id}>`, 
+        ephemeral: true 
+      });
+    }
+
+    if (subCmd === "end") {
+      const { getActiveVoiceSession, endVoiceSession } = await import('./services/voiceSupport');
+      const activeSession = getActiveVoiceSession(ticket.id);
+
+      if (!activeSession) {
+        return interaction.reply({ 
+          content: '❌ This ticket doesn\'t have an active voice session.', 
+          ephemeral: true 
+        });
+      }
+
+      const result = await endVoiceSession(client, activeSession.id);
+
+      if (!result.success) {
+        return interaction.reply({ 
+          content: `❌ Failed to end voice session.`, 
+          ephemeral: true 
+        });
+      }
+
+      const durationMinutes = result.duration || 0;
+      const hours = Math.floor(durationMinutes / 60);
+      const minutes = durationMinutes % 60;
+      const durationText = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+
+      const embed = new EmbedBuilder()
+        .setTitle('🎙️ Voice Support Session Ended')
+        .setColor(0xFF6B6B)
+        .addFields(
+          { name: 'Duration', value: durationText, inline: true },
+          { name: 'Staff', value: `<@${activeSession.staff_id}>`, inline: true }
+        );
+
+      await (interaction.channel as any).send({ embeds: [embed] });
+
+      return interaction.reply({ 
+        content: '✅ Voice session ended and transcript saved.', 
+        ephemeral: true 
+      });
+    }
+
+    if (subCmd === "history") {
+      const { getVoiceSessionHistory } = await import('./services/voiceSupport');
+      const sessions = getVoiceSessionHistory(ticket.id);
+
+      if (sessions.length === 0) {
+        return interaction.reply({ 
+          content: 'This ticket has no voice session history.', 
+          ephemeral: true 
+        });
+      }
+
+      const embed = new EmbedBuilder()
+        .setTitle('🎙️ Voice Session History')
+        .setColor(0x5865F2)
+        .setDescription(`**${sessions.length}** voice session(s) for this ticket`);
+
+      for (const session of sessions.slice(0, 5)) {
+        const startTime = Math.floor(new Date(session.started_at).getTime() / 1000);
+        const durationMinutes = session.duration_minutes || 0;
+        const hours = Math.floor(durationMinutes / 60);
+        const minutes = durationMinutes % 60;
+        const durationText = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+
+        embed.addFields({
+          name: `Session #${session.id}`,
+          value: [
+            `**Staff:** <@${session.staff_id}>`,
+            `**Started:** <t:${startTime}:R>`,
+            `**Duration:** ${durationText}`,
+            session.transcript ? `**Transcript:** ${session.transcript.substring(0, 100)}...` : ''
+          ].filter(Boolean).join('\n'),
+          inline: false
+        });
+      }
+
+      if (sessions.length > 5) {
+        embed.setFooter({ text: `Showing 5 of ${sessions.length} total sessions` });
+      }
+
+      return interaction.reply({ embeds: [embed], ephemeral: true });
     }
   }
 
