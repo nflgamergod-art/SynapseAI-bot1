@@ -1251,7 +1251,24 @@ client.once('clientReady', async () => {
         { name: "notes", description: "Context notes for new handler", type: 3, required: false }
       ] },
       { name: "collaboration", description: "View collaboration history for this ticket", type: 1 },
-      { name: "history", description: "View ticket creator's customer history", type: 1 }
+      { name: "history", description: "View ticket creator's customer history", type: 1 },
+      { name: "voice", description: "Create voice channel for this ticket", type: 1 },
+      { name: "endvoice", description: "End voice session and save transcript", type: 1 },
+      { name: "voicehistory", description: "View voice session history for this ticket", type: 1 },
+      { name: "translateticket", description: "Translate ticket to another language", type: 1, options: [
+        { name: "language", description: "Target language", type: 3, required: true, choices: [
+          { name: "English", value: "en" },
+          { name: "Spanish", value: "es" },
+          { name: "French", value: "fr" },
+          { name: "German", value: "de" },
+          { name: "Italian", value: "it" },
+          { name: "Portuguese", value: "pt" },
+          { name: "Russian", value: "ru" },
+          { name: "Japanese", value: "ja" },
+          { name: "Korean", value: "ko" },
+          { name: "Chinese", value: "zh" }
+        ] }
+      ] }
     ] },
     { name: "unban", description: "Unban a user from the server", options: [
       { name: "user_id", description: "User ID to unban", type: 3, required: true },
@@ -1279,6 +1296,82 @@ client.once('clientReady', async () => {
       ] }
     ] },
     { name: "mymentions", description: "🏷️ View tickets where you've been mentioned" },
+    // Wellness & Break Management
+    { name: "wellness", description: "🧘 Wellness and break reminder system", options: [
+      { name: "setup", description: "Configure wellness system for your server", type: 1, options: [
+        { name: "break_hours", description: "Hours before break reminder (default: 2.0)", type: 10, required: false },
+        { name: "hydration_minutes", description: "Minutes between hydration reminders (default: 30)", type: 4, required: false },
+        { name: "overtime_hours", description: "Hours before overtime warning (default: 6.0)", type: 10, required: false },
+        { name: "burnout_weekly_hours", description: "Weekly hours threshold for burnout alert (default: 40.0)", type: 10, required: false }
+      ] },
+      { name: "status", description: "View current wellness configuration", type: 1 },
+      { name: "config", description: "View your personal wellness stats", type: 1, options: [
+        { name: "user", description: "View stats for another user (admin only)", type: 6, required: false }
+      ] },
+      { name: "toggle", description: "Enable or disable wellness monitoring", type: 1, options: [
+        { name: "enabled", description: "Enable or disable the system", type: 5, required: true }
+      ] }
+    ] },
+    // Multi-Language Support
+    { name: "language", description: "🌍 Multi-language support system", options: [
+      { name: "set", description: "Set your preferred language", type: 1, options: [
+        { name: "language", description: "Your language", type: 3, required: true, choices: [
+          { name: "English", value: "en" },
+          { name: "Spanish", value: "es" },
+          { name: "French", value: "fr" },
+          { name: "German", value: "de" },
+          { name: "Italian", value: "it" },
+          { name: "Portuguese", value: "pt" },
+          { name: "Russian", value: "ru" },
+          { name: "Japanese", value: "ja" },
+          { name: "Korean", value: "ko" },
+          { name: "Chinese", value: "zh" },
+          { name: "Arabic", value: "ar" },
+          { name: "Hindi", value: "hi" },
+          { name: "Dutch", value: "nl" },
+          { name: "Polish", value: "pl" },
+          { name: "Turkish", value: "tr" }
+        ] }
+      ] },
+      { name: "translate", description: "Translate text to another language", type: 1, options: [
+        { name: "text", description: "Text to translate", type: 3, required: true },
+        { name: "to_language", description: "Target language", type: 3, required: true, choices: [
+          { name: "English", value: "en" },
+          { name: "Spanish", value: "es" },
+          { name: "French", value: "fr" },
+          { name: "German", value: "de" },
+          { name: "Italian", value: "it" },
+          { name: "Portuguese", value: "pt" },
+          { name: "Russian", value: "ru" },
+          { name: "Japanese", value: "ja" },
+          { name: "Korean", value: "ko" },
+          { name: "Chinese", value: "zh" },
+          { name: "Arabic", value: "ar" },
+          { name: "Hindi", value: "hi" },
+          { name: "Dutch", value: "nl" },
+          { name: "Polish", value: "pl" },
+          { name: "Turkish", value: "tr" }
+        ] }
+      ] },
+      { name: "stafflookup", description: "Find staff who speak a specific language", type: 1, options: [
+        { name: "language", description: "Language to search for", type: 3, required: true, choices: [
+          { name: "Spanish", value: "es" },
+          { name: "French", value: "fr" },
+          { name: "German", value: "de" },
+          { name: "Italian", value: "it" },
+          { name: "Portuguese", value: "pt" },
+          { name: "Russian", value: "ru" },
+          { name: "Japanese", value: "ja" },
+          { name: "Korean", value: "ko" },
+          { name: "Chinese", value: "zh" },
+          { name: "Arabic", value: "ar" },
+          { name: "Hindi", value: "hi" },
+          { name: "Dutch", value: "nl" },
+          { name: "Polish", value: "pl" },
+          { name: "Turkish", value: "tr" }
+        ] }
+      ] }
+    ] },
     // Staff Activity Tracking
     { name: "staffactivity", description: "⏰ Manage staff activity tracking and auto-demotion", options: [
       { name: "setup", description: "Configure staff activity system", type: 1, options: [
@@ -1630,6 +1723,8 @@ client.once('clientReady', async () => {
     'ticketfeedback', 'autoresponse', 'staffexpertise', 'ticketrouting',
     // Customer Management & Collaboration
     'customer', 'mymentions',
+    // Wellness & Multi-Language
+    'wellness', 'language',
     // Support
     'supportstats',
     // Moderation essentials
@@ -6851,6 +6946,216 @@ client.on("interactionCreate", async (interaction) => {
       return interaction.reply({ embeds: [embed], ephemeral: true });
     }
 
+    if (subCmd === "voice") {
+      if (!(await hasCommandAccess(interaction.member, 'ticket', interaction.guild?.id || null))) {
+        return interaction.reply({ content: '❌ You don\'t have permission to use this command.', flags: MessageFlags.Ephemeral });
+      }
+      if (!interaction.channel || !('guild' in interaction.channel)) {
+        return interaction.reply({ content: 'This command must be used in a ticket channel.', ephemeral: true });
+      }
+
+      const { getTicket } = await import('./services/tickets');
+      const ticket = getTicket(interaction.channel.id);
+
+      if (!ticket) {
+        return interaction.reply({ content: '❌ This is not a ticket channel.', ephemeral: true });
+      }
+
+      // Check if there's already an active voice session
+      const { getActiveVoiceSession, createVoiceSupport } = await import('./services/voiceSupport');
+      const activeSession = getActiveVoiceSession(ticket.id);
+
+      if (activeSession) {
+        return interaction.reply({ 
+          content: `❌ This ticket already has an active voice session: <#${activeSession.channel_id}>`, 
+          ephemeral: true 
+        });
+      }
+
+      // Create voice channel
+      const result = await createVoiceSupport(client, interaction.guild!.id, ticket.id, interaction.user.id, ticket.user_id);
+
+      if (!result.success || !result.channel) {
+        return interaction.reply({ 
+          content: `❌ Failed to create voice channel: ${result.error}`, 
+          ephemeral: true 
+        });
+      }
+
+      const embed = new EmbedBuilder()
+        .setTitle('🎙️ Voice Support Session Started')
+        .setColor(0x5865F2)
+        .addFields(
+          { name: 'Voice Channel', value: `<#${result.channel.id}>`, inline: true },
+          { name: 'Staff', value: `<@${interaction.user.id}>`, inline: true },
+          { name: 'Customer', value: `<@${ticket.user_id}>`, inline: true }
+        )
+        .setFooter({ text: 'Use /ticket endvoice when finished to save a transcript' });
+
+      await (interaction.channel as any).send({ embeds: [embed] });
+
+      return interaction.reply({ 
+        content: `✅ Voice channel created: <#${result.channel.id}>`, 
+        ephemeral: true 
+      });
+    }
+
+    if (subCmd === "endvoice") {
+      if (!(await hasCommandAccess(interaction.member, 'ticket', interaction.guild?.id || null))) {
+        return interaction.reply({ content: '❌ You don\'t have permission to use this command.', flags: MessageFlags.Ephemeral });
+      }
+      if (!interaction.channel || !('guild' in interaction.channel)) {
+        return interaction.reply({ content: 'This command must be used in a ticket channel.', ephemeral: true });
+      }
+
+      const { getTicket } = await import('./services/tickets');
+      const ticket = getTicket(interaction.channel.id);
+
+      if (!ticket) {
+        return interaction.reply({ content: '❌ This is not a ticket channel.', ephemeral: true });
+      }
+
+      const { getActiveVoiceSession, endVoiceSession } = await import('./services/voiceSupport');
+      const activeSession = getActiveVoiceSession(ticket.id);
+
+      if (!activeSession) {
+        return interaction.reply({ 
+          content: '❌ This ticket doesn\'t have an active voice session.', 
+          ephemeral: true 
+        });
+      }
+
+      const result = await endVoiceSession(client, activeSession.id);
+
+      if (!result.success) {
+        return interaction.reply({ 
+          content: `❌ Failed to end voice session.`, 
+          ephemeral: true 
+        });
+      }
+
+      const durationMinutes = result.duration || 0;
+      const hours = Math.floor(durationMinutes / 60);
+      const minutes = durationMinutes % 60;
+      const durationText = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+
+      const embed = new EmbedBuilder()
+        .setTitle('🎙️ Voice Support Session Ended')
+        .setColor(0xFF6B6B)
+        .addFields(
+          { name: 'Duration', value: durationText, inline: true },
+          { name: 'Staff', value: `<@${activeSession.staff_id}>`, inline: true }
+        );
+
+      await (interaction.channel as any).send({ embeds: [embed] });
+
+      return interaction.reply({ 
+        content: '✅ Voice session ended and transcript saved.', 
+        ephemeral: true 
+      });
+    }
+
+    if (subCmd === "voicehistory") {
+      if (!(await hasCommandAccess(interaction.member, 'ticket', interaction.guild?.id || null))) {
+        return interaction.reply({ content: '❌ You don\'t have permission to use this command.', flags: MessageFlags.Ephemeral });
+      }
+      if (!interaction.channel || !('guild' in interaction.channel)) {
+        return interaction.reply({ content: 'This command must be used in a ticket channel.', ephemeral: true });
+      }
+
+      const { getTicket } = await import('./services/tickets');
+      const ticket = getTicket(interaction.channel.id);
+
+      if (!ticket) {
+        return interaction.reply({ content: '❌ This is not a ticket channel.', ephemeral: true });
+      }
+
+      const { getVoiceSessionHistory } = await import('./services/voiceSupport');
+      const sessions = getVoiceSessionHistory(ticket.id);
+
+      if (sessions.length === 0) {
+        return interaction.reply({ 
+          content: 'This ticket has no voice session history.', 
+          ephemeral: true 
+        });
+      }
+
+      const embed = new EmbedBuilder()
+        .setTitle('🎙️ Voice Session History')
+        .setColor(0x5865F2)
+        .setDescription(`**${sessions.length}** voice session(s) for this ticket`);
+
+      for (const session of sessions.slice(0, 5)) {
+        const startTime = Math.floor(new Date(session.started_at).getTime() / 1000);
+        const durationMinutes = session.duration_minutes || 0;
+        const hours = Math.floor(durationMinutes / 60);
+        const minutes = durationMinutes % 60;
+        const durationText = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+
+        embed.addFields({
+          name: `Session #${session.id}`,
+          value: [
+            `**Staff:** <@${session.staff_id}>`,
+            `**Started:** <t:${startTime}:R>`,
+            `**Duration:** ${durationText}`,
+            session.transcript ? `**Transcript:** ${session.transcript.substring(0, 100)}...` : ''
+          ].filter(Boolean).join('\n'),
+          inline: false
+        });
+      }
+
+      if (sessions.length > 5) {
+        embed.setFooter({ text: `Showing first 5 of ${sessions.length} sessions` });
+      }
+
+      return interaction.reply({ embeds: [embed], ephemeral: true });
+    }
+
+    if (subCmd === "translateticket") {
+      if (!(await hasCommandAccess(interaction.member, 'ticket', interaction.guild?.id || null))) {
+        return interaction.reply({ content: '❌ You don\'t have permission to use this command.', flags: MessageFlags.Ephemeral });
+      }
+      if (!interaction.channel || !('guild' in interaction.channel)) {
+        return interaction.reply({ content: 'This command must be used in a ticket channel.', ephemeral: true });
+      }
+
+      const targetLang = interaction.options.getString('language', true);
+
+      const { getTicket } = await import('./services/tickets');
+      const ticket = getTicket(interaction.channel.id);
+
+      if (!ticket) {
+        return interaction.reply({ content: '❌ This is not a ticket channel.', ephemeral: true });
+      }
+
+      await interaction.deferReply({ ephemeral: true });
+
+      // Fetch recent messages from ticket channel
+      const messages = await (interaction.channel as any).messages.fetch({ limit: 10 });
+      const userMessages = messages.filter((m: any) => m.author.id === ticket.user_id).first();
+
+      if (!userMessages) {
+        return interaction.editReply({ content: '❌ No messages found from ticket owner to translate.' });
+      }
+
+      const { translateText, detectLanguage } = await import('./services/multiLanguage');
+      const detectedLang = detectLanguage(userMessages.content);
+      
+      const result = await translateText(userMessages.content, targetLang, detectedLang);
+
+      const embed = new EmbedBuilder()
+        .setTitle('🌍 Ticket Translation')
+        .setColor(0x5865F2)
+        .addFields(
+          { name: 'Original Message', value: userMessages.content.substring(0, 1024), inline: false },
+          { name: 'Detected Language', value: result.detectedLang, inline: true },
+          { name: 'Target Language', value: targetLang, inline: true },
+          { name: 'Translation', value: result.translated, inline: false }
+        );
+
+      return interaction.editReply({ embeds: [embed] });
+    }
+
     if (subCmd === "debug") {
       if (!isOwnerId(interaction.user.id)) {
         return interaction.reply({ content: '❌ Only the bot owner can use this debug command.', ephemeral: true });
@@ -7026,6 +7331,200 @@ client.on("interactionCreate", async (interaction) => {
     }
 
     return interaction.reply({ embeds: [embed], ephemeral: true });
+  }
+
+  if (name === "wellness") {
+    if (!(await hasCommandAccess(interaction.member, 'wellness', interaction.guild?.id || null))) {
+      return interaction.reply({ content: '❌ You don\'t have permission to use this command.', flags: MessageFlags.Ephemeral });
+    }
+    if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', flags: MessageFlags.Ephemeral });
+
+    const subCmd = interaction.options.getSubcommand();
+    const { getWellnessConfig, setWellnessConfig } = await import('./services/wellness');
+
+    if (subCmd === "setup") {
+      const breakHours = interaction.options.getNumber('break_hours') ?? 2.0;
+      const hydrationMinutes = interaction.options.getInteger('hydration_minutes') ?? 30;
+      const overtimeHours = interaction.options.getNumber('overtime_hours') ?? 6.0;
+      const burnoutWeeklyHours = interaction.options.getNumber('burnout_weekly_hours') ?? 40.0;
+
+      setWellnessConfig({
+        guild_id: interaction.guild.id,
+        break_reminder_hours: breakHours,
+        hydration_reminder_minutes: hydrationMinutes,
+        overtime_warning_hours: overtimeHours,
+        burnout_threshold_hours_weekly: burnoutWeeklyHours,
+        enabled: 1
+      });
+
+      return interaction.reply({ 
+        content: `✅ Wellness system configured:\n• Break reminders: every ${breakHours}h\n• Hydration reminders: every ${hydrationMinutes}m\n• Overtime warnings: after ${overtimeHours}h\n• Burnout alerts: after ${burnoutWeeklyHours}h/week`, 
+        ephemeral: true 
+      });
+    }
+
+    if (subCmd === "status") {
+      const config = getWellnessConfig(interaction.guild.id);
+
+      if (!config) {
+        return interaction.reply({ 
+          content: '❌ Wellness system is not configured. Use `/wellness setup` to configure it.', 
+          ephemeral: true 
+        });
+      }
+
+      const embed = new EmbedBuilder()
+        .setTitle('🧘 Wellness System Configuration')
+        .setColor(config.enabled ? 0x51CF66 : 0xFF6B6B)
+        .addFields(
+          { name: 'Status', value: config.enabled ? '✅ Enabled' : '❌ Disabled', inline: true },
+          { name: 'Break Reminders', value: `Every ${config.break_reminder_hours}h`, inline: true },
+          { name: 'Hydration Reminders', value: `Every ${config.hydration_reminder_minutes}m`, inline: true },
+          { name: 'Overtime Warnings', value: `After ${config.overtime_warning_hours}h`, inline: true },
+          { name: 'Burnout Threshold', value: `${config.burnout_threshold_hours_weekly}h/week`, inline: true }
+        )
+        .setFooter({ text: 'Monitoring runs every 15 minutes for active staff' });
+
+      return interaction.reply({ embeds: [embed], ephemeral: true });
+    }
+
+    if (subCmd === "config") {
+      const targetUser = interaction.options.getUser('user') || interaction.user;
+      
+      // Check if user is viewing someone else's stats (admin only)
+      if (targetUser.id !== interaction.user.id && !(await hasCommandAccess(interaction.member, 'wellness', interaction.guild?.id || null))) {
+        return interaction.reply({ content: '❌ You can only view your own wellness stats.', flags: MessageFlags.Ephemeral });
+      }
+
+      const { getActiveShift } = await import('./services/shifts');
+      const activeShift = getActiveShift(interaction.guild.id, targetUser.id);
+
+      if (!activeShift) {
+        return interaction.reply({ 
+          content: `<@${targetUser.id}> is not currently clocked in.`, 
+          ephemeral: true 
+        });
+      }
+
+      const now = new Date();
+      const clockInTime = new Date(activeShift.clock_in);
+      const hoursWorked = (now.getTime() - clockInTime.getTime()) / (1000 * 60 * 60);
+
+      const embed = new EmbedBuilder()
+        .setTitle(`🧘 Wellness Stats for ${targetUser.username}`)
+        .setColor(0x5865F2)
+        .addFields(
+          { name: 'Currently Working', value: `${hoursWorked.toFixed(1)} hours`, inline: true },
+          { name: 'Clocked In', value: `<t:${Math.floor(clockInTime.getTime() / 1000)}:R>`, inline: true },
+          { name: 'Status', value: hoursWorked >= 6 ? '⚠️ Working overtime' : hoursWorked >= 2 ? '💧 Consider taking a break' : '✅ Good', inline: false }
+        );
+
+      return interaction.reply({ embeds: [embed], ephemeral: true });
+    }
+
+    if (subCmd === "toggle") {
+      const enabled = interaction.options.getBoolean('enabled', true);
+      const config = getWellnessConfig(interaction.guild.id);
+
+      if (!config) {
+        return interaction.reply({ 
+          content: '❌ Wellness system is not configured. Use `/wellness setup` first.', 
+          ephemeral: true 
+        });
+      }
+
+      setWellnessConfig({
+        ...config,
+        enabled: enabled ? 1 : 0
+      });
+
+      return interaction.reply({ 
+        content: `✅ Wellness monitoring ${enabled ? 'enabled' : 'disabled'}.`, 
+        ephemeral: true 
+      });
+    }
+  }
+
+  if (name === "language") {
+    if (!(await hasCommandAccess(interaction.member, 'language', interaction.guild?.id || null))) {
+      return interaction.reply({ content: '❌ You don\'t have permission to use this command.', flags: MessageFlags.Ephemeral });
+    }
+    if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', flags: MessageFlags.Ephemeral });
+
+    const subCmd = interaction.options.getSubcommand();
+
+    if (subCmd === "set") {
+      const language = interaction.options.getString('language', true);
+      const { setLanguagePreference } = await import('./services/multiLanguage');
+      
+      setLanguagePreference(interaction.user.id, interaction.guild.id, language);
+
+      const languageNames: Record<string, string> = {
+        en: 'English', es: 'Spanish', fr: 'French', de: 'German', it: 'Italian',
+        pt: 'Portuguese', ru: 'Russian', ja: 'Japanese', ko: 'Korean', zh: 'Chinese',
+        ar: 'Arabic', hi: 'Hindi', nl: 'Dutch', pl: 'Polish', tr: 'Turkish'
+      };
+
+      return interaction.reply({ 
+        content: `✅ Your language preference has been set to **${languageNames[language] || language}**.`, 
+        ephemeral: true 
+      });
+    }
+
+    if (subCmd === "translate") {
+      const text = interaction.options.getString('text', true);
+      const toLang = interaction.options.getString('to_language', true);
+
+      await interaction.deferReply({ ephemeral: true });
+
+      const { translateText, detectLanguage } = await import('./services/multiLanguage');
+      const fromLang = detectLanguage(text);
+      
+      const result = await translateText(text, toLang, fromLang);
+
+      const languageNames: Record<string, string> = {
+        en: 'English', es: 'Spanish', fr: 'French', de: 'German', it: 'Italian',
+        pt: 'Portuguese', ru: 'Russian', ja: 'Japanese', ko: 'Korean', zh: 'Chinese',
+        ar: 'Arabic', hi: 'Hindi', nl: 'Dutch', pl: 'Polish', tr: 'Turkish'
+      };
+
+      const embed = new EmbedBuilder()
+        .setTitle('🌍 Translation')
+        .setColor(0x5865F2)
+        .addFields(
+          { name: `Original (${languageNames[result.detectedLang] || result.detectedLang})`, value: text.substring(0, 1024), inline: false },
+          { name: `Translation (${languageNames[toLang] || toLang})`, value: result.translated, inline: false }
+        );
+
+      return interaction.editReply({ embeds: [embed] });
+    }
+
+    if (subCmd === "stafflookup") {
+      const language = interaction.options.getString('language', true);
+      const { findStaffByLanguage } = await import('./services/multiLanguage');
+      
+      const staffList = findStaffByLanguage(interaction.guild.id, language);
+
+      if (staffList.length === 0) {
+        return interaction.reply({ 
+          content: `No staff members found who speak **${language}**.`, 
+          ephemeral: true 
+        });
+      }
+
+      const languageNames: Record<string, string> = {
+        es: 'Spanish', fr: 'French', de: 'German', it: 'Italian',
+        pt: 'Portuguese', ru: 'Russian', ja: 'Japanese', ko: 'Korean', zh: 'Chinese',
+        ar: 'Arabic', hi: 'Hindi', nl: 'Dutch', pl: 'Polish', tr: 'Turkish'
+      };
+
+      const embed = new EmbedBuilder()
+        .setTitle(`🌍 ${languageNames[language] || language}-Speaking Staff`)
+        .setColor(0x5865F2)
+        .setDescription(`Found **${staffList.length}** staff member(s):\n\n${staffList.map(id => `<@${id}>`).join(', ')}`);
+
+      return interaction.reply({ embeds: [embed], ephemeral: true });
+    }
   }
 
   if (name === "unban") {
