@@ -7381,7 +7381,20 @@ client.on("interactionCreate", async (interaction) => {
   }
 
   if (name === "language") {
-    if (!(await hasCommandAccess(interaction.member, 'language', interaction.guild?.id || null))) {
+    // Allow staff members to use language commands
+    const { getSupportRoles } = await import('./services/supportRoles');
+    const supportRoles = getSupportRoles();
+    const staffRoleIds = [supportRoles.head, supportRoles.support, supportRoles.trial].filter(Boolean);
+    
+    const member = interaction.member as any;
+    const hasStaffRole = member?.roles?.cache?.some((role: any) => 
+      staffRoleIds.includes(role.id)
+    ) || false;
+    
+    // Check if user has permission OR is a staff member
+    const hasAccess = (await hasCommandAccess(interaction.member, 'language', interaction.guild?.id || null)) || hasStaffRole;
+    
+    if (!hasAccess) {
       return interaction.reply({ content: '❌ You don\'t have permission to use this command.', flags: MessageFlags.Ephemeral });
     }
     if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', flags: MessageFlags.Ephemeral });
