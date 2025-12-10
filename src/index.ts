@@ -1105,6 +1105,15 @@ client.once('clientReady', async () => {
       ] },
       { name: "clear", description: "Clear a penalty", type: 1, options: [
         { name: "penalty_id", description: "Penalty ID", type: 4, required: true }
+      ] },
+      { name: "findunauth", description: "Find unauthorized shifts", type: 1, options: [
+        { name: "user", description: "User to check", type: 6, required: true },
+        { name: "days", description: "Days to look back (default: 30)", type: 4, required: false }
+      ] },
+      { name: "removetime", description: "Remove unauthorized shift time", type: 1, options: [
+        { name: "user", description: "User to remove time from", type: 6, required: true },
+        { name: "shift_id", description: "Shift ID to remove", type: 4, required: true },
+        { name: "reason", description: "Reason for removal", type: 3, required: true }
       ] }
     ] },
     { name: "cancelreminder", description: "⏰ Cancel a reminder", options: [
@@ -1531,10 +1540,10 @@ client.once('clientReady', async () => {
     // Core system commands
     'help', 'ping', 'diagcommands',
     // Shift & Payroll - CRITICAL for staff operations (HIGHEST PRIORITY)
-    'clockin', 'clockout', 'payroll', 'shifts', 'shiftstats', 'whosonduty', 'schedule',
+    'clockin', 'clockout', 'forceclockout', 'payroll', 'shifts', 'shiftstats', 'whosonduty', 'schedule',
     'upt', 'attendance',
-    // Staff Management
-    'staffactivity', 'promotion',
+    // Staff Management & Anti-Exploit
+    'staffactivity', 'promotion', 'violations',
     // Ticket system - ESSENTIAL
     'ticket', 'ticketsla', 'tickettag', 'ticketnote', 'ticketanalytics',
     'ticketfeedback', 'autoresponse', 'staffexpertise', 'ticketrouting',
@@ -4026,6 +4035,78 @@ client.on("interactionCreate", async (interaction) => {
       
       deactivatePenalty(penaltyId);
       return await safeReply(interaction, { content: `✅ Penalty #${penaltyId} has been cleared.`, flags: MessageFlags.Ephemeral });
+    }
+    
+    if (subCmd === 'findunauth') {
+      const { findUnauthorizedShifts } = await import('./services/antiExploit');
+      const targetUser = interaction.options.getUser('user', true);
+      const days = interaction.options.getInteger('days') || 30;
+      
+      const unauthorized = findUnauthorizedShifts(interaction.guild.id, targetUser.id, days);
+      
+      if (unauthorized.length === 0) {
+        return await safeReply(interaction, { content: `✅ No unauthorized shifts found for <@${targetUser.id}> in the last ${days} days.`, flags: MessageFlags.Ephemeral });
+      }
+      
+      const embed = new EmbedBuilder()
+        .setTitle(`🚨 Unauthorized Shifts for ${targetUser.username}`)
+        .setDescription(`Found ${unauthorized.length} shifts where user was not scheduled`)
+        .setColor(0xFF0000)
+        .setTimestamp();
+      
+      for (const shift of unauthorized.slice(0, 10)) {
+        const clockIn = new Date(shift.clock_in);
+        const clockOut = shift.clock_out ? new Date(shift.clock_out) : null;
+        const duration = shift.duration_minutes || 0;
+        const hours = Math.floor(duration / 60);
+        const mins = duration % 60;
+        
+        embed.addFields({
+          name: `Shift #${shift.id}`,
+          value: `**Date:** ${clockIn.toLocaleDateString()}\n**Time:** ${clockIn.toLocaleTimeString()} - ${clockOut ? clockOut.toLocaleTimeString() : 'Active'}\n**Duration:** ${hours}h ${mins}m\n**Reason:** ${shift.reason}`,
+          inline: false
+        });
+      }
+      
+      if (unauthorized.length > 10) {
+        embed.setFooter({ text: `Showing 10 of ${unauthorized.length} unauthorized shifts. Use /violations removetime to remove them.` });
+      } else {
+        embed.setFooter({ text: `Use /violations removetime <shift_id> to remove unauthorized time` });
+      }
+      
+      return await safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
+    }
+    
+    if (subCmd === 'removetime') {
+      const { removeUnauthorizedShiftTime } = await import('./services/antiExploit');
+      const targetUser = interaction.options.getUser('user', true);
+      const shiftId = interaction.options.getInteger('shift_id', true);
+      const reason = interaction.options.getString('reason', true);
+      
+      const result = removeUnauthorizedShiftTime(
+        interaction.guild.id,
+        targetUser.id,
+        shiftId,
+        reason,
+        interaction.user.id
+      );
+      
+      if (!result.success) {
+        return await safeReply(interaction, { content: `❌ ${result.message}`, flags: MessageFlags.Ephemeral });
+      }
+      
+      const embed = new EmbedBuilder()
+        .setTitle('✅ Unauthorized Time Removed')
+        .setDescription(`Removed shift #${shiftId} from <@${targetUser.id}>`)
+        .setColor(0x00FF00)
+        .addFields(
+          { name: 'Time Removed', value: `${result.minutesRemoved} minutes`, inline: true },
+          { name: 'Reason', value: reason, inline: false },
+          { name: 'Penalty Applied', value: '240 minutes UPT deduction', inline: true }
+        )
+        .setTimestamp();
+      
+      return await safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
     }
   }
 
@@ -9153,8 +9234,12 @@ client.on("messageCreate", async (message: Message) => {
               // Staff is messaging in an active ticket - verify they're scheduled
               const workCheck = canStaffWorkNow(message.guild.id, message.author.id);
               
+              console.log(`[AntiExploit] Staff ${message.author.id} messaging in ticket #${ticket.id}. Allowed: ${workCheck.allowed}`);
+              
               if (!workCheck.allowed) {
                 // VIOLATION: Staff trying to work on ticket while not scheduled
+                console.log(`[AntiExploit] VIOLATION DETECTED: ${message.author.id} working unscheduled in ticket #${ticket.id}`);
+                
                 const violationId = logExploitViolation(
                   message.guild.id,
                   message.author.id,
@@ -9163,13 +9248,18 @@ client.on("messageCreate", async (message: Message) => {
                   'moderate'
                 );
                 
+                console.log(`[AntiExploit] Violation logged: ID ${violationId}`);
+                
                 // Delete the message and warn the staff member
                 try {
                   await message.delete();
+                  console.log(`[AntiExploit] Message deleted`);
+                  
                   if (message.channel.type === ChannelType.GuildText || message.channel.type === ChannelType.PublicThread || message.channel.type === ChannelType.PrivateThread) {
                     await message.channel.send({
                       content: `⚠️ <@${message.author.id}> - You cannot work on tickets when you're not scheduled. This violation has been logged and penalties have been applied. Request permission from the owner if you need to work today.`,
                     });
+                    console.log(`[AntiExploit] Warning message sent`);
                   }
                   
                   // Notify owner
@@ -9178,6 +9268,7 @@ client.on("messageCreate", async (message: Message) => {
                     const db = await import('./services/db').then(m => m.getDB());
                     const violation = db.prepare('SELECT * FROM exploit_violations WHERE id = ?').get(violationId);
                     await notifyOwnerOfViolation(message.client, message.guild.id, message.author.id, violation, ownerId);
+                    console.log(`[AntiExploit] Owner notified`);
                   }
                 } catch (err) {
                   console.error('[AntiExploit] Failed to handle violation:', err);

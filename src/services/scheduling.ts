@@ -357,6 +357,17 @@ export function isScheduledToday(guildId: string, userId: string): boolean {
   return schedule.includes(today);
 }
 
+// Check if staff is scheduled for a specific date
+export function isScheduledForDate(guildId: string, userId: string, date: Date): boolean {
+  const schedule = getStaffSchedule(guildId, userId);
+  
+  // If no schedule exists yet, assume they're allowed
+  if (!schedule) return true;
+  
+  const dayName = date.toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase();
+  return schedule.includes(dayName);
+}
+
 // Check if scheduling system is active (has schedules generated)
 export function hasSchedulesGenerated(guildId: string): boolean {
   const weekStart = getCurrentWeekStart();
