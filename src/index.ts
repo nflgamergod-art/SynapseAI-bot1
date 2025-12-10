@@ -11516,29 +11516,32 @@ client.on('interactionCreate', async (interaction) => {
       const requestId = createWorkRequest(interaction.guild!.id, userId, today);
       
       // Notify owner
-      const ownerIds = process.env.OWNER_IDS?.split(',') || [];
+      const ownerId = process.env.OWNER_ID || "1272923881052704820";
       
-      for (const ownerId of ownerIds) {
-        try {
-          const owner = await client.users.fetch(ownerId.trim());
-          const requestRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-            new ButtonBuilder()
-              .setCustomId(`approve_work_${requestId}`)
-              .setLabel('✅ Approve')
-              .setStyle(ButtonStyle.Success),
-            new ButtonBuilder()
-              .setCustomId(`deny_work_${requestId}`)
-              .setLabel('❌ Deny')
-              .setStyle(ButtonStyle.Danger)
-          );
-          
-          await owner.send({
-            content: `📋 **Work Request from <@${userId}>**\n\n<@${userId}> is requesting permission to clock in and work today (${new Date().toLocaleDateString()}).\n\nThey are not scheduled for today. Do you want to approve this request?`,
-            components: [requestRow]
-          });
-        } catch (err) {
-          console.error(`Failed to notify owner ${ownerId}:`, err);
-        }
+      try {
+        const owner = await client.users.fetch(ownerId);
+        const requestRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder()
+            .setCustomId(`approve_work_${requestId}`)
+            .setLabel('✅ Approve')
+            .setStyle(ButtonStyle.Success),
+          new ButtonBuilder()
+            .setCustomId(`deny_work_${requestId}`)
+            .setLabel('❌ Deny')
+            .setStyle(ButtonStyle.Danger)
+        );
+        
+        await owner.send({
+          content: `📋 **Work Request from <@${userId}>**\n\n<@${userId}> is requesting permission to clock in and work today (${new Date().toLocaleDateString()}).\n\nThey are not scheduled for today. Do you want to approve this request?`,
+          components: [requestRow]
+        });
+      } catch (err) {
+        console.error(`Failed to notify owner ${ownerId}:`, err);
+        await interaction.update({
+          content: '❌ **Error:** Could not send request to owner. Please contact an administrator.',
+          components: []
+        });
+        return;
       }
       
       await interaction.update({
