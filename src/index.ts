@@ -1192,6 +1192,10 @@ client.once('clientReady', async () => {
     { name: "forceclockout", description: "� Owner: Force clock out a user", options: [
       { name: "user", description: "User to force clock out", type: 6, required: true }
     ] },
+    // Clear clock-in cooldown (owner only)
+    { name: "clearcooldown", description: "⏰ Owner: Clear a staff member's clock-in cooldown", options: [
+      { name: "user", description: "Staff member to clear cooldown for", type: 6, required: true }
+    ] },
     // Server Stats Channels
     { name: "statschannels", description: "📊 Configure auto-updating stats channels", options: [
       { name: "set", description: "Set a stats channel", type: 1, options: [
@@ -5276,6 +5280,43 @@ client.on("interactionCreate", async (interaction) => {
     }
     
     return await safeReply(interaction, result.message, { flags: MessageFlags.Ephemeral });
+  }
+
+  if (name === "clearcooldown") {
+    if (!interaction.guild) return await safeReply(interaction, 'This command can only be used in a server.', { flags: MessageFlags.Ephemeral });
+    
+    if (!isOwnerId(interaction.user.id)) {
+      return await safeReply(interaction, '❌ This command is owner-only.', { flags: MessageFlags.Ephemeral });
+    }
+    
+    const targetUser = interaction.options.getUser('user', true);
+    const { clearCooldown, isOnCooldown } = await import('./services/payroll');
+    
+    // Check if user has a cooldown
+    const cooldownCheck = isOnCooldown(interaction.guild.id, targetUser.id);
+    
+    if (!cooldownCheck.onCooldown) {
+      return await safeReply(interaction, `ℹ️ ${targetUser.tag} does not have an active clock-in cooldown.`, { flags: MessageFlags.Ephemeral });
+    }
+    
+    // Clear the cooldown
+    clearCooldown(interaction.guild.id, targetUser.id);
+    
+    // Try to notify the user
+    try {
+      await targetUser.send({
+        embeds: [{
+          color: 0x51CF66,
+          title: '✅ Clock-In Cooldown Cleared',
+          description: `Your clock-in cooldown in **${interaction.guild.name}** has been cleared by an administrator.\n\nYou can now clock in immediately.`,
+          timestamp: new Date().toISOString()
+        }]
+      });
+    } catch (err) {
+      // User has DMs disabled
+    }
+    
+    return await safeReply(interaction, `✅ Cleared clock-in cooldown for ${targetUser.tag}. They can now clock in immediately.`, { flags: MessageFlags.Ephemeral });
   }
 
   if (name === "shifts") {
