@@ -44,25 +44,11 @@ export const MAIN_BOT_COMMANDS = new Set<string>([
   
   // === REMINDERS (STAFF UTILITY) ===
   'remind', 'reminders', 'cancelreminder',
-]);
-
-export const EXTRA_BOT_COMMANDS = new Set<string>([
-  // === GAMES & FUN ===
-  'rpsai', 'blackjack', 'joke',
   
-  // === GIVEAWAYS ===
-  'giveaway',
-  
-  // === ACHIEVEMENTS & PERKS ===
-  'achievements', 'perks', 'stats', 'leaderboard', 'claimperk',
-  'setcolor', 'requestemoji', 'prioritysupport', 'channelsuggestion',
-  'voicepriority', 'perkspanel', 'setperkrole', 'givepoints',
-  'appealhistory',  // Global command for viewing appeal history
-  
-  // === KNOWLEDGE BASE ===
+  // === KNOWLEDGE BASE (IMPORTANT FOR SUPPORT) ===
   'kb', 'faq',
   
-  // === MEMORY SYSTEM ===
+  // === MEMORY SYSTEM (IMPORTANT FOR PERSONALIZATION) ===
   'remember', 'forget', 'memories', 'aliases', 'history', 'revert',
   
   // === ADVANCED CONFIG (OWNER TOOLS) ===
@@ -78,8 +64,23 @@ export const EXTRA_BOT_COMMANDS = new Set<string>([
   'setmention', 'getmention',
   
   // === UTILITY COMMANDS ===
-  'version', 'diagai', 'announce', 'membercount', 'purge',
-  'addrole', 'removerole',
+  'version', 'diagai',
+]);
+
+export const EXTRA_BOT_COMMANDS = new Set<string>([
+  // === GAMES & FUN ===
+  'rpsai', 'blackjack', 'joke',
+  
+  // === GIVEAWAYS ===
+  'giveaway',
+  
+  // === ACHIEVEMENTS & PERKS ===
+  'achievements', 'perks', 'stats', 'leaderboard', 'claimperk',
+  'setcolor', 'requestemoji', 'prioritysupport', 'channelsuggestion',
+  'voicepriority', 'perkspanel', 'setperkrole', 'givepoints',
+  
+  // === UTILITY COMMANDS ===
+  'announce', 'membercount', 'purge', 'addrole', 'removerole',
   
   // === BULK ACTIONS ===
   'bulkban', 'bulkkick', 'bulkmute',
