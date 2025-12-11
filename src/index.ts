@@ -1673,91 +1673,60 @@ client.once('clientReady', async () => {
   console.log(`[DEBUG] Commands array size: ${commands.length}`);
   console.log(`[DEBUG] Has payroll: ${!!hasPayroll}, Has upt: ${!!hasUpt}, Has attendance: ${!!hasAttendance}`);
 
-  // Update the PRIORITY_NAMES set to include the new commands
-  // CRITICAL: Keep this list as small as possible - Discord limits us to 100 commands total
-  const PRIORITY_NAMES = new Set<string>([
-    // Core system commands
-    'help', 'ping', 'diagcommands',
-    // Shift & Payroll - CRITICAL for staff operations (HIGHEST PRIORITY)
-    'clockin', 'clockout', 'forceclockout', 'clearcooldown', 'payroll', 'shifts', 'shiftstats', 'whosonduty', 'schedule',
-    'upt', 'attendance',
-    // Staff Management & Anti-Exploit
-    'staffactivity', 'promotion', 'violations',
-    // Ticket system - ESSENTIAL
-    'ticket', 'ticketvoice', 'ticketsla', 'tickettag', 'ticketnote', 'ticketanalytics',
-    'ticketfeedback', 'autoresponse', 'staffexpertise', 'ticketrouting',
-    // Customer Management & Collaboration
-    'customer', 'mymentions',
-    // Wellness & Multi-Language
-    'wellness', 'language',
-    // Support
-    'supportstats',
-    // Moderation essentials
-    'warn', 'mute', 'kick', 'ban', 'cases',
-    // Critical config
-    'appeal'
-  ]);
+  // Import command filters for bot separation
+  const { filterCommandsForBot, getCommandDistribution } = await import('./config/botCommandFilters');
   
-  // Adjust the buildFinalCommands function to ensure prioritized commands are included
+  // Filter commands based on bot type (main vs extra)
+  const filteredCommands = filterCommandsForBot(sanitizedCommands);
+  
+  // Show command distribution
+  const distribution = getCommandDistribution(sanitizedCommands);
+  console.log(`[COMMAND DISTRIBUTION]`);
+  console.log(`  Total: ${distribution.total} commands`);
+  console.log(`  Main Bot: ${distribution.mainBot} commands`);
+  console.log(`  Extra Bot: ${distribution.extraBot} commands`);
+  if (distribution.unassigned > 0) {
+    console.warn(`  ⚠️ Unassigned: ${distribution.unassigned} commands: ${distribution.unassignedList.join(', ')}`);
+  }
+  
+  // Adjust the buildFinalCommands function to handle filtered commands
   const buildFinalCommands = (all: any[]) => {
     const byName = new Map<string, any>();
     all.forEach(c => byName.set(c.name, c));
-    const prioritized: any[] = [];
-  
-    // Add prioritized commands first
-    all.forEach(c => {
-      if (PRIORITY_NAMES.has(c.name)) prioritized.push(c);
-    });
     
-    console.log(`[BUILD] Total commands: ${all.length}, Priority found: ${prioritized.length}/${PRIORITY_NAMES.size}`);
-    console.log(`[BUILD] Priority: ${prioritized.map(c => c.name).join(', ')}`);
+    console.log(`[BUILD] Filtered commands for this bot: ${all.length}`);
+    console.log(`[BUILD] Command list: ${all.map(c => c.name).sort().join(', ')}`);
   
-    console.log(`[COMMAND PRIORITY] Found ${prioritized.length} priority commands out of ${PRIORITY_NAMES.size} requested`);
-    console.log(`[COMMAND PRIORITY] Priority commands found: ${prioritized.map(c => c.name).sort().join(', ')}`);
-    
-    // Check which priority commands are missing
-    const foundPriorityNames = new Set(prioritized.map(c => c.name));
-    const missingPriority = Array.from(PRIORITY_NAMES).filter(name => !foundPriorityNames.has(name));
-    if (missingPriority.length > 0) {
-      console.warn(`[COMMAND PRIORITY] Missing ${missingPriority.length} priority commands: ${missingPriority.join(', ')}`);
-    }
-  
-    // Add the rest of the commands, ensuring no duplicates
-    const rest = all.filter(c => !PRIORITY_NAMES.has(c.name));
+    // All filtered commands are already important for their respective bot
+    // No need for priority system since we're under 100 commands per bot
     const combined: any[] = [];
     const seen = new Set<string>();
-    for (const c of [...prioritized, ...rest]) {
+    for (const c of all) {
       if (!seen.has(c.name)) {
         combined.push(c);
         seen.add(c.name);
       }
     }
   
-    // Truncate to 100 commands if necessary
+    // Discord limit is 100 commands - with filtering, each bot should be under this
     if (combined.length > 100) {
-      console.warn(`Command count (${combined.length}) exceeds Discord limit (100). Truncating to first 100.`);
-      const truncated = combined.slice(0, 100);
-      const removed = combined.slice(100).map(c => c.name);
-      
-      // Write to file for debugging
-      const fs = require('fs');
-      fs.writeFileSync('/tmp/removed_commands.txt', `REMOVED (${removed.length}): ${removed.join(', ')}\n\nKEPT (100): ${truncated.map((c: any) => c.name).join(', ')}`);
-      
-      // Check if any priority commands were removed
-      const removedPriority = removed.filter(name => PRIORITY_NAMES.has(name));
-      if (removedPriority.length > 0) {
-        fs.appendFileSync('/tmp/removed_commands.txt', `\n\nPRIORITY REMOVED (${removedPriority.length}): ${removedPriority.join(', ')}`);
-      }
-      return truncated;
+      console.error(`❌ CRITICAL: Bot has ${combined.length} commands, exceeds limit of 100!`);
+      console.error(`Commands: ${combined.map(c => c.name).join(', ')}`);
+      // Truncate to 100 if needed
+      return combined.slice(0, 100);
     }
   
+    console.log(`✅ Registering ${combined.length} commands (under limit of 100)`);
     return combined;
   };
-  const finalCommands = buildFinalCommands(sanitizedCommands);
+  const finalCommands = buildFinalCommands(filteredCommands);
 
   // Define a minimal set of global commands that should be available in DMs (outside guild scope)
-  // Keep this list small to speed up global propagation and avoid clutter.
-  const globalCommandNames = new Set<string>(['appeal', 'perks']);
+  // Only include commands that are in the filtered list for this bot
+  // isSecondaryBot already defined at top of file
+  const globalCommandNames = new Set<string>(
+    isSecondaryBot ? ['perks', 'appealhistory'] : ['appeal']  // Main bot: appeal, Extra bot: perks + appealhistory
+  );
   // Include appealhistory globally for DMs for self-view only
   globalCommandNames.add('appealhistory');
   const globalCommands = finalCommands.filter((c: any) => globalCommandNames.has(c.name));
