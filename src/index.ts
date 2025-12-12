@@ -545,6 +545,17 @@ client.once('clientReady', async () => {
   const { initWellnessSchema } = await import('./services/wellness');
   initWellnessSchema();
   
+  const { 
+    initWouldYouRatherSchema, 
+    initStorySchema, 
+    initBingoSchema, 
+    initBirthdaySchema 
+  } = await import('./services/funCommands');
+  initWouldYouRatherSchema();
+  initStorySchema();
+  initBingoSchema();
+  initBirthdaySchema();
+  
   console.log('✅ All new feature schemas initialized');
   
   // Start payroll auto-break checker (runs every 2 minutes) - ONLY on primary bot
@@ -930,6 +941,69 @@ client.once('clientReady', async () => {
     { name: "ping", description: "Check bot latency" },
     { name: "joke", description: "Tell a joke", options: [
       { name: "type", description: "Type of joke (random/dad)", type: 3, required: false }
+    ] },
+    // Fun Commands
+    { name: "8ball", description: "🔮 Ask the magic 8-ball a question", options: [
+      { name: "question", description: "Your yes/no question", type: 3, required: true },
+      { name: "mood", description: "Response mood", type: 3, required: false, choices: [
+        { name: "Serious", value: "serious" },
+        { name: "Funny", value: "funny" },
+        { name: "Sarcastic", value: "sarcastic" }
+      ] }
+    ] },
+    { name: "wouldyourather", description: "🤔 Would You Rather game", options: [
+      { name: "create", description: "Create a new Would You Rather question", type: 1, options: [
+        { name: "option_a", description: "First option", type: 3, required: true },
+        { name: "option_b", description: "Second option", type: 3, required: true }
+      ] },
+      { name: "random", description: "Get a random question to vote on", type: 1 },
+      { name: "results", description: "View results of a question", type: 1, options: [
+        { name: "id", description: "Question ID", type: 4, required: true }
+      ] }
+    ] },
+    { name: "story", description: "📖 Collaborative storytelling", options: [
+      { name: "start", description: "Start a new story", type: 1, options: [
+        { name: "title", description: "Story title", type: 3, required: true },
+        { name: "first_line", description: "First line of the story", type: 3, required: true }
+      ] },
+      { name: "add", description: "Add to the active story", type: 1, options: [
+        { name: "line", description: "Your contribution", type: 3, required: true }
+      ] },
+      { name: "read", description: "Read the current story", type: 1 },
+      { name: "finish", description: "Mark story as complete", type: 1 }
+    ] },
+    { name: "bingo", description: "🎯 Server bingo games", options: [
+      { name: "create", description: "Create a new bingo game", type: 1, options: [
+        { name: "theme", description: "Bingo theme (e.g., General, Tech, Movies)", type: 3, required: true },
+        { name: "words", description: "Comma-separated words (25+ for 5x5 grid)", type: 3, required: true }
+      ] },
+      { name: "join", description: "Get your bingo card", type: 1, options: [
+        { name: "game_id", description: "Game ID", type: 4, required: true }
+      ] },
+      { name: "card", description: "View your bingo card", type: 1 },
+      { name: "call", description: "Host: Call out a word", type: 1, options: [
+        { name: "word", description: "Word to call", type: 3, required: true }
+      ] },
+      { name: "bingo", description: "Claim BINGO!", type: 1 }
+    ] },
+    { name: "birthday", description: "🎂 Birthday tracking system", options: [
+      { name: "set", description: "Set your birthday", type: 1, options: [
+        { name: "month", description: "Month (1-12)", type: 4, required: true, min_value: 1, max_value: 12 },
+        { name: "day", description: "Day (1-31)", type: 4, required: true, min_value: 1, max_value: 31 },
+        { name: "year", description: "Year (optional, for age)", type: 4, required: false },
+        { name: "timezone", description: "Timezone (e.g., America/New_York)", type: 3, required: false }
+      ] },
+      { name: "view", description: "View someone's birthday", type: 1, options: [
+        { name: "user", description: "User to check", type: 6, required: false }
+      ] },
+      { name: "list", description: "View upcoming birthdays", type: 1, options: [
+        { name: "days", description: "Days ahead to check (default: 7)", type: 4, required: false }
+      ] },
+      { name: "today", description: "View today's birthdays", type: 1 },
+      { name: "setup", description: "Configure birthday announcements (Admin)", type: 1, options: [
+        { name: "channel", description: "Birthday announcement channel", type: 7, required: true },
+        { name: "message", description: "Custom message (use {user} for mention)", type: 3, required: false }
+      ] }
     ] },
     // Owner-only maintenance commands (no SSH required)
     { name: "version", description: "Owner: show running commit and config" },

@@ -69,7 +69,7 @@ export const MAIN_BOT_COMMANDS = new Set<string>([
 
 export const EXTRA_BOT_COMMANDS = new Set<string>([
   // === GAMES & FUN ===
-  'rpsai', 'blackjack', 'joke',
+  'rpsai', 'blackjack', 'joke', '8ball', 'wouldyourather', 'story', 'bingo', 'birthday',
   
   // === GIVEAWAYS ===
   'giveaway',

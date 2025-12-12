@@ -5,7 +5,7 @@
  * so the bot is stable and avoids InteractionAlreadyReplied errors.
  */
 
-import { ActionRowBuilder, ChatInputCommandInteraction, EmbedBuilder, StringSelectMenuBuilder, CommandInteraction, GuildMember, Role, ColorResolvable, Client } from 'discord.js';
+import { ActionRowBuilder, ChatInputCommandInteraction, EmbedBuilder, StringSelectMenuBuilder, CommandInteraction, GuildMember, Role, ColorResolvable, Client, ButtonBuilder, ButtonStyle } from 'discord.js';
 import { safeReply } from '../utils/safeReply';
 import { isWhitelisted, addWhitelistEntry, removeWhitelistEntry } from '../services/whitelistService';
 
@@ -25,6 +25,8 @@ export async function handleEnhancedCommands(interaction: ChatInputCommandIntera
     }
 
     const name = interaction.commandName;
+    const options = interaction.options;
+    const guildId = interaction.guild?.id || '';
 
     try {
         switch (name) {
@@ -366,6 +368,549 @@ export async function handleEnhancedCommands(interaction: ChatInputCommandIntera
                 await safeReply(interaction, { content: '🔊 You have been given the Priority role! You will be prioritized in voice channels and support.', flags: 64 });
                 return true;
             }
+            
+            // Fun Commands
+            case '8ball': {
+                const { get8BallResponse } = await import('../services/funCommands');
+                const question = options.getString('question', true);
+                const mood = options.getString('mood') || 'serious';
+                
+                const response = get8BallResponse(mood as 'serious' | 'funny' | 'sarcastic');
+                
+                const embed = new EmbedBuilder()
+                    .setColor('#5865F2')
+                    .setTitle('🔮 Magic 8-Ball')
+                    .addFields(
+                        { name: 'Question', value: question },
+                        { name: 'Answer', value: response }
+                    )
+                    .setFooter({ text: `Mood: ${mood.charAt(0).toUpperCase() + mood.slice(1)}` })
+                    .setTimestamp();
+                
+                await safeReply(interaction, { embeds: [embed] });
+                return true;
+            }
+            
+            case 'wouldyourather': {
+                const subcommand = options.getSubcommand();
+                const { createWYRQuestion, voteWYR, getWYRQuestion, getRandomWYR } = await import('../services/funCommands');
+                
+                if (subcommand === 'create') {
+                    const optionA = options.getString('option_a', true);
+                    const optionB = options.getString('option_b', true);
+                    
+                    const questionId = await createWYRQuestion(guildId, optionA, optionB, interaction.user.id);
+                    
+                    const embed = new EmbedBuilder()
+                        .setColor('#FF69B4')
+                        .setTitle('🤔 Would You Rather?')
+                        .setDescription(`**A:** ${optionA}\n\n**B:** ${optionB}`)
+                        .setFooter({ text: `ID: ${questionId} • Vote with the buttons below!` })
+                        .setTimestamp();
+                    
+                    const row = new ActionRowBuilder<ButtonBuilder>()
+                        .addComponents(
+                            new ButtonBuilder()
+                                .setCustomId(`wyr_vote_${questionId}_a`)
+                                .setLabel('Option A')
+                                .setStyle(ButtonStyle.Primary),
+                            new ButtonBuilder()
+                                .setCustomId(`wyr_vote_${questionId}_b`)
+                                .setLabel('Option B')
+                                .setStyle(ButtonStyle.Success)
+                        );
+                    
+                    await safeReply(interaction, { embeds: [embed], components: [row] });
+                    return true;
+                } else if (subcommand === 'random') {
+                    const question = await getRandomWYR(guildId);
+                    
+                    if (!question) {
+                        await safeReply(interaction, { content: '❌ No Would You Rather questions found. Create one with `/wouldyourather create`!', flags: 64 });
+                        return true;
+                    }
+                    
+                    const totalVotes = question.votes_a + question.votes_b;
+                    const percentA = totalVotes > 0 ? Math.round((question.votes_a / totalVotes) * 100) : 0;
+                    const percentB = totalVotes > 0 ? Math.round((question.votes_b / totalVotes) * 100) : 0;
+                    
+                    const embed = new EmbedBuilder()
+                        .setColor('#FF69B4')
+                        .setTitle('🤔 Would You Rather?')
+                        .setDescription(`**A:** ${question.option_a}\n\n**B:** ${question.option_b}`)
+                        .addFields(
+                            { name: '📊 Votes', value: `A: ${question.votes_a} (${percentA}%) | B: ${question.votes_b} (${percentB}%)` }
+                        )
+                        .setFooter({ text: `ID: ${question.id} • Vote with the buttons below!` })
+                        .setTimestamp();
+                    
+                    const row = new ActionRowBuilder<ButtonBuilder>()
+                        .addComponents(
+                            new ButtonBuilder()
+                                .setCustomId(`wyr_vote_${question.id}_a`)
+                                .setLabel('Option A')
+                                .setStyle(ButtonStyle.Primary),
+                            new ButtonBuilder()
+                                .setCustomId(`wyr_vote_${question.id}_b`)
+                                .setLabel('Option B')
+                                .setStyle(ButtonStyle.Success)
+                        );
+                    
+                    await safeReply(interaction, { embeds: [embed], components: [row] });
+                    return true;
+                } else if (subcommand === 'results') {
+                    const questionId = options.getInteger('id', true);
+                    const question = await getWYRQuestion(questionId);
+                    
+                    if (!question) {
+                        await safeReply(interaction, { content: '❌ Question not found!', flags: 64 });
+                        return true;
+                    }
+                    
+                    const totalVotes = question.votes_a + question.votes_b;
+                    const percentA = totalVotes > 0 ? Math.round((question.votes_a / totalVotes) * 100) : 0;
+                    const percentB = totalVotes > 0 ? Math.round((question.votes_b / totalVotes) * 100) : 0;
+                    
+                    const embed = new EmbedBuilder()
+                        .setColor('#FF69B4')
+                        .setTitle('🤔 Would You Rather Results')
+                        .setDescription(`**A:** ${question.option_a}\n\n**B:** ${question.option_b}`)
+                        .addFields(
+                            { name: '📊 Final Results', value: `A: ${question.votes_a} votes (${percentA}%)\nB: ${question.votes_b} votes (${percentB}%)\n\n**Total Votes:** ${totalVotes}` }
+                        )
+                        .setTimestamp();
+                    
+                    await safeReply(interaction, { embeds: [embed] });
+                    return true;
+                }
+                return false;
+            }
+            
+            case 'story': {
+                const subcommand = options.getSubcommand();
+                const { createStory, addStoryLine, getStory, getActiveStory, completeStory } = await import('../services/funCommands');
+                
+                if (subcommand === 'start') {
+                    const title = options.getString('title', true);
+                    const firstLine = options.getString('first_line', true);
+                    const channelId = interaction.channel?.id;
+                    
+                    if (!channelId) {
+                        await safeReply(interaction, { content: '❌ Could not determine channel ID!', flags: 64 });
+                        return true;
+                    }
+                    
+                    // Check for existing active story
+                    const existingStory = await getActiveStory(guildId, channelId);
+                    if (existingStory) {
+                        await safeReply(interaction, { content: `❌ There's already an active story in this channel: **${existingStory.title}**. Finish it first with \`/story finish\`!`, flags: 64 });
+                        return true;
+                    }
+                    
+                    const storyId = await createStory(guildId, title, channelId);
+                    await addStoryLine(storyId, interaction.user.id, firstLine);
+                    
+                    const embed = new EmbedBuilder()
+                        .setColor('#9B59B6')
+                        .setTitle(`📖 ${title}`)
+                        .setDescription(`**Line 1** (by <@${interaction.user.id}>):\n${firstLine}\n\n*Add to the story with \`/story add\`!*`)
+                        .setFooter({ text: `Story ID: ${storyId}` })
+                        .setTimestamp();
+                    
+                    await safeReply(interaction, { embeds: [embed] });
+                    return true;
+                } else if (subcommand === 'add') {
+                    const line = options.getString('line', true);
+                    const channelId = interaction.channel?.id;
+                    
+                    if (!channelId) {
+                        await safeReply(interaction, { content: '❌ Could not determine channel ID!', flags: 64 });
+                        return true;
+                    }
+                    
+                    const activeStory = await getActiveStory(guildId, channelId);
+                    if (!activeStory) {
+                        await safeReply(interaction, { content: '❌ No active story in this channel! Start one with `/story start`.', flags: 64 });
+                        return true;
+                    }
+                    
+                    await addStoryLine(activeStory.id, interaction.user.id, line);
+                    
+                    // Get updated story with lines to show correct line number
+                    const storyData = await getStory(activeStory.id);
+                    const lineNumber = storyData?.lines.length || 0;
+                    
+                    const embed = new EmbedBuilder()
+                        .setColor('#9B59B6')
+                        .setTitle(`📖 ${activeStory.title}`)
+                        .setDescription(`**Line ${lineNumber}** (by <@${interaction.user.id}>):\n${line}`)
+                        .setFooter({ text: 'Keep the story going!' })
+                        .setTimestamp();
+                    
+                    await safeReply(interaction, { embeds: [embed] });
+                    return true;
+                } else if (subcommand === 'read') {
+                    const channelId = interaction.channel?.id;
+                    
+                    if (!channelId) {
+                        await safeReply(interaction, { content: '❌ Could not determine channel ID!', flags: 64 });
+                        return true;
+                    }
+                    
+                    const activeStory = await getActiveStory(guildId, channelId);
+                    if (!activeStory) {
+                        await safeReply(interaction, { content: '❌ No active story in this channel!', flags: 64 });
+                        return true;
+                    }
+                    
+                    const storyData = await getStory(activeStory.id);
+                    if (!storyData) {
+                        await safeReply(interaction, { content: '❌ Story not found!', flags: 64 });
+                        return true;
+                    }
+                    
+                    const storyText = storyData.lines
+                        .map((l: any) => `**Line ${l.line_number}** (by <@${l.user_id}>):\n${l.content}`)
+                        .join('\n\n');
+                    
+                    const embed = new EmbedBuilder()
+                        .setColor('#9B59B6')
+                        .setTitle(`📖 ${storyData.story.title}`)
+                        .setDescription(storyText.slice(0, 4000) + (storyText.length > 4000 ? '...' : ''))
+                        .setFooter({ text: `${storyData.lines.length} lines • Story ID: ${storyData.story.id}` })
+                        .setTimestamp();
+                    
+                    await safeReply(interaction, { embeds: [embed] });
+                    return true;
+                } else if (subcommand === 'finish') {
+                    const channelId = interaction.channel?.id;
+                    
+                    if (!channelId) {
+                        await safeReply(interaction, { content: '❌ Could not determine channel ID!', flags: 64 });
+                        return true;
+                    }
+                    
+                    const activeStory = await getActiveStory(guildId, channelId);
+                    if (!activeStory) {
+                        await safeReply(interaction, { content: '❌ No active story in this channel!', flags: 64 });
+                        return true;
+                    }
+                    
+                    await completeStory(activeStory.id);
+                    
+                    const storyData = await getStory(activeStory.id);
+                    if (!storyData) {
+                        await safeReply(interaction, { content: '✅ Story marked as complete!', flags: 64 });
+                        return true;
+                    }
+                    
+                    const storyText = storyData.lines
+                        .map((l: any) => `**Line ${l.line_number}** (by <@${l.user_id}>):\n${l.content}`)
+                        .join('\n\n');
+                    
+                    const embed = new EmbedBuilder()
+                        .setColor('#2ECC71')
+                        .setTitle(`📖 ${storyData.story.title} - THE END`)
+                        .setDescription(storyText.slice(0, 4000) + (storyText.length > 4000 ? '...' : ''))
+                        .setFooter({ text: `Completed story with ${storyData.lines.length} lines` })
+                        .setTimestamp();
+                    
+                    await safeReply(interaction, { embeds: [embed] });
+                    return true;
+                }
+                return false;
+            }
+            
+            case 'birthday': {
+                const subcommand = options.getSubcommand();
+                const { setBirthday, getBirthday, getTodaysBirthdays, getUpcomingBirthdays, setBirthdayChannel } = await import('../services/funCommands');
+                
+                if (subcommand === 'set') {
+                    const month = options.getInteger('month', true);
+                    const day = options.getInteger('day', true);
+                    const year = options.getInteger('year');
+                    const timezone = options.getString('timezone');
+                    
+                    if (month < 1 || month > 12) {
+                        await safeReply(interaction, { content: '❌ Month must be between 1 and 12!', flags: 64 });
+                        return true;
+                    }
+                    if (day < 1 || day > 31) {
+                        await safeReply(interaction, { content: '❌ Day must be between 1 and 31!', flags: 64 });
+                        return true;
+                    }
+                    
+                    await setBirthday(interaction.user.id, guildId, month, day, year || null, timezone || 'UTC');
+                    
+                    const monthNames = ['', 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+                    const embed = new EmbedBuilder()
+                        .setColor('#E91E63')
+                        .setTitle('🎂 Birthday Set!')
+                        .setDescription(`Your birthday has been set to **${monthNames[month]} ${day}${year ? `, ${year}` : ''}**`)
+                        .setFooter({ text: `Timezone: ${timezone || 'UTC'}` })
+                        .setTimestamp();
+                    
+                    await safeReply(interaction, { embeds: [embed], flags: 64 });
+                    return true;
+                } else if (subcommand === 'view') {
+                    const targetUser = options.getUser('user') || interaction.user;
+                    const birthday = await getBirthday(targetUser.id, guildId);
+                    
+                    if (!birthday) {
+                        await safeReply(interaction, { content: `❌ ${targetUser.id === interaction.user.id ? 'You haven\'t' : 'That user hasn\'t'} set a birthday yet!`, flags: 64 });
+                        return true;
+                    }
+                    
+                    const monthNames = ['', 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+                    const embed = new EmbedBuilder()
+                        .setColor('#E91E63')
+                        .setTitle(`🎂 ${targetUser.username}'s Birthday`)
+                        .setDescription(`**${monthNames[birthday.month]} ${birthday.day}${birthday.year ? `, ${birthday.year}` : ''}**`)
+                        .setFooter({ text: `Timezone: ${birthday.timezone}` })
+                        .setTimestamp();
+                    
+                    await safeReply(interaction, { embeds: [embed] });
+                    return true;
+                } else if (subcommand === 'list') {
+                    const days = options.getInteger('days') || 7;
+                    const upcoming = await getUpcomingBirthdays(guildId, days);
+                    
+                    if (upcoming.length === 0) {
+                        await safeReply(interaction, { content: `❌ No birthdays in the next ${days} days!`, flags: 64 });
+                        return true;
+                    }
+                    
+                    const monthNames = ['', 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+                    const list = upcoming.map(b => `<@${b.user_id}> - ${monthNames[b.month]} ${b.day}`).join('\n');
+                    
+                    const embed = new EmbedBuilder()
+                        .setColor('#E91E63')
+                        .setTitle(`🎂 Upcoming Birthdays (Next ${days} days)`)
+                        .setDescription(list)
+                        .setTimestamp();
+                    
+                    await safeReply(interaction, { embeds: [embed] });
+                    return true;
+                } else if (subcommand === 'today') {
+                    const now = new Date();
+                    const today = await getTodaysBirthdays(guildId, now.getMonth() + 1, now.getDate());
+                    
+                    if (today.length === 0) {
+                        await safeReply(interaction, { content: '❌ No birthdays today!', flags: 64 });
+                        return true;
+                    }
+                    
+                    const list = today.map(b => `<@${b.user_id}>`).join(', ');
+                    
+                    const embed = new EmbedBuilder()
+                        .setColor('#E91E63')
+                        .setTitle('🎂 Today\'s Birthdays!')
+                        .setDescription(`🎉 ${list}`)
+                        .setTimestamp();
+                    
+                    await safeReply(interaction, { embeds: [embed] });
+                    return true;
+                } else if (subcommand === 'setup') {
+                    const channel = options.getChannel('channel', true);
+                    const message = options.getString('message');
+                    
+                    await setBirthdayChannel(guildId, channel.id);
+                    
+                    const embed = new EmbedBuilder()
+                        .setColor('#E91E63')
+                        .setTitle('🎂 Birthday Announcements Configured')
+                        .setDescription(`Birthday announcements will be posted in <#${channel.id}>`)
+                        .setFooter({ text: 'Use {user} as a placeholder for the birthday person' })
+                        .setTimestamp();
+                    
+                    await safeReply(interaction, { embeds: [embed] });
+                    return true;
+                }
+                return false;
+            }
+            
+            case 'bingo': {
+                const subcommand = options.getSubcommand();
+                const { 
+                    createBingoGame, 
+                    generateBingoCard, 
+                    createBingoCard, 
+                    getBingoGame, 
+                    getBingoCard, 
+                    checkBingoWin,
+                    callBingoWord
+                } = await import('../services/funCommands');
+                const { getDB } = await import('../services/db');
+                
+                if (subcommand === 'create') {
+                    const theme = options.getString('theme', true);
+                    const wordsStr = options.getString('words', true);
+                    const words = wordsStr.split(',').map((w: string) => w.trim()).filter((w: string) => w.length > 0);
+                    
+                    if (words.length < 24) {
+                        await safeReply(interaction, { content: '❌ You need at least 24 words to create a bingo game (5x5 grid with FREE center)!', flags: 64 });
+                        return true;
+                    }
+                    
+                    const gameId = await createBingoGame(guildId, interaction.channel?.id || '', interaction.user.id, theme, words);
+                    
+                    const embed = new EmbedBuilder()
+                        .setColor('#FFA500')
+                        .setTitle(`🎰 Bingo Game Created: ${theme}`)
+                        .setDescription(`Players can join with \`/bingo join game_id:${gameId}\`\n\nHost can call words with \`/bingo call\``)
+                        .addFields({ name: 'Words', value: words.slice(0, 10).join(', ') + (words.length > 10 ? '...' : '') })
+                        .setFooter({ text: `Game ID: ${gameId}` })
+                        .setTimestamp();
+                    
+                    await safeReply(interaction, { embeds: [embed] });
+                    return true;
+                } else if (subcommand === 'join') {
+                    const gameId = options.getInteger('game_id', true);
+                    const game = await getBingoGame(gameId);
+                    
+                    if (!game) {
+                        await safeReply(interaction, { content: '❌ Game not found!', flags: 64 });
+                        return true;
+                    }
+                    
+                    if (game.status !== 'active') {
+                        await safeReply(interaction, { content: '❌ This game has ended!', flags: 64 });
+                        return true;
+                    }
+                    
+                    const words = JSON.parse(game.words);
+                    const cardData = generateBingoCard(gameId, words);
+                    await createBingoCard(gameId, interaction.user.id, cardData);
+                    
+                    const gridText = cardData.map((row: string[], i: number) => 
+                        row.map((word: string, j: number) => {
+                            if (i === 2 && j === 2) return '🆓';
+                            return word.slice(0, 10);
+                        }).join(' | ')
+                    ).join('\n');
+                    
+                    const embed = new EmbedBuilder()
+                        .setColor('#FFA500')
+                        .setTitle(`🎰 Your Bingo Card - ${game.theme}`)
+                        .setDescription('```\n' + gridText + '\n```')
+                        .setFooter({ text: 'Use /bingo card to see your card again' })
+                        .setTimestamp();
+                    
+                    await safeReply(interaction, { embeds: [embed], flags: 64 });
+                    return true;
+                } else if (subcommand === 'card') {
+                    // Find user's most recent card
+                    const db = getDB();
+                    const card = db.prepare(`
+                        SELECT bc.* FROM bingo_cards bc
+                        JOIN bingo_games bg ON bc.game_id = bg.id
+                        WHERE bc.user_id = ? AND bg.guild_id = ? AND bg.status = 'active'
+                        ORDER BY bc.created_at DESC
+                        LIMIT 1
+                    `).get(interaction.user.id, guildId) as any;
+                    
+                    if (!card) {
+                        await safeReply(interaction, { content: '❌ You haven\'t joined any active bingo games!', flags: 64 });
+                        return true;
+                    }
+                    
+                    const game = await getBingoGame(card.game_id);
+                    if (!game) {
+                        await safeReply(interaction, { content: '❌ Game not found!', flags: 64 });
+                        return true;
+                    }
+                    
+                    const marked = JSON.parse(card.marked || '[]');
+                    const cardData = JSON.parse(card.card_data);
+                    const gridText = cardData.map((row: string[], i: number) => 
+                        row.map((word: string, j: number) => {
+                            const pos = `${i},${j}`;
+                            if (i === 2 && j === 2) return '✅';
+                            if (marked.includes(pos)) return '✅';
+                            return word.slice(0, 10);
+                        }).join(' | ')
+                    ).join('\n');
+                    
+                    const calledWords = JSON.parse(game.called_words || '[]');
+                    const embed = new EmbedBuilder()
+                        .setColor('#FFA500')
+                        .setTitle(`🎰 Your Bingo Card - ${game.theme}`)
+                        .setDescription('```\n' + gridText + '\n```')
+                        .addFields({ name: 'Called Words', value: calledWords.join(', ') || 'None yet' })
+                        .setTimestamp();
+                    
+                    await safeReply(interaction, { embeds: [embed], flags: 64 });
+                    return true;
+                } else if (subcommand === 'call') {
+                    const word = options.getString('word', true);
+                    
+                    // Find game where user is host
+                    const db = getDB();
+                    const game = db.prepare('SELECT * FROM bingo_games WHERE host_id = ? AND guild_id = ? AND status = ?').get(interaction.user.id, guildId, 'active') as any;
+                    
+                    if (!game) {
+                        await safeReply(interaction, { content: '❌ You don\'t have an active game to host!', flags: 64 });
+                        return true;
+                    }
+                    
+                    const words = JSON.parse(game.words);
+                    if (!words.includes(word)) {
+                        await safeReply(interaction, { content: '❌ That word is not in this game!', flags: 64 });
+                        return true;
+                    }
+                    
+                    await callBingoWord(game.id, word);
+                    
+                    const embed = new EmbedBuilder()
+                        .setColor('#FFA500')
+                        .setTitle(`🎰 Word Called: ${word}`)
+                        .setDescription(`All players can now mark **${word}** on their cards!`)
+                        .setTimestamp();
+                    
+                    await safeReply(interaction, { embeds: [embed] });
+                    return true;
+                } else if (subcommand === 'bingo') {
+                    // Find user's most recent card
+                    const db = getDB();
+                    const card = db.prepare(`
+                        SELECT bc.* FROM bingo_cards bc
+                        JOIN bingo_games bg ON bc.game_id = bg.id
+                        WHERE bc.user_id = ? AND bg.guild_id = ? AND bg.status = 'active'
+                        ORDER BY bc.created_at DESC
+                        LIMIT 1
+                    `).get(interaction.user.id, guildId) as any;
+                    
+                    if (!card) {
+                        await safeReply(interaction, { content: '❌ You haven\'t joined any active bingo games!', flags: 64 });
+                        return true;
+                    }
+                    
+                    const marked = JSON.parse(card.marked || '[]');
+                    const cardData = JSON.parse(card.card_data);
+                    const hasWon = checkBingoWin(cardData, marked);
+                    
+                    if (!hasWon) {
+                        await safeReply(interaction, { content: '❌ You don\'t have a bingo yet! Keep playing!', flags: 64 });
+                        return true;
+                    }
+                    
+                    const game = await getBingoGame(card.game_id);
+                    
+                    const embed = new EmbedBuilder()
+                        .setColor('#FFD700')
+                        .setTitle('🎉 BINGO! 🎉')
+                        .setDescription(`<@${interaction.user.id}> has won the bingo game: **${game?.theme}**!`)
+                        .setTimestamp();
+                    
+                    await safeReply(interaction, { embeds: [embed] });
+                    
+                    // End the game
+                    db.prepare('UPDATE bingo_games SET status = ? WHERE id = ?').run('completed', card.game_id);
+                    return true;
+                }
+                return false;
+            }
+            
             default:
                 return false;
         }

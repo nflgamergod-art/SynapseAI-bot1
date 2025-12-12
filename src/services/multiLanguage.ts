@@ -102,35 +102,64 @@ export function getLanguagePreference(userId: string, guildId: string): Language
   return pref || null;
 }
 
-// Detect language from text (simple heuristic-based detection)
+// Detect language from text (improved multi-language detection)
 export function detectLanguage(text: string): string {
-  // Count Spanish-specific characters and words for better detection
-  const spanishChars = (text.match(/[áéíóúüñ¿¡]/gi) || []).length;
-  const spanishWords = (text.match(/\b(será|mañana|mejor|noche|semana|viene|eternidad|esta|hola|gracias|días|señor|está|que)\b/gi) || []).length;
-  
-  // If multiple Spanish indicators found, it's Spanish
-  if (spanishChars > 0 || spanishWords >= 2) {
-    console.log(`🌍 Detected language: es (Spanish chars: ${spanishChars}, words: ${spanishWords}) for text: "${text.substring(0, 50)}..."`);
-    return 'es';
+  // Check for language-specific Unicode ranges first
+  if (/[\u0400-\u04FF]/.test(text)) {
+    console.log(`🌍 Detected language: ru (Cyrillic) for text: "${text.substring(0, 50)}..."`);
+    return 'ru';
+  }
+  if (/[\u3040-\u309F\u30A0-\u30FF]/.test(text)) {
+    console.log(`🌍 Detected language: ja (Japanese) for text: "${text.substring(0, 50)}..."`);
+    return 'ja';
+  }
+  if (/[\uAC00-\uD7AF]/.test(text)) {
+    console.log(`🌍 Detected language: ko (Korean) for text: "${text.substring(0, 50)}..."`);
+    return 'ko';
+  }
+  if (/[\u4E00-\u9FFF]/.test(text)) {
+    console.log(`🌍 Detected language: zh (Chinese) for text: "${text.substring(0, 50)}..."`);
+    return 'zh';
+  }
+  if (/[\u0600-\u06FF]/.test(text)) {
+    console.log(`🌍 Detected language: ar (Arabic) for text: "${text.substring(0, 50)}..."`);
+    return 'ar';
   }
   
-  // Check other language patterns
-  const patterns = {
-    fr: /(?:bonjour|merci|s'il vous plaît|monsieur|madame|très)/i,
-    de: /(?:hallo|danke|bitte|herr|frau|sehr|gut)/i,
-    pt: /(?:olá|obrigado|por favor|senhor|senhora|muito)/i,
-    ru: /[\u0400-\u04FF]/,
-    ja: /[\u3040-\u309F\u30A0-\u30FF]/,
-    ko: /[\uAC00-\uD7AF]/,
-    zh: /[\u4E00-\u9FFF]/,
-    ar: /[\u0600-\u06FF]/,
+  // Count language-specific characters and words
+  const spanishChars = (text.match(/[áéíóúüñ¿¡]/gi) || []).length;
+  const spanishWords = (text.match(/\b(será|mañana|mejor|noche|semana|viene|eternidad|esta|hola|gracias|días|señor|está|que|por)\b/gi) || []).length;
+  
+  const frenchChars = (text.match(/[àâçèéêëîïôùûü]/gi) || []).length;
+  const frenchWords = (text.match(/\b(bonjour|merci|s'il|vous|monsieur|madame|très|avec|pour|dans)\b/gi) || []).length;
+  
+  const germanChars = (text.match(/[äöüß]/gi) || []).length;
+  const germanWords = (text.match(/\b(hallo|danke|bitte|herr|frau|sehr|gut|ist|und|der|die)\b/gi) || []).length;
+  
+  const portugueseChars = (text.match(/[ãõâêôàç]/gi) || []).length;
+  const portugueseWords = (text.match(/\b(olá|obrigado|por favor|senhor|senhora|muito|está|não|sim)\b/gi) || []).length;
+  
+  // Score each language
+  const scores = {
+    es: spanishChars * 2 + spanishWords,
+    fr: frenchChars * 2 + frenchWords,
+    de: germanChars * 2 + germanWords,
+    pt: portugueseChars * 2 + portugueseWords
   };
   
-  for (const [lang, pattern] of Object.entries(patterns)) {
-    if (pattern.test(text)) {
-      console.log(`🌍 Detected language: ${lang} for text: "${text.substring(0, 50)}..."`);
-      return lang;
+  // Find highest score
+  let maxLang = 'en';
+  let maxScore = 0;
+  for (const [lang, score] of Object.entries(scores)) {
+    if (score > maxScore && score >= 2) { // Require minimum confidence
+      maxScore = score;
+      maxLang = lang;
     }
+  }
+  
+  if (maxLang !== 'en') {
+    console.log(`🌍 Detected language: ${maxLang} (score: ${maxScore}) for text: "${text.substring(0, 50)}..."`);
+    return maxLang;
   }
   
   console.log(`🌍 No language detected, defaulting to English for: "${text.substring(0, 50)}..."`);
