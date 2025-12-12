@@ -534,20 +534,56 @@ export async function handleEnhancedCommands(interaction: ChatInputCommandIntera
                         return true;
                     }
                     
+                    // Add user's line
                     await addStoryLine(activeStory.id, interaction.user.id, line);
                     
-                    // Get updated story with lines to show correct line number
+                    // Get story context for AI continuation
                     const storyData = await getStory(activeStory.id);
-                    const lineNumber = storyData?.lines.length || 0;
+                    const userLineNumber = storyData?.lines.length || 0;
                     
-                    const embed = new EmbedBuilder()
+                    // Send user's line first
+                    const userEmbed = new EmbedBuilder()
                         .setColor('#9B59B6')
                         .setTitle(`📖 ${activeStory.title}`)
-                        .setDescription(`**Line ${lineNumber}** (by <@${interaction.user.id}>):\n${line}`)
-                        .setFooter({ text: 'Keep the story going!' })
+                        .setDescription(`**Line ${userLineNumber}** (by <@${interaction.user.id}>):\n${line}`)
+                        .setFooter({ text: '✍️ SynapseAI is writing...' })
                         .setTimestamp();
                     
-                    await safeReply(interaction, { embeds: [embed] });
+                    await safeReply(interaction, { embeds: [userEmbed] });
+                    
+                    // Generate AI continuation
+                    try {
+                        const { generateReply } = await import('../services/openai');
+                        
+                        // Build story context for AI
+                        const storyContext = storyData?.lines.map((l: any) => l.content).join('\n') || '';
+                        const prompt = `You are continuing a collaborative story titled "${activeStory.title}". Here's the story so far:\n\n${storyContext}\n\nWrite a creative continuation paragraph (2-4 sentences) that builds on the story naturally. Keep it engaging and maintain the story's tone.`;
+                        
+                        const aiContinuation = await generateReply(prompt, guildId);
+                        
+                        if (aiContinuation && aiContinuation.trim()) {
+                            // Add AI's continuation to the story
+                            await addStoryLine(activeStory.id, interaction.client.user!.id, aiContinuation.trim());
+                            
+                            // Get updated line number
+                            const updatedStory = await getStory(activeStory.id);
+                            const aiLineNumber = updatedStory?.lines.length || 0;
+                            
+                            // Send AI continuation
+                            const aiEmbed = new EmbedBuilder()
+                                .setColor('#5865F2')
+                                .setTitle(`📖 ${activeStory.title}`)
+                                .setDescription(`**Line ${aiLineNumber}** (by SynapseAI):\n${aiContinuation.trim()}`)
+                                .setFooter({ text: 'Your turn! Add more with /story add' })
+                                .setTimestamp();
+                            
+                            await interaction.followUp({ embeds: [aiEmbed] });
+                        }
+                    } catch (error) {
+                        console.error('[Story AI] Failed to generate continuation:', error);
+                        // Don't fail the whole command if AI fails
+                    }
+                    
                     return true;
                 } else if (subcommand === 'read') {
                     const channelId = interaction.channel?.id;
