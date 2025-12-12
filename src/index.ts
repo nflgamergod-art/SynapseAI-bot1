@@ -2514,6 +2514,79 @@ client.on("interactionCreate", async (interaction) => {
         }
       }
 
+      // Would You Rather voting buttons
+      if (btn.startsWith('wyr_vote_')) {
+        try {
+          const parts = btn.split('_');
+          // Format: wyr_vote_{questionId}_{choice}
+          if (parts.length >= 4) {
+            const questionId = parseInt(parts[2]);
+            const choice = parts[3] as 'a' | 'b';
+            
+            const { voteWYR, getWYRQuestion } = await import('./services/funCommands');
+            
+            // Record the vote
+            const success = await voteWYR(questionId, interaction.user.id, choice);
+            
+            if (!success) {
+              return interaction.reply({ content: '❌ You have already voted on this question!', flags: 64 });
+            }
+            
+            // Get updated question with new vote counts
+            const question = await getWYRQuestion(questionId);
+            
+            if (!question) {
+              return interaction.reply({ content: '❌ Question not found!', flags: 64 });
+            }
+            
+            // Calculate percentages
+            const totalVotes = question.votes_a + question.votes_b;
+            const percentA = totalVotes > 0 ? Math.round((question.votes_a / totalVotes) * 100) : 0;
+            const percentB = totalVotes > 0 ? Math.round((question.votes_b / totalVotes) * 100) : 0;
+            
+            // Update the message with new vote counts
+            const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = await import('discord.js');
+            
+            const embed = new EmbedBuilder()
+              .setColor('#FF69B4')
+              .setTitle('🤔 Would You Rather?')
+              .setDescription(`**A:** ${question.option_a}\n\n**B:** ${question.option_b}`)
+              .addFields(
+                { name: '📊 Votes', value: `A: ${question.votes_a} (${percentA}%) | B: ${question.votes_b} (${percentB}%)` }
+              )
+              .setFooter({ text: `ID: ${question.id} • Vote with the buttons below!` })
+              .setTimestamp();
+            
+            const row = new ActionRowBuilder<ButtonBuilder>()
+              .addComponents(
+                new ButtonBuilder()
+                  .setCustomId(`wyr_vote_${question.id}_a`)
+                  .setLabel('Option A')
+                  .setStyle(ButtonStyle.Primary),
+                new ButtonBuilder()
+                  .setCustomId(`wyr_vote_${question.id}_b`)
+                  .setLabel('Option B')
+                  .setStyle(ButtonStyle.Success)
+              );
+            
+            // Update the original message
+            await interaction.update({ embeds: [embed], components: [row] });
+            
+            // Send ephemeral confirmation
+            const choiceName = choice === 'a' ? 'Option A' : 'Option B';
+            await interaction.followUp({ 
+              content: `✅ You voted for **${choiceName}**!`, 
+              flags: 64 
+            });
+            
+            return;
+          }
+        } catch (e: any) {
+          console.warn('[WYR Button] Error handling vote:', e?.message ?? e);
+          return interaction.reply({ content: '❌ Failed to record vote. Please try again.', flags: 64 });
+        }
+      }
+
       // Ticket panel open button
       if (btn === 'ticket-open') {
         try {
